@@ -1,6 +1,7 @@
 import type { SceneData } from '../core/types.js';
 import type { SceneStateManager } from '../core/SceneStateManager.js';
 import { PersistenceManager, type LoadOptions, type LoadSummary } from '../core/PersistenceManager.js';
+import { logger } from '../utils/Logger.js';
 
 export interface StorageLike { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void; }
 export interface LocalSceneStorageOptions { key: string; storage?: StorageLike; }
@@ -16,6 +17,7 @@ export class LocalSceneStorage {
   private readonly key: string;
   private readonly persistence: PersistenceManager;
   private readonly storage: StorageLike;
+  private readonly log = logger.child('storage');
 
   constructor(persistence: PersistenceManager, options: LocalSceneStorageOptions) {
     if (!options.key) throw new Error('[LocalSceneStorage] key is required');
@@ -39,7 +41,17 @@ export class LocalSceneStorage {
     const raw = this.storage.getItem(this.key);
     if (!raw) return null;
     try { return this.persistence.validateSceneData(JSON.parse(raw)); }
-    catch { this.clear(); return null; }
+    catch (err) {
+      // NEVER destroy the user's save here — the data may be from a newer
+      // schema version (app downgrade) or transiently unreadable, and a
+      // future/patched build may still recover it. Keep the raw payload,
+      // surface the problem through the logger, and report "no scene".
+      this.log.warn('saved scene failed validation — keeping raw data, returning null', {
+        key: this.key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
   }
 
   loadInto(manager: SceneStateManager, options?: LoadOptions): LoadSummary | null {

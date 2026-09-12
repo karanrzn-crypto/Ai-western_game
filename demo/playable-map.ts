@@ -50,9 +50,8 @@ const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
 scene.add(grid);
 
-const axes = new THREE.AxesHelper(3);
-axes.position.set(0, 0.03, 0);
-scene.add(axes);
+// NOTE: no AxesHelper here on purpose — debug axes poking through the spawn
+// cube read as "a second object stuck inside it" and confused object editing.
 
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
@@ -61,7 +60,7 @@ const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
 const persistence = new PersistenceManager();
 const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v3' });
-const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0 });
+const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const playerController = new PlayerController(collisionWorld, {
   camera,
   initialPosition: { x: 0, y: 1.7, z: 12 },
@@ -193,7 +192,13 @@ function updateSaveStatus(): void {
 }
 
 function loadSavedScene(): void {
-  storage.loadInto(manager);
+  try {
+    storage.loadInto(manager);
+  } catch (err) {
+    // A broken/incompatible save must never take the whole game down at boot.
+    // LocalSceneStorage keeps the raw payload, so a newer build can recover it.
+    console.warn('[playable-map] failed to load saved scene — starting with the default map', err);
+  }
   updateSaveStatus();
 }
 

@@ -126,7 +126,21 @@ export class ThreeRendererAdapter implements IRendererAdapter {
     if (mesh instanceof Promise) {
       this.loading.add(def.uuid);
       mesh
-        .then((resolved) => this.onMeshResolved(def, resolved))
+        .then((resolved) => {
+          // If the object was unregistered while the load was in flight,
+          // the resolved mesh is a zombie — dispose it instead of adding it
+          // to the scene (registry/renderer must stay in sync).
+          if (!this.loading.has(def.uuid)) {
+            this.log.warn('async asset resolved after removal — disposing zombie mesh', {
+              uuid: def.uuid,
+              assetType: def.assetType,
+            });
+            this.disposeObject3D(resolved);
+            resolved.removeFromParent();
+            return;
+          }
+          this.onMeshResolved(def, resolved);
+        })
         .catch((err) => {
           this.loading.delete(def.uuid);
           this.pending.delete(def.uuid);
@@ -153,6 +167,12 @@ export class ThreeRendererAdapter implements IRendererAdapter {
   }
 
   private onMeshResolved(def: ObjectDefinition, mesh: THREE.Object3D): void {
+    // Guard against late resolution after removal (belt & braces with the
+    // zombie check in handleAdd).
+    if (!this.loading.has(def.uuid)) {
+      this.disposeObject3D(mesh);
+      return;
+    }
     // Apply the initial transform.
     this.applyTransform(mesh, def.transform);
     mesh.uuid = def.uuid;

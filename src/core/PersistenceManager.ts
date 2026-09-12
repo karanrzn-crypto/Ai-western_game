@@ -76,6 +76,18 @@ export class PersistenceManager {
       throw new SceneLoadError(`[PersistenceManager] atomic load failed: ${skipped.length} malformed entr${skipped.length === 1 ? 'y' : 'ies'}\n${reasonList}`, skipped);
     }
 
+    // Envelope-level ceiling check BEFORE touching the manager: without this,
+    // a scene larger than scene.maxObjects would clear() the manager and then
+    // throw mid-registration, leaving it partially loaded (broken atomicity).
+    const validCount = temp.length - skipped.length;
+    const max = getConfig().scene.maxObjects;
+    if (validCount > max) {
+      throw new SceneLoadError(
+        `[PersistenceManager] scene contains ${validCount} valid objects which exceeds the configured maxObjects ceiling (${max}) — refusing to load`,
+        skipped,
+      );
+    }
+
     manager.clear();
     let loaded = 0;
     for (const t of temp) if (t.ok) { manager.registerObject(t.def); loaded++; }

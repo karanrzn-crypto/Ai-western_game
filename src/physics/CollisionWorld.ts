@@ -1,4 +1,5 @@
 import type { ObjectDefinition, ObjectMetadata, Vec3 } from '../core/types.js';
+import type { EventBus } from '../core/EventBus.js';
 
 export interface PlayerCollisionResult {
   position: Vec3;
@@ -7,7 +8,7 @@ export interface PlayerCollisionResult {
   blockedY: boolean;
   blockedZ: boolean;
 }
-export interface CollisionWorldOptions { floorY?: number; }
+export interface CollisionWorldOptions { floorY?: number; /** Event bus used to invalidate the cached collision bounds. */ events?: EventBus; }
 export interface CollisionBounds { uuid: string; min: Vec3; max: Vec3; }
 type DefinitionSource = readonly Readonly<ObjectDefinition>[] | (() => readonly Readonly<ObjectDefinition>[]);
 const EPSILON = 1e-6;
@@ -24,10 +25,35 @@ function isColliderEnabled(metadata: ObjectMetadata, assetType: ObjectDefinition
 export class CollisionWorld {
   private readonly definitions: () => readonly Readonly<ObjectDefinition>[];
   private readonly floorY: number;
+  /** Cached bounds — rebuilt only when the scene actually changes. */
+  private cachedBounds: readonly CollisionBounds[] | null = null;
+  private readonly unsubscribe?: () => void;
+
   constructor(definitions: DefinitionSource, optionsOrFloorY: CollisionWorldOptions | number = 0) {
     this.definitions = typeof definitions === 'function' ? definitions : () => definitions;
+    const options = typeof optionsOrFloorY === 'number' ? {} : optionsOrFloorY;
     this.floorY = typeof optionsOrFloorY === 'number' ? optionsOrFloorY : (optionsOrFloorY.floorY ?? 0);
+    // When an event bus is wired up, bounds are cached and invalidated on
+    // every scene mutation. This removes the per-frame O(N) deep-clone that
+    // definitions() (e.g. manager.getAllObjects()) otherwise causes.
+    const bus = options.events;
+    if (bus) {
+      const invalidate = (): void => { this.cachedBounds = null; };
+      const offs = [
+        bus.on('object:registered', invalidate),
+        bus.on('object:unregistered', invalidate),
+        bus.on('object:transform-updated', invalidate),
+        bus.on('object:metadata-updated', invalidate),
+        bus.on('scene:cleared', invalidate),
+        bus.on('scene:loaded', invalidate),
+      ];
+      this.unsubscribe = () => offs.forEach((off) => off());
+    }
   }
+
+  /** Detach from the event bus (when caching is enabled). */
+  dispose(): void { this.unsubscribe?.(); }
+
   movePlayer(position: Vec3, delta: Vec3, radius = 0.35, height = 1.7): PlayerCollisionResult {
     const colliders = this.getCollisionBounds();
     const next: Vec3 = { ...position };
@@ -47,9 +73,12 @@ export class CollisionWorld {
     return { position: next, grounded: vertical.grounded, blockedX, blockedY, blockedZ };
   }
   getCollisionBounds(): readonly CollisionBounds[] {
+    if (this.cachedBounds) return this.cachedBounds;
     const out: CollisionBounds[] = [];
     for (const definition of this.definitions()) if (isColliderEnabled(definition.metadata, definition.assetType)) out.push(this.toCollisionBounds(definition));
-    return Object.freeze(out);
+    const frozen = Object.freeze(out);
+    if (this.unsubscribe) this.cachedBounds = frozen;
+    return frozen;
   }
   private resolveHorizontalAxis(axis: 'x' | 'z', candidate: Vec3, previous: Vec3, colliders: readonly CollisionBounds[], radius: number, height: number, movement: number): number {
     let resolved = axis === 'x' ? candidate.x : candidate.z;

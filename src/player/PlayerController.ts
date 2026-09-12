@@ -235,11 +235,17 @@ export class PlayerController {
       return;
     }
 
-    const backward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    // Third person: orbit the camera behind the player using BOTH yaw and
+    // pitch, so looking up/down actually raises/lowers the camera instead of
+    // leaving it fixed (the old behaviour ignored pitch entirely).
+    // At pitch = 0 this reproduces the legacy neutral pose exactly.
     const target = new THREE.Vector3(this.position.x, this.position.y - 0.5, this.position.z);
-    this.camera.position.set(this.position.x, this.position.y, this.position.z);
-    this.camera.position.addScaledVector(backward, this.thirdPersonDistance);
-    this.camera.position.y += this.thirdPersonHeight - this.eyeHeight;
+    const cosPitch = Math.cos(this.pitch);
+    this.camera.position.set(
+      this.position.x + Math.sin(this.yaw) * cosPitch * this.thirdPersonDistance,
+      this.position.y + (this.thirdPersonHeight - this.eyeHeight) - Math.sin(this.pitch) * this.thirdPersonDistance,
+      this.position.z + Math.cos(this.yaw) * cosPitch * this.thirdPersonDistance,
+    );
     this.camera.lookAt(target);
   }
 }

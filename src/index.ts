@@ -43,8 +43,14 @@ export type { DebugAxesOptions } from './editor/DebugAxes.js';
 export { TransformGizmo } from './editor/TransformGizmo.js';
 export type { TransformGizmoOptions, GizmoAxis, GizmoHandleId } from './editor/TransformGizmo.js';
 export { closestAxisParamFromRay, rayAngleAroundAxis, wrapAngle, planeBasis } from './editor/GizmoMath.js';
-export { formatSelectedObjectInfo, NO_SELECTION_INFO } from './editor/SelectionInfo.js';
-export type { SelectedObjectInfo } from './editor/SelectionInfo.js';
+export {
+  formatSelectedObjectInfo,
+  NO_SELECTION_INFO,
+  formatPanelNumber,
+  parsePanelNumber,
+  buildPanelTransformPatch,
+} from './editor/SelectionInfo.js';
+export type { SelectedObjectInfo, PanelValueGroup, PanelAxis } from './editor/SelectionInfo.js';
 export {
   applyLocalRotationDegrees,
   eulerDegreesToQuaternion,

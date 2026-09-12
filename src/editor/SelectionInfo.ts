@@ -13,7 +13,7 @@
  * -----------------------------------------------------------------------------
  */
 
-import type { ObjectDefinition, Vec3 } from '../core/types.js';
+import type { ObjectDefinition, PartialTransform, Vec3 } from '../core/types.js';
 
 export interface SelectedObjectInfo {
   /** Display name, or "None" when nothing is selected. */
@@ -56,4 +56,49 @@ export function formatSelectedObjectInfo(
     rotation: formatVec3(definition.transform.rotation, 1),
     scale: formatVec3(definition.transform.scale),
   };
+}
+
+// --------------------------------------------------------------- panel inputs
+// The Selected Object panel exposes Position / Rotation / Scale as editable
+// numeric inputs. These pure helpers keep the parse/format logic testable
+// headless; the demo only wires DOM events around them.
+
+/** Which transform group a panel input belongs to. */
+export type PanelValueGroup = 'position' | 'rotation' | 'scale';
+/** Which axis a panel input belongs to. */
+export type PanelAxis = 'x' | 'y' | 'z';
+
+/**
+ * Format a transform component for display inside a numeric input.
+ * Uses up to 3 decimals but drops trailing zeros ("2.5", "0", "-1.25")
+ * so the value reads naturally and round-trips through parsePanelNumber.
+ */
+export function formatPanelNumber(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  return String(Number(value.toFixed(3)));
+}
+
+/**
+ * Parse a raw input string into a finite number.
+ * Returns null for empty / partial / non-numeric drafts so callers can
+ * ignore in-progress typing instead of zeroing the value.
+ */
+export function parsePanelNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Build a minimal PartialTransform for one edited panel field.
+ * SceneStateManager.updateObjectTransform merges the patch, so omitted
+ * axes/groups keep their current values.
+ */
+export function buildPanelTransformPatch(
+  group: PanelValueGroup,
+  axis: PanelAxis,
+  value: number,
+): PartialTransform {
+  return { [group]: { [axis]: value } } as PartialTransform;
 }

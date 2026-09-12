@@ -20,10 +20,17 @@
     #control-hint{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);max-width:calc(100% - 32px);padding:9px 14px;border:1px solid rgba(255,255,255,.15);border-radius:7px;background:rgba(12,12,14,.72);color:#ddd5c8;font-size:11px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.22)}
     .badge{display:inline-block;margin-top:7px;padding:3px 6px;border-radius:4px;background:rgba(116,153,100,.2);color:#9fca8b;font-size:9px;letter-spacing:.08em}
     #save-status{margin-top:7px;color:#b8b0a4;font-size:10px;min-height:12px}
-    #selection-panel{position:absolute;top:16px;right:16px;min-width:250px;max-width:320px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
-    #selection-panel .value{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #selection-panel{position:absolute;top:16px;right:16px;min-width:280px;max-width:340px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25);pointer-events:auto}
     #selection-panel.no-selection .title{color:#a7a195}
-    #sel-uuid{direction:ltr;text-align:right}
+    .sel-name{margin:2px 0 1px;font-size:13px;font-weight:800;color:#f1eadf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #selection-panel.no-selection .sel-name{color:#a7a195}
+    .sel-uuid{direction:ltr;text-align:right;font-size:9px;color:#8f887c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:7px}
+    .axis-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:3px 0;font-size:11px}
+    .axis-group{display:flex;gap:4px}
+    .axis-group label{display:flex;align-items:center;gap:2px;color:#a7a195;font-size:9px}
+    .axis-group input{width:52px;padding:2px 3px;border:1px solid rgba(255,255,255,.18);border-radius:4px;background:rgba(255,255,255,.06);color:#f1eadf;font-family:inherit;font-size:10px;font-variant-numeric:tabular-nums;text-align:right}
+    .axis-group input:disabled{opacity:.4}
+    .axis-group input:focus{outline:none;border-color:#d7bd7c}
   </style>
 </head>
 <body>
@@ -44,11 +51,29 @@
     </div>
     <div id="selection-panel" class="no-selection">
       <div class="title">SELECTED OBJECT</div>
-      <div class="row"><span class="key">Name</span><span class="value" id="sel-name">None</span></div>
-      <div class="row"><span class="key">UUID</span><span class="value" id="sel-uuid">No selection</span></div>
-      <div class="row"><span class="key">Position X / Y / Z</span><span class="value" id="sel-position">—</span></div>
-      <div class="row"><span class="key">Rotation X / Y / Z</span><span class="value" id="sel-rotation">—</span></div>
-      <div class="row"><span class="key">Scale X / Y / Z</span><span class="value" id="sel-scale">—</span></div>
+      <div class="sel-name" id="sel-name" dir="auto">None</div>
+      <div class="sel-uuid" id="sel-uuid" title="debug uuid">No selection</div>
+      <div class="axis-row"><span class="key">Position</span>
+        <span class="axis-group">
+          <label>X<input type="number" step="0.1" id="sel-pos-x" disabled aria-label="Position X"></label>
+          <label>Y<input type="number" step="0.1" id="sel-pos-y" disabled aria-label="Position Y"></label>
+          <label>Z<input type="number" step="0.1" id="sel-pos-z" disabled aria-label="Position Z"></label>
+        </span>
+      </div>
+      <div class="axis-row"><span class="key">Rotation</span>
+        <span class="axis-group">
+          <label>X<input type="number" step="1" id="sel-rot-x" disabled aria-label="Rotation X"></label>
+          <label>Y<input type="number" step="1" id="sel-rot-y" disabled aria-label="Rotation Y"></label>
+          <label>Z<input type="number" step="1" id="sel-rot-z" disabled aria-label="Rotation Z"></label>
+        </span>
+      </div>
+      <div class="axis-row"><span class="key">Scale</span>
+        <span class="axis-group">
+          <label>X<input type="number" step="0.1" id="sel-scl-x" disabled aria-label="Scale X"></label>
+          <label>Y<input type="number" step="0.1" id="sel-scl-y" disabled aria-label="Scale Y"></label>
+          <label>Z<input type="number" step="0.1" id="sel-scl-z" disabled aria-label="Scale Z"></label>
+        </span>
+      </div>
     </div>
     <div id="crosshair"></div>
     <div id="control-hint">Click map · WASD move · Mouse look · Space jump · V camera · TAB edit</div>

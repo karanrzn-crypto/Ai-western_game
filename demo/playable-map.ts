@@ -13,8 +13,12 @@ import {
   TransformGizmo,
   createDebugAxes,
   formatSelectedObjectInfo,
+  formatPanelNumber,
+  parsePanelNumber,
+  buildPanelTransformPatch,
   configure,
 } from '../src/index.js';
+import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 
 configure({ debug: false, logging: { level: 'info' } });
 
@@ -68,7 +72,9 @@ registerPrimitiveFactories(assets);
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
 const persistence = new PersistenceManager();
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v3' });
+// Storage key v4: the map objects received human-readable Persian names, so
+// old v3 saves (previous names) must not shadow the renamed default map.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v4' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const playerController = new PlayerController(collisionWorld, {
   camera,
@@ -111,7 +117,7 @@ manager.registerObject({
     rotation: { x: -90, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
-  metadata: { name: 'Main Map Ground', size: 60, collider: false, editable: false },
+  metadata: { name: 'زمین نقشه اصلی', size: 60, collider: false, editable: false },
 });
 
 function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3): void {
@@ -127,10 +133,10 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
   });
 }
 
-addBoundary('10000000-0000-4000-a000-000000000010', 'North Map Boundary', new THREE.Vector3(0, 1.5, -29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'South Map Boundary', new THREE.Vector3(0, 1.5, 29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000012', 'West Map Boundary', new THREE.Vector3(-29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
-addBoundary('10000000-0000-4000-a000-000000000013', 'East Map Boundary', new THREE.Vector3(29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
+addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -29.5), new THREE.Vector3(60, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 29.5), new THREE.Vector3(60, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
+addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
 
 const spawnUuid = '10000000-0000-4000-a000-000000000020';
 manager.registerObject({
@@ -141,7 +147,7 @@ manager.registerObject({
     rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 3, y: 1.5, z: 3 },
   },
-  metadata: { name: 'Spawn Landmark', editable: true, collider: true },
+  metadata: { name: 'مکعب اسپاون', editable: true, collider: true },
 });
 
 const keys = new Set<string>();
@@ -205,7 +211,7 @@ function updateControlHint(): void {
   const hint = document.getElementById('control-hint');
   if (!hint) return;
   if (editor.isEditMode()) {
-    hint.textContent = 'TAB play · drag gizmo axes/rings to transform · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
+    hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
   hint.textContent = pointerLocked
@@ -214,24 +220,64 @@ function updateControlHint(): void {
 }
 
 function updateSelectionPanel(): void {
-  const info = formatSelectedObjectInfo(
-    editor.getSelectedUuid() ? manager.getObject(editor.getSelectedUuid()!) : undefined,
-  );
+  const selectedUuid = editor.getSelectedUuid();
+  const definition = selectedUuid ? manager.getObject(selectedUuid) : undefined;
+  const info = formatSelectedObjectInfo(definition);
   const panel = document.getElementById('selection-panel');
   const name = document.getElementById('sel-name');
   const uuid = document.getElementById('sel-uuid');
-  const position = document.getElementById('sel-position');
-  const rotation = document.getElementById('sel-rotation');
-  const scale = document.getElementById('sel-scale');
-  if (panel) panel.classList.toggle('no-selection', !editor.getSelectedUuid());
+  if (panel) panel.classList.toggle('no-selection', !definition);
   if (name) name.textContent = info.name;
   if (uuid) {
-    uuid.textContent = info.uuid;
-    uuid.title = info.uuid;
+    // The UUID stays a debug-only annotation next to the human-readable name.
+    uuid.textContent = definition ? `debug: ${info.uuid}` : 'No selection';
+    uuid.title = definition ? `debug uuid: ${info.uuid}` : '';
   }
-  if (position) position.textContent = info.position;
-  if (rotation) rotation.textContent = info.rotation;
-  if (scale) scale.textContent = info.scale;
+  for (const binding of PANEL_INPUTS) {
+    const input = document.getElementById(binding.id) as HTMLInputElement | null;
+    if (!input) continue;
+    if (!definition) {
+      input.value = '';
+      input.disabled = true;
+      continue;
+    }
+    input.disabled = false;
+    // Never clobber the field the user is currently typing in; every other
+    // field refreshes live from manager state (gizmo/keyboard/numeric edits
+    // all land in the same place).
+    if (document.activeElement === input) continue;
+    input.value = formatPanelNumber(definition.transform[binding.group][binding.axis]);
+  }
+}
+
+// Editable numeric fields of the selection panel (Position/Rotation/Scale).
+const PANEL_INPUTS: Array<{ id: string; group: PanelValueGroup; axis: PanelAxis }> = [
+  { id: 'sel-pos-x', group: 'position', axis: 'x' },
+  { id: 'sel-pos-y', group: 'position', axis: 'y' },
+  { id: 'sel-pos-z', group: 'position', axis: 'z' },
+  { id: 'sel-rot-x', group: 'rotation', axis: 'x' },
+  { id: 'sel-rot-y', group: 'rotation', axis: 'y' },
+  { id: 'sel-rot-z', group: 'rotation', axis: 'z' },
+  { id: 'sel-scl-x', group: 'scale', axis: 'x' },
+  { id: 'sel-scl-y', group: 'scale', axis: 'y' },
+  { id: 'sel-scl-z', group: 'scale', axis: 'z' },
+];
+
+function applyPanelInput(binding: { group: PanelValueGroup; axis: PanelAxis }, input: HTMLInputElement): void {
+  const value = parsePanelNumber(input.value);
+  if (value === null) return; // empty / partial draft — ignore, keep current value
+  if (editor.setSelectedTransform(buildPanelTransformPatch(binding.group, binding.axis, value))) {
+    refreshSelectionHelper();
+    updateEditorHud();
+  }
+}
+
+for (const binding of PANEL_INPUTS) {
+  const input = document.getElementById(binding.id) as HTMLInputElement | null;
+  if (!input) continue;
+  // 'input' fires on typing AND on the spinner arrows, so edits apply
+  // immediately through ObjectEditorController -> updateObjectTransform.
+  input.addEventListener('input', () => applyPanelInput(binding, input));
 }
 
 function updateSaveStatus(): void {
@@ -252,6 +298,12 @@ function loadSavedScene(): void {
 }
 
 window.addEventListener('keydown', (event) => {
+  // While typing in a panel input the editor shortcuts must stay silent
+  // ("1e5" would otherwise trigger the KeyE rotation, arrows would move the
+  // object instead of moving the text caret).
+  const eventTarget = event.target;
+  if (eventTarget instanceof HTMLElement && (eventTarget.tagName === 'INPUT' || eventTarget.tagName === 'TEXTAREA')) return;
+
   if (event.code === 'Tab') {
     event.preventDefault();
     const enabled = editor.toggleEditMode();
@@ -306,6 +358,10 @@ renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
   raycaster.setFromCamera(pointer, camera);
   const handle = gizmo.pickHandle(raycaster.ray);
   if (handle) {
+    // preventDefault() suppresses the browser's focus-change default, so a
+    // field left focused after typing would freeze mid-drag — blur it
+    // explicitly so the panel keeps refreshing live while dragging.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     gizmo.beginDrag(handle, raycaster.ray);
     event.preventDefault();
     return;

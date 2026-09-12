@@ -1,4 +1,4 @@
-import type { Vec3 } from '../core/types.js';
+import type { PartialTransform, Vec3 } from '../core/types.js';
 import { SceneStateManager } from '../core/SceneStateManager.js';
 import { applyLocalRotationDegrees } from '../core/RotationMath.js';
 import type { RotationAxis } from '../core/RotationMath.js';
@@ -97,6 +97,23 @@ export class ObjectEditorController {
     if (!current || current.metadata.editable === false) return false;
     const rotation = applyLocalRotationDegrees(current.transform.rotation, axis, deltaDegrees);
     this.manager.updateObjectTransform(this.selectedUuid, { rotation });
+    this.onObjectModified?.(this.selectedUuid);
+    return true;
+  }
+
+  /**
+   * Apply an ABSOLUTE transform patch to the selection (used by the numeric
+   * inputs of the selection panel: type 2.5 into Position X -> x becomes 2.5).
+   *
+   * The patch is merged by SceneStateManager.updateObjectTransform, so omitted
+   * groups/axes keep their current values. Same guard rails and the same
+   * single mutation path as every other editor interaction.
+   */
+  setSelectedTransform(patch: PartialTransform): boolean {
+    if (!this.editMode || !this.selectedUuid) return false;
+    const current = this.manager.getObject(this.selectedUuid);
+    if (!current || current.metadata.editable === false) return false;
+    this.manager.updateObjectTransform(this.selectedUuid, patch);
     this.onObjectModified?.(this.selectedUuid);
     return true;
   }

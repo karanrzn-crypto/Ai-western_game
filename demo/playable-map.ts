@@ -65,7 +65,7 @@ manager.registerObject({
   assetType: 'ground',
   transform: {
     position: { x: 0, y: 0, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
+    rotation: { x: -90, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
   metadata: { name: 'Main Map Ground', size: 60 },
@@ -109,7 +109,6 @@ addBoundary(
   new THREE.Vector3(1, 3, 60),
 );
 
-// Simple spawn landmark so movement has a nearby reference point.
 manager.registerObject({
   uuid: '10000000-0000-4000-a000-000000000020',
   assetType: 'cube',

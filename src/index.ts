@@ -5,15 +5,15 @@
  * -----------------------------------------------------------------------------
  */
 
-// --- Core state + persistence -------------------------------------------
+// --- Core state ---------------------------------------------------------
 export * from './core/types.js';
 export * from './core/TransformOps.js';
 export * from './core/clone.js';
 export * from './core/validators.js';
 export { SceneStateManager } from './core/SceneStateManager.js';
 export type { SceneSnapshot, SceneStateManagerOptions } from './core/SceneStateManager.js';
-export { PersistenceManager, SceneLoadError } from './core/PersistenceManager.js';
-export type { LoadSummary, LoadOptions, SkippedEntry, PersistenceManagerOptions } from './core/PersistenceManager.js';
+export { PersistenceManager, SceneLoadError } from './persistence/PersistenceManager.js';
+export type { LoadSummary, LoadOptions, SkippedEntry, PersistenceManagerOptions } from './persistence/PersistenceManager.js';
 export { EventBus } from './core/EventBus.js';
 export type { SceneEvents, EventName, Handler } from './core/EventBus.js';
 

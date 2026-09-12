@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SceneStateManager } from '../src/core/SceneStateManager.js';
-import { PersistenceManager } from '../src/core/PersistenceManager.js';
+import { PersistenceManager } from '../src/persistence/PersistenceManager.js';
 import { HeadlessRendererAdapter } from '../src/engine/HeadlessRendererAdapter.js';
 import { generateUUID, isValidUUID } from '../src/utils/uuid.js';
 

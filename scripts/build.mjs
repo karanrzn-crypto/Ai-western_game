@@ -4,11 +4,11 @@ import { build } from 'esbuild';
 
 const outdir = 'site';
 rmSync(outdir, { recursive: true, force: true });
-mkdirSync(join(outdir, 'demo'), { recursive: true });
+mkdirSync(join(outdir, 'game'), { recursive: true });
 
 const result = await build({
-  entryPoints: ['demo/playable-map.ts', 'demo/main.ts'],
-  outdir: join(outdir, 'demo'),
+  entryPoints: ['game/playable-map.ts'],
+  outdir: join(outdir, 'game'),
   bundle: true,
   splitting: false,
   format: 'esm',
@@ -23,7 +23,7 @@ cpSync('examples', join(outdir, 'examples'), { recursive: true });
 cpSync('vercel.json', join(outdir, 'vercel.json'));
 
 const html = readFileSync('index.html', 'utf8')
-  .replace('./demo/playable-map.ts', './demo/playable-map.js');
+  .replace('./game/playable-map.ts', './game/playable-map.js');
 writeFileSync(join(outdir, 'index.html'), html);
 writeFileSync(join(outdir, 'build-meta.json'), JSON.stringify(result.metafile, null, 2));
 

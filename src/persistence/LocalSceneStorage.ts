@@ -1,6 +1,6 @@
 import type { SceneData } from '../core/types.js';
 import type { SceneStateManager } from '../core/SceneStateManager.js';
-import { PersistenceManager, type LoadOptions, type LoadSummary } from '../core/PersistenceManager.js';
+import { PersistenceManager, type LoadOptions, type LoadSummary } from './PersistenceManager.js';
 import { logger } from '../utils/Logger.js';
 
 export interface StorageLike { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void; }

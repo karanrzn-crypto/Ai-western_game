@@ -98,8 +98,3 @@ export const DEFAULT_TRANSFORM: Readonly<Transform> = Object.freeze({
   rotation: { x: 0, y: 0, z: 0 },
   scale: { x: 1, y: 1, z: 1 },
 });
-
-/** Factory for an empty metadata block. */
-export function emptyMetadata(name = 'Unnamed'): ObjectMetadata {
-  return { name };
-}

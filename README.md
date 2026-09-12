@@ -73,11 +73,13 @@ src/
 ├── core/
 │   ├── types.ts                  ← ObjectDefinition / Transform / AssetType / SceneData
 │   ├── SceneStateManager.ts      ← THE registry + update + duplicate + clear API
-│   ├── PersistenceManager.ts     ← exportSceneToJSON / loadSceneFromJSON (atomic, migrations)
 │   ├── EventBus.ts               ← minimal typed event emitter
 │   ├── TransformOps.ts           ← IDENTITY_TRANSFORM, equals, clone, makeTransform
 │   ├── validators.ts             ← merge & validate Transform patches
 │   └── clone.ts                  ← deep-clone / deep-freeze helpers
+├── persistence/
+│   ├── PersistenceManager.ts     ← exportSceneToJSON / loadSceneFromJSON (atomic, migrations)
+│   └── LocalSceneStorage.ts      ← localStorage persistence for the playable map
 ├── engine/
 │   ├── IRendererAdapter.ts       ← interface every renderer must satisfy
 │   ├── ThreeRendererAdapter.ts   ← concrete three.js implementation (async-safe)
@@ -87,6 +89,28 @@ src/
 │   ├── AssetRegistry.ts           ← assetType → factory map (replaces switch statement)
 │   ├── PrimitiveAssetFactory.ts   ← cube factory (only validation asset)
 │   └── index.ts                  ← barrel
+├── physics/
+│   └── CollisionWorld.ts         ← AABB colliders, ground plane, player sweep
+├── player/
+│   ├── PlayerController.ts       ← movement / camera modes / yaw + body yaw
+│   ├── ThirdPersonCamera.ts      ← follow rig with occlusion + shoulder offset
+│   ├── MouseLookController.ts    ← RMB-drag look (pixel deltas → yaw/pitch)
+│   ├── InputBindings.ts          ← action map + edge detection
+│   ├── Vitals.ts                 ← health + stamina systems
+│   ├── CharacterStateMachine.ts  ← idle/walk/run/... state machine
+│   ├── InteractionSystem.ts      ← generic range/facing interaction
+│   ├── Spawn.ts                  ← safe spawn position probe
+│   └── character/                ← procedural character model, animator, proportions
+├── world/
+│   └── DayNightCycle.ts          ← continuous day/night lighting
+├── editor/
+│   ├── ObjectEditorController.ts ← selection + transform commands
+│   ├── TransformGizmo.ts         ← mouse gizmo (move/rotate)
+│   ├── ContactIndicator.ts       ← flush-contact ring between surfaces
+│   ├── MoveClamp.ts              ← penetration guard for drags
+│   ├── GizmoMath.ts              ← ray/axis math for the gizmo
+│   ├── SelectionInfo.ts          ← HUD panel formatting helpers
+│   └── DebugAxes.ts              ← dev-only axes helper (tagged, never saved)
 ├── config/
 │   └── GameConfig.ts              ← singleton config (schema version, limits, debug, …)
 ├── migrations/
@@ -96,18 +120,18 @@ src/
 │   └── Logger.ts                  ← leveled scoped logger
 └── index.ts                      ← public barrel
 
-index.html                       ← Vite entry (project root)
-demo/                             ← minimal demo entry (main.ts)
+index.html                       ← page shell, loads game/playable-map.ts
+game/                             ← the playable game entry (playable-map.ts)
 examples/                         ← minimal-scene.json (1-cube validation fixture)
-tests/                            ← 79 node:test tests (no external deps)
+tests/                            ← 254 node:test tests (no external deps)
 vercel.json                       ← Vercel deployment config (Vite framework)
 ARCHITECTURE.md                  ← full architecture report
 ```
 
-> **Status:** This repo contains ONLY the architecture foundation and a
-> minimal validation demo. There is intentionally NO gameplay, NO player
-> controller, NO NPCs, NO weapons, NO missions, and NO western world
-> content. The single demo exists solely to prove the foundation runs.
+> **Status:** The architecture foundation is complete and a playable
+> third-person character demo runs on top of it (movement, camera, vitals,
+> day/night, editor). Still intentionally absent: NPCs, weapons, missions,
+> inventory, and western world content systems.
 
 ---
 
@@ -150,23 +174,17 @@ The `SceneData` envelope written by `exportSceneToJSON()`:
 npm install
 ```
 
-### Run the architecture validation demo
+### Run the game
 
 ```bash
 npm run dev
 ```
 
-Opens a Vite-served page that:
-- sets up a minimal three.js scene (one camera, one light, no world),
-- registers **one** cube via `SceneStateManager.registerObject()`,
-- runs the full round-trip automatically and on button click:
-  1. `registerObject(cube)` → cube appears in the three.js scene
-  2. `ThreeRendererAdapter` mirrors the cube to a mesh
-  3. `exportSceneToJSON()` → JSON dump shown in the side panel
-  4. `manager.clear()` → cube removed from both registry and renderer
-  5. `loadSceneFromJSON()` → cube restored with the **same uuid**
-- finally loads `examples/minimal-scene.json` to prove the on-disk file is
-  interchangeable with the in-memory dump.
+Serves the playable western map (`index.html` → `game/playable-map.ts`):
+third-person character with WASD movement, RMB mouse look, sprint/jump/
+crouch, vitals (HP/SP), a continuous day/night cycle, object interaction
+(E), and an edit mode (TAB) with a transform gizmo whose changes persist
+to localStorage.
 
 ### Run the production build
 
@@ -174,8 +192,9 @@ Opens a Vite-served page that:
 npm run build
 ```
 
-Produces a static Vite bundle in `dist/` deployable to Vercel (or any
+Produces a static esbuild bundle in `site/` deployable to Vercel (or any
 static host). `vercel.json` is included so the repo auto-deploys on push.
+`npm run build:lib` additionally emits the library build (`tsc` → `dist/`).
 
 ### Type-check the project
 
@@ -189,8 +208,8 @@ npm run typecheck
 npm test
 ```
 
-Uses Node's built-in test runner (`node:test`) via `tsx` for TypeScript
-support — no Jest/Vitest dependency.
+Compiles with `tsc` and runs Node's built-in test runner (`node:test`) on
+the compiled output — no Jest/Vitest dependency.
 
 ---
 

@@ -1,12 +1,12 @@
 /**
- * src/core/PersistenceManager.ts
+ * src/persistence/PersistenceManager.ts
  * -----------------------------------------------------------------------------
  * Persistence layer for SceneStateManager.
  * -----------------------------------------------------------------------------
  */
 
-import type { SceneData, ObjectDefinition } from './types.js';
-import type { SceneStateManager } from './SceneStateManager.js';
+import type { SceneData, ObjectDefinition } from '../core/types.js';
+import type { SceneStateManager } from '../core/SceneStateManager.js';
 import { isValidUUID } from '../utils/uuid.js';
 import { getSceneMigrations } from '../migrations/SceneMigrations.js';
 import { getConfig } from '../config/GameConfig.js';

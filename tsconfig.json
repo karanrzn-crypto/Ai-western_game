@@ -27,7 +27,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "demo/**/*.ts",
+    "game/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]

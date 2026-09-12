@@ -7,13 +7,10 @@
  */
 
 import type {
-  ObjectDefinition,
-  PartialObjectDefinition,
   PartialTransform,
   Transform,
   Vec3,
 } from './types.js';
-import { DEFAULT_TRANSFORM } from './types.js';
 
 /** Merge a partial Vec3 onto a base Vec3 — omitted components keep base. */
 export function mergeVec3(base: Vec3, patch: Partial<Vec3> | undefined): Vec3 {
@@ -33,20 +30,6 @@ export function mergeTransform(base: Transform, patch: PartialTransform | undefi
     rotation: mergeVec3(base.rotation, patch.rotation),
     scale: mergeVec3(base.scale, patch.scale),
   };
-}
-
-/** Merge a partial ObjectDefinition patch onto a base definition. */
-export function mergeObjectDefinition(
-  base: ObjectDefinition,
-  patch: PartialObjectDefinition,
-): ObjectDefinition {
-  const out: ObjectDefinition = {
-    uuid: base.uuid,
-    assetType: patch.assetType ?? base.assetType,
-    transform: mergeTransform(base.transform, patch.transform),
-    metadata: { ...base.metadata, ...patch.metadata },
-  };
-  return out;
 }
 
 /**
@@ -80,6 +63,3 @@ function deepCloneTransform(t: Transform): Transform {
     scale: { ...t.scale },
   };
 }
-
-/** Re-export DEFAULT_TRANSFORM for callers that want a sane starting point. */
-export { DEFAULT_TRANSFORM };

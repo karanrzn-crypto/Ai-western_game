@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MigrationRegistry } from '../src/migrations/SceneMigrations.js';
 import { SceneStateManager } from '../src/core/SceneStateManager.js';
-import { PersistenceManager, SceneLoadError } from '../src/core/PersistenceManager.js';
+import { PersistenceManager, SceneLoadError } from '../src/persistence/PersistenceManager.js';
 import { HeadlessRendererAdapter } from '../src/engine/HeadlessRendererAdapter.js';
 import { configure, resetConfig, getConfig } from '../src/config/GameConfig.js';
 

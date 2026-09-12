@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SceneStateManager } from '../src/core/SceneStateManager.js';
-import { PersistenceManager } from '../src/core/PersistenceManager.js';
+import { PersistenceManager } from '../src/persistence/PersistenceManager.js';
 import { HeadlessRendererAdapter } from '../src/engine/HeadlessRendererAdapter.js';
 
 const UUID = '00000000-0000-4000-a000-0000000000f1';

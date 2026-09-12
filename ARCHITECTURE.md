@@ -1,9 +1,14 @@
-# Architecture Report — Ai-western_game Foundation
+# Architecture Report — Ai-western_game
 
-> Status: **Foundation phase complete.** No gameplay, no western world
-> content, no NPCs, no weapons, no missions — by design. The minimal
-> demo (one cube, one camera, one light) is the only consumer-visible
-> artefact, and exists solely to validate the foundation runs end-to-end.
+> Status: **Foundation complete + playable Part 2.** The Part 1 foundation
+> (state, persistence, events, assets, editor) is described in depth below.
+> A third-person character demo (movement, camera, vitals, day/night) now
+> runs on top of it in `game/playable-map.ts`. NPCs, weapons, missions and
+> inventory remain intentionally absent.
+
+> Note: sections 1–9 were written at the end of the Part 1 foundation phase
+> and describe the core architecture, which is unchanged. File paths reflect
+> the current layout (`persistence/` module, `game/` entry).
 
 ## 1. Current architecture
 
@@ -12,7 +17,7 @@ responsibility. Dependency direction is strictly **downward**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ demo/ (Vite app — only consumer of the foundation)              │
+│ game/ (playable app — only consumer of the foundation)         │
 └──────────────┬──────────────────────────────────────────────────┘
                │ imports from src/index.ts (public barrel)
                ▼
@@ -72,7 +77,7 @@ responsibility. Dependency direction is strictly **downward**:
 | Module | Purpose | Lines (approx) |
 |---|---|---|
 | `src/core/SceneStateManager.ts` | Authoritative scene registry, `registerObject` / `duplicateObject` / `updateObjectTransform` / `unregisterObject` / `clear`. Emits lifecycle events. | 280 |
-| `src/core/PersistenceManager.ts` | `exportSceneToJSON` / `loadSceneFromJSON`. Atomic-by-default loading. Drives migrations. | 270 |
+| `src/persistence/PersistenceManager.ts` | `exportSceneToJSON` / `loadSceneFromJSON`. Atomic-by-default loading. Drives migrations. | 270 |
 | `src/core/EventBus.ts` | Minimal typed event bus. `on`/`off`/`emit`/`clear`. Handler errors isolated. | 95 |
 | `src/core/TransformOps.ts` | `IDENTITY_TRANSFORM`, `transformsEqual`, `cloneTransform`, `makeTransform`. Single source of truth for transform conventions. | 70 |
 | `src/core/types.ts` | `ObjectDefinition`, `Transform`, `Vec3`, `AssetType`, `SceneData`. | 100 |
@@ -340,23 +345,12 @@ on top.
 
 ```
 $ npm run typecheck  # tsc --noEmit         → clean, no output
-$ npm run build      # vite build           → dist/ produced, 0 errors
-$ npm test           # node --test          → 79/79 pass
+$ npm run build      # esbuild → site/      → bundle emitted, 0 errors
+$ npm test           # node --test          → 254/254 pass
 ```
 
-The minimal demo (`index.html` + `demo/main.ts`) demonstrates the
-full architecture round-trip:
-
-1. `registerObject(cube)` → registry has 1 object
-2. `AssetRegistry` resolves the cube (sync primitive factory)
-3. `ThreeRendererAdapter` mirrors the cube to a `THREE.Mesh`
-4. `exportSceneToJSON()` produces a `SceneData` object
-5. `manager.clear()` → registry and renderer both empty
-6. `loadSceneFromJSON(dump, manager)` → cube restored with the
-   **same uuid**
-7. The on-disk `examples/minimal-scene.json` is then loaded to
-   prove interchangeability between the in-memory dump and the
-   file format.
-
-No western world content, no player controller, no gameplay —
-exactly as required.
+The playable game (`index.html` + `game/playable-map.ts`) consumes the
+foundation through the public barrel `src/index.ts`: it boots the scene
+manager, the renderer adapter, the collision world, the character systems
+and the day/night cycle, then wires input (keyboard + RMB mouse look),
+the editor (TAB + gizmo) and localStorage persistence (`LocalSceneStorage`).

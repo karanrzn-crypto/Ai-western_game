@@ -7,4 +7,4 @@
 
 export type { IAssetFactory, AssetFactoryFn } from './IAssetFactory.js';
 export { AssetRegistry } from './AssetRegistry.js';
-export { CubeAssetFactory, registerPrimitiveFactories } from './PrimitiveAssetFactory.js';
+export { CubeAssetFactory, GroundAssetFactory, registerPrimitiveFactories } from './PrimitiveAssetFactory.js';

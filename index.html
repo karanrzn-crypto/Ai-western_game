@@ -20,6 +20,18 @@
     #control-hint{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);max-width:calc(100% - 32px);padding:9px 14px;border:1px solid rgba(255,255,255,.15);border-radius:7px;background:rgba(12,12,14,.72);color:#ddd5c8;font-size:11px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.22)}
     .badge{display:inline-block;margin-top:7px;padding:3px 6px;border-radius:4px;background:rgba(116,153,100,.2);color:#9fca8b;font-size:9px;letter-spacing:.08em}
     #save-status{margin-top:7px;color:#b8b0a4;font-size:10px;min-height:12px}
+    #vitals-panel{position:absolute;left:16px;bottom:24px;min-width:230px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
+    .bar-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:10px}
+    .bar-row .key{width:22px;color:#a7a195;letter-spacing:.06em}
+    .bar-row .num{width:30px;text-align:right;color:#f1eadf;font-variant-numeric:tabular-nums}
+    .bar{flex:1;height:9px;border-radius:5px;background:rgba(255,255,255,.09);overflow:hidden;border:1px solid rgba(255,255,255,.12)}
+    .bar>div{height:100%;width:100%;border-radius:4px;transition:width .18s ease}
+    #health-fill{background:linear-gradient(90deg,#8f3a32,#c4574a)}
+    #stamina-fill{background:linear-gradient(90deg,#5d7d43,#8fae66)}
+    #stamina-fill.locked{background:linear-gradient(90deg,#7d6a35,#a08a48)}
+    #interact-prompt{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);padding:7px 13px;border:1px solid rgba(215,189,124,.45);border-radius:7px;background:rgba(12,12,14,.8);color:#e8d9a8;font-size:12px;letter-spacing:.04em;display:none}
+    #interact-prompt:not(:empty){display:block}
+    #status-message{position:absolute;left:50%;top:18%;transform:translateX(-50%);padding:8px 16px;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(12,12,14,.78);color:#f1eadf;font-size:12px;min-height:14px}
     #selection-panel{position:absolute;top:16px;right:16px;min-width:280px;max-width:340px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25);pointer-events:auto}
     #selection-panel.no-selection .title{color:#a7a195}
     .sel-name{margin:2px 0 1px;font-size:13px;font-weight:800;color:#f1eadf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -37,16 +49,16 @@
   <main id="stage" aria-label="AI-Western Game playable map"></main>
   <div id="hud">
     <div class="panel">
-      <div class="title">AI-WESTERN GAME // PART 1</div>
+      <div class="title">AI-WESTERN GAME // PART 2</div>
       <div class="row"><span class="key">Managed objects</span><span class="value" id="stat-count">—</span></div>
       <div class="row"><span class="key">Rendered objects</span><span class="value" id="stat-render">—</span></div>
       <div class="row"><span class="key">Player X / Y / Z</span><span class="value" id="player-position">—</span></div>
-      <div class="row"><span class="key">Camera</span><span class="value" id="camera-mode">FIRST PERSON</span></div>
+      <div class="row"><span class="key">Camera</span><span class="value" id="camera-mode">THIRD PERSON</span></div>
       <div class="row"><span class="key">Time</span><span class="value" id="time-of-day">—</span></div>
       <div class="row"><span class="key">Mode</span><span class="value" id="editor-mode">PLAY MODE</span></div>
       <div class="row"><span class="key">Selected</span><span class="value" id="editor-selection">None</span></div>
       <div class="row"><span class="key">Map</span><span class="value">60 × 60</span></div>
-      <div class="badge">WORLD + PLAYER + PHYSICS + DAY/NIGHT + EDITOR</div>
+      <div class="badge">CHARACTER + CAMERA + VITALS + WORLD + DAY/NIGHT + EDITOR</div>
       <div id="save-status"></div>
     </div>
     <div id="selection-panel" class="no-selection">
@@ -75,6 +87,14 @@
         </span>
       </div>
     </div>
+    <div id="vitals-panel">
+      <div class="title">THE RANGER</div>
+      <div class="bar-row"><span class="key">HP</span><div class="bar"><div id="health-fill"></div></div><span class="num" id="health-num">100</span></div>
+      <div class="bar-row"><span class="key">SP</span><div class="bar"><div id="stamina-fill"></div></div><span class="num" id="stamina-num">100</span></div>
+      <div class="row"><span class="key">State</span><span class="value" id="char-state">IDLE</span></div>
+    </div>
+    <div id="interact-prompt"></div>
+    <div id="status-message"></div>
     <div id="crosshair"></div>
     <div id="control-hint">Click map · WASD move · Mouse look · Space jump · V camera · TAB edit</div>
   </div>

@@ -19,6 +19,15 @@ import {
   parsePanelNumber,
   buildPanelTransformPatch,
   configure,
+  createCharacterModel,
+  CharacterAnimator,
+  CharacterStateMachine,
+  HealthSystem,
+  StaminaSystem,
+  InputBindings,
+  InteractionSystem,
+  ThirdPersonCamera,
+  findSafeSpawnPosition,
 } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 
@@ -66,6 +75,19 @@ scene.add(sun);
 const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);
 scene.add(hemisphere);
 
+// --- The main character ("The Ranger") ----------------------------------
+// Procedural western gunslinger: hat + duster + bandana + gun belt silhouette.
+// Built once, animated procedurally, LOD'd, synced to the controller below.
+const character = createCharacterModel();
+scene.add(character.root);
+const characterAnimator = new CharacterAnimator(character);
+const health = new HealthSystem({ max: 100 });
+const stamina = new StaminaSystem({ drainPerSecond: 13, regenPerSecond: 17, regenDelaySeconds: 0.8 });
+const characterStates = new CharacterStateMachine();
+const input = new InputBindings(window);
+input.attach();
+input.setEnabled(false); // enabled when play mode starts
+
 const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
 scene.add(grid);
@@ -89,10 +111,32 @@ const persistence = new PersistenceManager();
 // old v3 saves (previous names) must not shadow the renamed default map.
 const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v4' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
+const RESPAWN_POINT = { x: 0, y: 1.7, z: 12 };
+const STAND_EYE = 1.7;
+const CROUCH_EYE = 1.7 * 0.58;
 const playerController = new PlayerController(collisionWorld, {
   camera,
-  initialPosition: { x: 0, y: 1.7, z: 12 },
+  initialPosition: { ...RESPAWN_POINT },
+  cameraMode: 'third_person',
+  stamina,
+  crouchSpeed: 2.6,
+  accelerationTime: 0.16,
+  decelerationTime: 0.12,
+  stepHeight: 0.35,
+  // Landing feeds the animator's impulse and (future) fall damage.
+  onLand: (impactSpeed) => {
+    characterAnimator.notifyLanding(impactSpeed);
+    health.applyFallImpact(impactSpeed);
+  },
 });
+const thirdPersonCamera = new ThirdPersonCamera(camera, () => collisionWorld.getCollisionBounds(), {
+  targetHeight: 1.55,
+  crouchTargetHeight: 1.0,
+  defaultDistance: 4.8,
+  minDistance: 0.9,
+  shoulderOffset: 0.34,
+});
+playerController.setThirdPersonRig(thirdPersonCamera);
 const dayNight = new DayNightCycle(scene, sun, hemisphere, {
   dayDurationSeconds: 180,
   startTime: 8,
@@ -103,6 +147,22 @@ const editor = new ObjectEditorController(manager, {
   onObjectModified: () => {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
     updateSaveStatus();
+  },
+});
+
+// --- Interaction foundation (Part 2): generic, reusable for doors/NPCs/items.
+let statusMessageTimer = 0;
+function showStatusMessage(message: string): void {
+  const element = document.getElementById('status-message');
+  if (!element) return;
+  element.textContent = message;
+  statusMessageTimer = 2.4;
+}
+const interactions = new InteractionSystem({
+  defaultRange: 2.8,
+  onPromptChange: (interactable) => {
+    const prompt = document.getElementById('interact-prompt');
+    if (prompt) prompt.textContent = interactable ? `[E] ${interactable.label}` : '';
   },
 });
 
@@ -176,6 +236,14 @@ manager.registerObject({
   metadata: { name: 'مکعب اسپاون', editable: true, collider: true },
 });
 
+// A demo interactable for the generic interaction system (E key).
+interactions.register({
+  uuid: spawnUuid,
+  label: 'Inspect supply crate',
+  getPosition: () => ({ x: 0, y: 0.75, z: 0 }),
+  onInteract: () => showStatusMessage('The crate holds jerky, rifle rounds and a worn tin star.'),
+});
+
 const keys = new Set<string>();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -241,8 +309,8 @@ function updateControlHint(): void {
     return;
   }
   hint.textContent = pointerLocked
-    ? 'WASD move · Mouse look · Shift sprint · Space jump · V camera · TAB edit · Esc release'
-    : 'Click map · WASD move · Mouse look · Space jump · V camera · TAB edit';
+    ? 'WASD move · Mouse look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · H/J damage/heal (debug) · R respawn · TAB edit · Esc release'
+    : 'Click map · WASD move · Shift sprint · Space jump · C crouch · E interact · V camera · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -334,6 +402,7 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     const enabled = editor.toggleEditMode();
     if (enabled && document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+    input.setEnabled(!enabled); // character controls only live in play mode
     debugAxes.visible = enabled;
     refreshSelectionHelper();
     updateEditorHud();
@@ -432,14 +501,64 @@ document.addEventListener('keydown', (event) => {
 
 function updatePlayer(delta: number): void {
   if (editor.isEditMode()) return;
-  playerController.update(delta, {
-    forward: keys.has('KeyW'),
-    backward: keys.has('KeyS'),
-    left: keys.has('KeyA'),
-    right: keys.has('KeyD'),
-    sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
-  });
+  playerController.update(delta, input.getMoveInput());
 }
+
+// --- Death & respawn ------------------------------------------------------
+let respawnCountdown = 0;
+function respawn(): void {
+  const safe = findSafeSpawnPosition(collisionWorld, { candidates: [{ ...RESPAWN_POINT }] });
+  playerController.respawnAt(safe);
+  health.reset();
+  stamina.reset();
+  characterAnimator.reset();
+  characterStates.force('idle');
+  respawnCountdown = 0;
+  showStatusMessage('Back in the saddle.');
+}
+health.on((event) => {
+  if (event !== 'died') return;
+  playerController.setDead(true);
+  characterStates.force('dead');
+  respawnCountdown = 2.6;
+});
+
+function syncCharacter(delta: number, previousYaw: number): void {
+  const feet = playerController.getFeetPosition();
+  character.root.position.set(feet.x, feet.y, feet.z);
+  character.root.rotation.y = playerController.getYaw();
+  const speed = playerController.getHorizontalSpeed();
+  const yawRate = (playerController.getYaw() - previousYaw) / Math.max(delta, 1e-4);
+  characterStates.evaluate({
+    dead: playerController.isDead(),
+    grounded: playerController.isGrounded(),
+    verticalVelocity: playerController.getVerticalVelocity(),
+    speed,
+    crouching: playerController.isCrouching(),
+    sprinting: playerController.isSprinting(),
+    interacting: interactHold > 0,
+  });
+  characterStates.tick(delta);
+  characterAnimator.update({ state: characterStates.current, deltaSeconds: delta, speed, turnRate: yawRate });
+  // Stamina only drains while actually sprinting forward.
+  stamina.update(delta, playerController.isSprinting() && speed > 0.5 && playerController.isGrounded());
+  // Camera: the rig owns third person; the controller keeps first person.
+  if (playerController.getCameraMode() === 'third_person') {
+    const eye = playerController.getEyeHeight();
+    const crouchFactor = Math.max(0, Math.min(1, (eye - CROUCH_EYE) / (STAND_EYE - CROUCH_EYE)));
+    thirdPersonCamera.update({
+      targetPosition: feet,
+      yaw: playerController.getYaw(),
+      pitch: playerController.getPitch(),
+      crouchFactor,
+      deltaSeconds: delta,
+    });
+  }
+  character.setHeadVisible(playerController.getCameraMode() === 'third_person');
+  character.updateLOD(camera.position);
+}
+
+let interactHold = 0;
 
 function setHud(): void {
   const player = playerController.getPosition();
@@ -456,12 +575,56 @@ function setHud(): void {
     const minute = Math.floor((hours - hour) * 60);
     time.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   }
+  // Vitals + character state panel.
+  const healthFill = document.getElementById('health-fill') as HTMLDivElement | null;
+  const staminaFill = document.getElementById('stamina-fill') as HTMLDivElement | null;
+  const healthNum = document.getElementById('health-num');
+  const staminaNum = document.getElementById('stamina-num');
+  const stateLabel = document.getElementById('char-state');
+  if (healthFill) healthFill.style.width = `${(health.ratio * 100).toFixed(0)}%`;
+  if (staminaFill) {
+    staminaFill.style.width = `${(stamina.ratio * 100).toFixed(0)}%`;
+    staminaFill.classList.toggle('locked', stamina.isSprintLocked);
+  }
+  if (healthNum) healthNum.textContent = String(Math.ceil(health.current));
+  if (staminaNum) staminaNum.textContent = String(Math.ceil(stamina.current));
+  if (stateLabel) stateLabel.textContent = characterStates.current.toUpperCase();
 }
 
 const clock = new THREE.Clock();
+let previousYaw = playerController.getYaw();
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   updatePlayer(delta);
+  // Edge-triggered play actions (death gates everything but respawn).
+  if (!editor.isEditMode()) {
+    const dead = playerController.isDead();
+    if (!dead && input.consumePressed('jump')) playerController.requestJump();
+    if (!dead && input.consumePressed('crouch')) playerController.toggleCrouch();
+    if (!dead && input.consumePressed('interact') && interactions.tryInteract()) interactHold = 0.5;
+    if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+    if (!dead && input.consumePressed('debugDamage')) health.damage(30);
+    if (!dead && input.consumePressed('debugHeal')) health.heal(35);
+    if (dead && input.consumePressed('respawn')) respawnCountdown = 0;
+  }
+  if (respawnCountdown > 0) {
+    respawnCountdown -= delta;
+    if (respawnCountdown <= 0) respawn();
+  }
+  if (interactHold > 0) interactHold -= delta;
+  if (statusMessageTimer > 0) {
+    statusMessageTimer -= delta;
+    if (statusMessageTimer <= 0) {
+      const element = document.getElementById('status-message');
+      if (element) element.textContent = '';
+    }
+  }
+  syncCharacter(delta, previousYaw);
+  previousYaw = playerController.getYaw();
+  if (!editor.isEditMode()) interactions.update(
+    { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
+    { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
+  );
   dayNight.update(delta);
   gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
   refreshSelectionHelper();

@@ -9,7 +9,6 @@ import {
   DayNightCycle,
   configure,
 } from '../src/index.js';
-import { GroundAssetFactory } from '../src/assets/GroundAssetFactory.js';
 
 configure({ debug: false, logging: { level: 'info' } });
 
@@ -61,7 +60,6 @@ scene.add(axes);
 // -----------------------------------------------------------------------------
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
-assets.register('ground', new GroundAssetFactory(), 'World Ground');
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -73,6 +71,9 @@ const dayNight = new DayNightCycle(scene, sun, hemisphere, {
 });
 const SAVE_KEY = 'ai-western-game.playable-map.scene.v2';
 
+// -----------------------------------------------------------------------------
+// Managed world objects
+// -----------------------------------------------------------------------------
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
   uuid: groundUuid,
@@ -141,7 +142,7 @@ manager.registerObject({
 });
 
 // -----------------------------------------------------------------------------
-// Player state / controls
+// Player / camera controller
 // -----------------------------------------------------------------------------
 const EYE_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.35;
@@ -169,6 +170,9 @@ const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
 selectionBox.visible = false;
 scene.add(selectionBox);
 
+// -----------------------------------------------------------------------------
+// Persistence + editor
+// -----------------------------------------------------------------------------
 function saveScene(): void {
   const data = persistence.exportSceneToJSON(manager, {
     map: 'playable-map',
@@ -227,7 +231,6 @@ function selectObjectFromPointer(event: MouseEvent): void {
   const hits = raycaster.intersectObjects(candidates, true);
   const hit = hits[0]?.object;
   const uuid = hit ? findManagedUuid(hit) : null;
-
   selectedUuid =
     uuid && manager.getObject(uuid)?.metadata.editable !== false ? uuid : null;
   refreshSelectionHelper();
@@ -343,6 +346,9 @@ document.addEventListener('mousemove', (event) => {
   pitch = Math.max(-Math.PI * 0.49, Math.min(Math.PI * 0.49, pitch));
 });
 
+// -----------------------------------------------------------------------------
+// Player update
+// -----------------------------------------------------------------------------
 function updatePlayer(delta: number): void {
   if (editMode) return;
 
@@ -376,12 +382,8 @@ function updatePlayer(delta: number): void {
     EYE_HEIGHT,
   );
   player.y = verticalResult.position.y;
-  if (verticalResult.grounded) {
-    grounded = true;
-    verticalVelocity = 0;
-  } else {
-    grounded = false;
-  }
+  grounded = verticalResult.grounded;
+  if (grounded) verticalVelocity = 0;
 
   camera.rotation.order = 'YXZ';
   if (!thirdPerson) {
@@ -397,6 +399,9 @@ function updatePlayer(delta: number): void {
   camera.lookAt(target);
 }
 
+// -----------------------------------------------------------------------------
+// HUD / loop
+// -----------------------------------------------------------------------------
 function setHud(): void {
   const position = document.getElementById('player-position');
   const managed = document.getElementById('stat-count');

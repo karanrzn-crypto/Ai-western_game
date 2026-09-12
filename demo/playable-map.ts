@@ -4,6 +4,7 @@ import {
   ThreeRendererAdapter,
   AssetRegistry,
   registerPrimitiveFactories,
+  PersistenceManager,
   configure,
 } from '../src/index.js';
 import { GroundAssetFactory } from '../src/assets/GroundAssetFactory.js';
@@ -58,6 +59,8 @@ assets.register('ground', new GroundAssetFactory(), 'World Ground');
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
+const persistence = new PersistenceManager();
+const SAVE_KEY = 'ai-western-game.playable-map.scene.v1';
 
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
@@ -80,7 +83,7 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
       rotation: { x: 0, y: 0, z: 0 },
       scale: { x: scale.x, y: scale.y, z: scale.z },
     },
-    metadata: { name, mapBoundary: true },
+    metadata: { name, mapBoundary: true, editable: false },
   });
 }
 
@@ -109,35 +112,165 @@ addBoundary(
   new THREE.Vector3(1, 3, 60),
 );
 
+const spawnUuid = '10000000-0000-4000-a000-000000000020';
 manager.registerObject({
-  uuid: '10000000-0000-4000-a000-000000000020',
+  uuid: spawnUuid,
   assetType: 'cube',
   transform: {
     position: { x: 0, y: 0.75, z: 0 },
     rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 3, y: 1.5, z: 3 },
   },
-  metadata: { name: 'Spawn Landmark' },
+  metadata: { name: 'Spawn Landmark', editable: true },
 });
 
 const keys = new Set<string>();
 let pointerLocked = false;
+let editMode = false;
+let selectedUuid: string | null = null;
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
+selectionBox.visible = false;
+scene.add(selectionBox);
 
-window.addEventListener('keydown', (event) => keys.add(event.code));
+function saveScene(): void {
+  const data = persistence.exportSceneToJSON(manager, { map: 'playable-map', mode: 'development' });
+  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  const saved = document.getElementById('save-status');
+  if (saved) saved.textContent = `Saved ${new Date().toLocaleTimeString()}`;
+}
+
+function loadSavedScene(): void {
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (!raw) return;
+  try {
+    persistence.loadSceneFromJSON(JSON.parse(raw), manager);
+  } catch (error) {
+    console.warn('[playable-map] saved scene ignored:', error);
+    localStorage.removeItem(SAVE_KEY);
+  }
+}
+
+function refreshSelectionHelper(): void {
+  if (!selectedUuid) {
+    selectionBox.visible = false;
+    return;
+  }
+  const mesh = scene.getObjectByProperty('uuid', selectedUuid);
+  if (!mesh) {
+    selectionBox.visible = false;
+    return;
+  }
+  selectionBox.box.setFromObject(mesh);
+  selectionBox.visible = true;
+}
+
+function selectObjectFromPointer(event: MouseEvent): void {
+  if (!editMode) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  const candidates = adapter.getActiveUUIDs()
+    .map((uuid) => scene.getObjectByProperty('uuid', uuid))
+    .filter((obj): obj is THREE.Object3D => Boolean(obj));
+  const hits = raycaster.intersectObjects(candidates, true);
+  const hit = hits[0]?.object;
+  const uuid = hit ? findManagedUuid(hit) : null;
+  if (uuid && manager.getObject(uuid)?.metadata.editable !== false) {
+    selectedUuid = uuid;
+  } else {
+    selectedUuid = null;
+  }
+  refreshSelectionHelper();
+  updateEditorHud();
+}
+
+function findManagedUuid(object: THREE.Object3D): string | null {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    const candidate = current.uuid;
+    if (manager.has(candidate)) return candidate;
+    current = current.parent;
+  }
+  return null;
+}
+
+function updateEditorHud(): void {
+  const mode = document.getElementById('editor-mode');
+  const selected = document.getElementById('editor-selection');
+  if (mode) mode.textContent = editMode ? 'EDIT MODE' : 'PLAY MODE';
+  if (selected) selected.textContent = selectedUuid ? (manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid) : 'None';
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'Tab') {
+    event.preventDefault();
+    editMode = !editMode;
+    if (editMode && document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+    if (!editMode) selectedUuid = null;
+    refreshSelectionHelper();
+    updateEditorHud();
+    return;
+  }
+  keys.add(event.code);
+
+  if (!editMode || !selectedUuid) return;
+  const current = manager.getObject(selectedUuid);
+  if (!current || current.metadata.editable === false) return;
+
+  const step = event.shiftKey ? 1 : 0.25;
+  let dx = 0;
+  let dy = 0;
+  let dz = 0;
+  if (event.code === 'ArrowLeft') dx -= step;
+  if (event.code === 'ArrowRight') dx += step;
+  if (event.code === 'ArrowUp') dz -= step;
+  if (event.code === 'ArrowDown') dz += step;
+  if (event.code === 'PageUp') dy += step;
+  if (event.code === 'PageDown') dy -= step;
+
+  if (dx !== 0 || dy !== 0 || dz !== 0) {
+    event.preventDefault();
+    manager.updateObjectTransform(selectedUuid, {
+      position: {
+        x: current.transform.position.x + dx,
+        y: current.transform.position.y + dy,
+        z: current.transform.position.z + dz,
+      },
+    });
+    saveScene();
+    refreshSelectionHelper();
+    updateEditorHud();
+  }
+});
+
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 
-stage.addEventListener('click', () => {
+renderer.domElement.addEventListener('click', (event) => {
+  if (editMode) {
+    selectObjectFromPointer(event);
+    return;
+  }
   renderer.domElement.requestPointerLock?.();
 });
 
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
   const hint = document.getElementById('control-hint');
-  if (hint) hint.textContent = pointerLocked ? 'WASD move · mouse look · Shift sprint · Esc release' : 'Click map · WASD move · mouse look';
+  if (hint) {
+    hint.textContent = editMode
+      ? 'TAB play/edit · click object · arrows move · Shift = 1m · PageUp/PageDown height'
+      : pointerLocked
+        ? 'WASD move · mouse look · Shift sprint · Esc release · TAB edit mode'
+        : 'Click map · WASD move · mouse look · TAB edit mode';
+  }
 });
 
 document.addEventListener('mousemove', (event) => {
-  if (!pointerLocked) return;
+  if (!pointerLocked || editMode) return;
   const sensitivity = 0.0022;
   yaw -= event.movementX * sensitivity;
   pitch -= event.movementY * sensitivity;
@@ -155,7 +288,15 @@ function setHud(): void {
 
 const clock = new THREE.Clock();
 function updateMovement(delta: number): void {
-  const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+  if (editMode) {
+    camera.position.copy(player);
+    camera.rotation.set(pitch, yaw, 0);
+    return;
+  }
+
+  // Camera looks along local -Z. These vectors therefore make W = forward
+  // and S = backward for every yaw, including the initial yaw of PI.
+  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
   const direction = new THREE.Vector3();
 
@@ -183,6 +324,7 @@ function updateMovement(delta: number): void {
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   updateMovement(delta);
+  refreshSelectionHelper();
   setHud();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
@@ -196,5 +338,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(width, height);
 });
 
+loadSavedScene();
 setHud();
+updateEditorHud();
 animate();

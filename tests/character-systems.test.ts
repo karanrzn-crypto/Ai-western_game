@@ -302,7 +302,10 @@ test('PlayerController crouch slows movement, lowers the eye and blocks jumping'
   controller.update(1, { forward: true });
   assert.ok(Math.abs(controller.getPosition().z) < 3, `crouch speed limits movement (${controller.getPosition().z.toFixed(2)})`);
   const eye = controller.getPosition().y - controller.getFeetPosition().y;
-  assert.ok(eye < 1.2, `eye height drops to ${eye.toFixed(2)}`);
+  // Crouch eye (1.2) matches the crouched head — a believable eye line, NOT
+  // the old neck/chest-level 1.02. Still clearly below the standing 1.7 and
+  // never below the hard eye floor.
+  assert.ok(eye < 1.35 && eye > 1.1, `eye height drops to a believable crouch line (${eye.toFixed(2)})`);
   controller.setCrouching(false);
   controller.update(0.5, { forward: false });
   const standingEye = controller.getPosition().y - controller.getFeetPosition().y;

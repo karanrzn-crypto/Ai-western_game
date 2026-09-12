@@ -29,15 +29,32 @@ export const CHARACTER_PROPORTIONS = {
   // --- Camera eye metrics (the SINGLE source for every camera height) ------
   /** Camera eye line above the feet while standing (≈93% of body height). */
   eyeHeight: 1.7,
-  /** Camera eye line while fully crouched (matches the crouch pose's head). */
-  crouchEyeHeight: 1.02,
-  /** Hard floor for the camera eye — it must never sink to neck/chest level. */
-  minEyeHeight: 0.85,
+  /**
+   * Camera eye line while fully crouched. Matches the crouch pose's actual
+   * head/eye height (hips drop to 0.62, torso pitches forward → eyes ≈1.2m),
+   * so the first-person camera always reads as "looking through his eyes",
+   * never the neck or chest.
+   */
+  crouchEyeHeight: 1.2,
+  /**
+   * Hard floor for the camera eye — well above chest height for both poses,
+   * so no state (transition glitch, broken save, physics oddity) can sink
+   * the first-person camera toward the neck/chest.
+   */
+  minEyeHeight: 1.1,
+  // --- Animation amplitude caps (clipping guards) ---------------------------
+  /**
+   * Max hip swing of the legs during locomotion (rad). Keeps the thighs
+   * inside the pelvis volume and clear of the coat/holster at full sprint.
+   */
+  maxLegSwing: 0.95,
+  /** Max shoulder swing of the arms during locomotion (rad). */
+  maxArmSwing: 0.56,
 } as const;
 
 /** Joint names of the character rig (animator targets). */
 export type CharacterJointName =
-  | 'hips' | 'spine' | 'chest' | 'neck' | 'head'
+  | 'hips' | 'spine' | 'chest' | 'neck' | 'head' | 'coat'
   | 'shoulderL' | 'elbowL' | 'handL'
   | 'shoulderR' | 'elbowR' | 'handR'
   | 'legL' | 'kneeL' | 'footL'

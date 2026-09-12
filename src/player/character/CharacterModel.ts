@@ -3,12 +3,15 @@
  *
  * Visual identity goals (visible from far away and from behind):
  *   - wide-brim creased cowboy hat (the strongest silhouette driver)
- *   - long duster coat with an open front + back/side skirts
- *   - brick-red neck bandana with a knot at the back of the neck
+ *   - long duster coat built as ONE flared open cone skirt (front cut away):
+ *     its wall stays geometrically outside every limb sweep, so the
+ *     procedural animation can never push an arm or a leg through cloth
+ *   - brick-red neck bandana with a knot and a chest-front drop
  *   - dark leather vest over a faded sand shirt, rolled sleeves + gloves
- *   - gun belt with brass buckle, ammo loops, knife sheath and a revolver in
- *     a holster on the right hip (weapon socket = right hand joint)
- *   - tall boot shafts with spurs
+ *   - gun belt with brass buckle, ammo loops and a knife sheath at the small
+ *     of the back; a thigh-tied holster (rigid child of the right leg) keeps
+ *     the revolver clear of the swinging thigh
+ *   - tall boot shafts with cuffs, heel blocks and spurs
  *
  * Rig: every articulated part is a THREE.Group ("joint") so animation only
  * ever rotates groups; meshes are rigid children, which guarantees no cloth/
@@ -73,24 +76,29 @@ function createCharacterMaterials(): CharacterMaterials {
   // sunset and the day/night cycle's night lighting.
   const std = (color: number, roughness: number, metalness = 0): THREE.MeshStandardMaterial =>
     new THREE.MeshStandardMaterial({ color, roughness, metalness });
-  return {
+  const materials: CharacterMaterials = {
     skin: std(0xc9976c, 0.72),
     hair: std(0x35261a, 0.86),
     shirt: std(0xb39a72, 0.93),
-    vest: std(0x3c2d20, 0.8),
-    coat: std(0x5a452f, 0.88),
-    pants: std(0x4c4a43, 0.95),
+    vest: std(0x372a1e, 0.8),
+    // The coat renders from BOTH sides (open-ended cone: the inner wall is
+    // visible through the front gap and from above) — double-sided keeps the
+    // skirt solid instead of see-through.
+    coat: std(0x6b4a2e, 0.88),
+    pants: std(0x4a4d55, 0.95),
     boot: std(0x322419, 0.76),
     belt: std(0x2c1f16, 0.68),
     glove: std(0x40301f, 0.85),
     bandana: std(0x99432f, 0.95),
-    hat: std(0x4a3726, 0.9),
+    hat: std(0x52402c, 0.9),
     hatBand: std(0x241a12, 0.9),
     gunmetal: std(0x45484d, 0.38, 0.85),
     gunWood: std(0x5c3d24, 0.6),
     brass: std(0xb08d3f, 0.42, 0.9),
     eye: std(0x241a12, 0.5),
   };
+  materials.coat.side = THREE.DoubleSide;
+  return materials;
 }
 
 export function createCharacterModel(): CharacterModel {
@@ -98,6 +106,9 @@ export function createCharacterModel(): CharacterModel {
   const P = CHARACTER_PROPORTIONS;
   const root = new THREE.Group();
   root.name = 'character-root';
+  // YXZ: yaw applies first, then the death tip — the body always falls
+  // backward RELATIVE TO ITS OWN FACING, whatever the current yaw is.
+  root.rotation.order = 'YXZ';
   const joints = {} as CharacterJoints;
   const detailParts: THREE.Object3D[] = [];
   const geometries: THREE.BufferGeometry[] = [];
@@ -157,6 +168,9 @@ export function createCharacterModel(): CharacterModel {
   const head = group('head', neck, 0, 0.06, 0);
   const shoulderL = group('shoulderL', chest, -P.shoulderHalfWidth, 0.19, 0);
   const shoulderR = group('shoulderR', chest, P.shoulderHalfWidth, 0.19, 0);
+  // Duster coat pivot: hangs from the upper chest so the skirt can swing
+  // (billow) as one rigid piece without ever intersecting the body.
+  const coat = group('coat', chest, 0, 0.14, 0);
   const elbowL = group('elbowL', shoulderL, 0, -P.upperArm, 0);
   const elbowR = group('elbowR', shoulderR, 0, -P.upperArm, 0);
   const handL = group('handL', elbowL, 0, -P.lowerArm, 0);
@@ -167,7 +181,7 @@ export function createCharacterModel(): CharacterModel {
   const kneeR = group('kneeR', legR, 0, -P.upperLeg, 0);
   const footL = group('footL', kneeL, 0, -P.lowerLeg, 0);
   const footR = group('footR', kneeR, 0, -P.lowerLeg, 0);
-  Object.assign(joints, { hips, spine, chest, neck, head, shoulderL, elbowL, handL, shoulderR, elbowR, handR, legL, kneeL, footL, legR, kneeR, footR });
+  Object.assign(joints, { hips, spine, chest, neck, head, coat, shoulderL, elbowL, handL, shoulderR, elbowR, handR, legL, kneeL, footL, legR, kneeR, footR });
   headJoint = head;
   neckJoint = neck;
 
@@ -176,7 +190,8 @@ export function createCharacterModel(): CharacterModel {
 
   // --- Torso ----------------------------------------------------------------
   mesh(hips, materials.pants, 0.32, 0.18, 0.21, 0, 0, 0);
-  // Gun belt + brass buckle + ammo loops + knife sheath.
+  // Gun belt + brass buckle + ammo loops + knife sheath (scabbard rides at
+  // the small of the back, tip showing below the coat hem).
   mesh(hips, materials.belt, 0.345, 0.085, 0.225, 0, 0.105, 0);
   mesh(hips, materials.brass, 0.05, 0.052, 0.016, 0, 0.105, -0.118, true);
   mesh(hips, materials.belt, 0.1, 0.045, 0.235, -0.1, 0.105, 0, true);
@@ -184,17 +199,21 @@ export function createCharacterModel(): CharacterModel {
     const bullet = cylinder(hips, materials.brass, 0.011, 0.011, 0.05, -0.062 + i * 0.026, 0.105, -0.09, true, 6);
     bullet.rotation.x = Math.PI / 2;
   }
-  const knifeSheath = mesh(hips, materials.belt, 0.038, 0.15, 0.055, -0.125, 0.02, 0.07, true);
-  knifeSheath.rotation.z = 0.22;
-  mesh(hips, materials.gunWood, 0.028, 0.05, 0.032, -0.138, -0.055, 0.085, true);
-  // Holster + revolver on the RIGHT hip (+X), muzzle angled down-forward.
-  const holster = group('holster', hips, 0.145, 0.055, 0.01);
-  holster.rotation.set(0.12, -0.18, -0.08);
-  mesh(holster, materials.belt, 0.09, 0.23, 0.115, 0, -0.09, 0);
-  const barrel = cylinder(holster, materials.gunmetal, 0.022, 0.022, 0.2, 0, -0.1, -0.012, false, 7);
+  const knifeSheath = mesh(hips, materials.belt, 0.04, 0.22, 0.055, -0.09, -0.02, 0.125, true);
+  knifeSheath.rotation.z = 0.18;
+  knifeSheath.rotation.x = -0.1;
+
+  // Revolver rides in a THIGH-tied holster (western tie-down): parented to
+  // the right leg joint so it moves WITH the leg — a rigid child can never
+  // intersect the swinging thigh, which is exactly how the old hip-mounted
+  // box clipped through the pants at every stride.
+  const holster = group('holster', legR, 0.131, -0.1, -0.01);
+  holster.rotation.set(0.1, -0.15, -0.06);
+  mesh(holster, materials.belt, 0.09, 0.14, 0.11, 0, 0, 0);
+  const barrel = cylinder(holster, materials.gunmetal, 0.022, 0.022, 0.2, 0, -0.13, -0.02, false, 7);
   barrel.rotation.x = Math.PI / 2 - 0.35;
-  cylinder(holster, materials.gunmetal, 0.03, 0.03, 0.075, 0, -0.015, -0.005, false, 7).rotation.x = Math.PI / 2 - 0.35;
-  mesh(holster, materials.gunWood, 0.042, 0.095, 0.055, 0.005, 0.045, 0.055).rotation.x = 0.5;
+  cylinder(holster, materials.gunmetal, 0.03, 0.03, 0.075, 0, -0.045, -0.008, false, 7).rotation.x = Math.PI / 2 - 0.35;
+  mesh(holster, materials.gunWood, 0.042, 0.095, 0.055, 0.005, 0.05, 0.05).rotation.x = 0.5;
 
   mesh(spine, materials.shirt, 0.3, 0.2, 0.185, 0, 0.06, 0);
   mesh(chest, materials.shirt, 0.35, 0.27, 0.2, 0, 0.06, 0);
@@ -203,21 +222,32 @@ export function createCharacterModel(): CharacterModel {
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.16, -0.112, true);
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.06, -0.112, true);
 
-  // Duster coat: open front, back skirt + side skirts hang from the shoulders.
-  const coatBack = mesh(chest, materials.coat, 0.42, 0.56, 0.05, 0, -0.11, 0.135);
-  coatBack.rotation.x = 0.05;
-  mesh(chest, materials.coat, 0.17, 0.56, 0.05, -0.115, -0.11, 0.14).rotation.x = 0.08;
-  mesh(chest, materials.coat, 0.17, 0.56, 0.05, 0.115, -0.11, 0.14).rotation.x = 0.08;
-  mesh(chest, materials.coat, 0.07, 0.5, 0.17, -0.205, -0.09, 0.02);
-  mesh(chest, materials.coat, 0.07, 0.5, 0.17, 0.205, -0.09, 0.02);
-  mesh(chest, materials.coat, 0.1, 0.47, 0.05, -0.145, -0.08, -0.12).rotation.x = -0.03;
-  mesh(chest, materials.coat, 0.1, 0.47, 0.05, 0.145, -0.08, -0.12).rotation.x = -0.03;
-  mesh(chest, materials.coat, 0.32, 0.07, 0.11, 0, 0.185, 0.05); // collar
+  // Duster coat — one flared, open-ended cone skirt instead of seven boxes.
+  // The cone wall (radius 0.33 top → 0.48 hem) stays far outside the widest
+  // sweep of the thighs (0.21) and the resting arms (0.31), so NO pose of the
+  // procedural animation can push a limb through cloth any more. The front
+  // sector is cut away (open duster) to keep the classic silhouette: boots,
+  // chaps and the vest show through the gap.
+  const coatSkirt = new THREE.CylinderGeometry(
+    0.33, 0.48, 0.52, 18, 1, true, Math.PI + 0.9, Math.PI * 2 - 1.8,
+  );
+  geometries.push(coatSkirt);
+  const coatSkirtMesh = new THREE.Mesh(coatSkirt, materials.coat);
+  coatSkirtMesh.position.set(0, -0.26, 0); // top ring at the coat joint pivot
+  coatSkirtMesh.castShadow = true;
+  coat.add(coatSkirtMesh);
+  // Collar wraps the back of the neck over the bandana.
+  mesh(chest, materials.coat, 0.3, 0.075, 0.14, 0, 0.175, 0.06);
 
   // --- Neck + bandana -------------------------------------------------------
   cylinder(neck, materials.skin, 0.052, 0.058, 0.09, 0, 0.02, 0, false, 8);
   cylinder(neck, materials.bandana, 0.082, 0.082, 0.06, 0, -0.025, 0, false, 10);
-  mesh(neck, materials.bandana, 0.055, 0.1, 0.04, 0.02, -0.07, 0.085, true);
+  // Bandana knot at the back of the neck + the classic chest-front drop.
+  // Both sit ABOVE the coat cone's top ring (1.42m) so they stay visible and
+  // never tunnel into the collar or the skirt.
+  mesh(neck, materials.bandana, 0.05, 0.048, 0.045, 0.03, -0.03, 0.072, true).rotation.set(0.3, 0.4, 0.2);
+  const bandanaDrop = cylinder(neck, materials.bandana, 0.036, 0.007, 0.1, 0, -0.05, -0.115, true, 7);
+  bandanaDrop.rotation.x = 0.25;
 
   // --- Head, hair, face, hat ------------------------------------------------
   mesh(head, materials.skin, P.headWidth, P.headHeight, P.headDepth, 0, 0.115, 0);
@@ -231,13 +261,15 @@ export function createCharacterModel(): CharacterModel {
   mesh(head, materials.hair, 0.052, 0.014, 0.014, 0.045, 0.172, -0.111, true);
   mesh(head, materials.skin, 0.032, 0.052, 0.036, 0, 0.105, -0.121, true);
   mesh(head, materials.hair, 0.085, 0.028, 0.02, 0, 0.06, -0.116, true); // mustache
-  // Cowboy hat: dipped brim, creased crown, dark band.
+  // Cowboy hat: dipped conical brim, tapered crown with a rounded pinch and
+  // a subtle center crease — reads as felt, not a tin lid.
   const hat = group('hat', head, 0, 0.2, 0);
   hat.rotation.x = -0.05;
-  cylinder(hat, materials.hat, 0.24, 0.24, 0.018, 0, 0, 0, false, 14);
-  cylinder(hat, materials.hat, 0.105, 0.098, 0.155, 0, 0.082, 0.004, false, 12);
-  cylinder(hat, materials.hatBand, 0.108, 0.108, 0.032, 0, 0.028, 0.001, true, 12);
-  mesh(hat, materials.hat, 0.032, 0.024, 0.1, 0, 0.165, 0.002, true); // crown crease
+  cylinder(hat, materials.hat, 0.125, 0.27, 0.026, 0, 0, 0.004, false, 16);
+  cylinder(hat, materials.hat, 0.11, 0.102, 0.15, 0, 0.085, 0.004, false, 12);
+  cylinder(hat, materials.hat, 0.086, 0.108, 0.028, 0, 0.172, 0.004, false, 12);
+  mesh(hat, materials.hat, 0.032, 0.016, 0.15, 0, 0.176, 0.004, true); // crown crease
+  cylinder(hat, materials.hatBand, 0.114, 0.114, 0.034, 0, 0.026, 0.004, true, 12);
 
   // --- Arms (rolled sleeves: skin forearms + leather gloves) ----------------
   const shoulderRest = (joint: THREE.Group, side: -1 | 1): void => { joint.rotation.z = side * -0.07; };
@@ -257,8 +289,14 @@ export function createCharacterModel(): CharacterModel {
   cylinder(kneeR, materials.pants, 0.066, 0.058, P.lowerLeg * 0.45, 0, -P.lowerLeg * 0.24, 0, false, 8);
   cylinder(kneeL, materials.boot, 0.072, 0.062, P.lowerLeg * 0.55, 0, -P.lowerLeg * 0.68, 0, false, 8);
   cylinder(kneeR, materials.boot, 0.072, 0.062, P.lowerLeg * 0.55, 0, -P.lowerLeg * 0.68, 0, false, 8);
-  mesh(footL, materials.boot, 0.115, P.footHeight, P.footLength, 0, -0.045, -0.055);
-  mesh(footR, materials.boot, 0.115, P.footHeight, P.footLength, 0, -0.045, -0.055);
+  // Boots: sole exactly on the ground (the old offset sank them 4.5cm into
+  // the floor) + a heel block and a shaft cuff for a cleaner silhouette.
+  mesh(footL, materials.boot, 0.115, P.footHeight, P.footLength, 0, 0, -0.055);
+  mesh(footR, materials.boot, 0.115, P.footHeight, P.footLength, 0, 0, -0.055);
+  mesh(footL, materials.boot, 0.1, 0.045, 0.07, 0, -0.027, 0.085, true);
+  mesh(footR, materials.boot, 0.1, 0.045, 0.07, 0, -0.027, 0.085, true);
+  cylinder(kneeL, materials.boot, 0.078, 0.074, 0.03, 0, -P.lowerLeg * 0.44, 0, true, 8);
+  cylinder(kneeR, materials.boot, 0.078, 0.074, 0.03, 0, -P.lowerLeg * 0.44, 0, true, 8);
   const spurL = mesh(kneeL, materials.brass, 0.012, 0.03, 0.03, 0, -P.lowerLeg + 0.02, 0.075, true);
   spurL.rotation.x = 0.4;
   const spurR = mesh(kneeR, materials.brass, 0.012, 0.03, 0.03, 0, -P.lowerLeg + 0.02, 0.075, true);

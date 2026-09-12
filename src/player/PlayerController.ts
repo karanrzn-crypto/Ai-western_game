@@ -7,6 +7,11 @@ import type { ThirdPersonCamera } from './ThirdPersonCamera.js';
 
 export type CameraMode = 'first_person' | 'third_person';
 
+/** Shortest signed angular distance of `angle` into (-π, π]. */
+function wrapAngle(angle: number): number {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
 export interface PlayerInputState {
   forward?: boolean;
   backward?: boolean;
@@ -46,6 +51,19 @@ export interface PlayerControllerOptions {
   accelerationTime?: number;
   /** Time to stop when input releases (0 = legacy instant stop). */
   decelerationTime?: number;
+  /**
+   * Max body-to-camera yaw offset (rad) while idle in third person. Beyond it
+   * the character smoothly turns to follow the camera direction.
+   */
+  maxBodyYawOffset?: number;
+  /** Exponential turn rate of the body toward its target yaw (rad/s blend). */
+  bodyTurnRate?: number;
+  /** Hard cap on the body's angular speed (rad/s) — turns never snap. */
+  bodyMaxTurnSpeed?: number;
+  /** Rate at which the camera eases behind the turning body (RMB released). */
+  cameraFollowRate?: number;
+  /** Camera auto-follow refuses offsets larger than this (rad) — no 180° flips. */
+  cameraFollowMaxAngle?: number;
   /** Max ledge height the controller can step onto while grounded. */
   stepHeight?: number;
   /** Optional stamina pool: sprint degrades to walk when it runs out. */
@@ -63,6 +81,8 @@ export interface PlayerControllerOptions {
 export interface PlayerControllerSnapshot {
   position: Vec3;
   yaw: number;
+  /** Character body (mesh) yaw — differs from `yaw` in third person. */
+  bodyYaw: number;
   pitch: number;
   verticalVelocity: number;
   grounded: boolean;
@@ -88,13 +108,28 @@ export class PlayerController {
   private readonly accelerationTime: number;
   private readonly decelerationTime: number;
   private readonly stepHeight: number;
+  private readonly maxBodyYawOffset: number;
+  private readonly bodyTurnRate: number;
+  private readonly bodyMaxTurnSpeed: number;
+  private readonly cameraFollowRate: number;
+  private readonly cameraFollowMaxAngle: number;
   private readonly stamina: StaminaSystem | null;
   private readonly onLand?: (impactSpeed: number) => void;
 
   private camera?: THREE.Camera;
   private thirdPersonRig: ThirdPersonCamera | null = null;
   private readonly position: Vec3;
+  /** Camera/look yaw — driven by the mouse, shared movement basis. */
   private yaw: number;
+  /**
+   * Character BODY yaw — what the visible ranger faces. In third person it
+   * turns smoothly toward the movement direction (speed-capped) and follows
+   * the camera once their offset exceeds `maxBodyYawOffset`; in first person
+   * it is locked to the camera yaw. Never snaps.
+   */
+  private bodyYaw: number;
+  /** Whether the right-button look drag is currently live (set by the demo). */
+  private lookDragging = false;
   private pitch: number;
   private verticalVelocity = 0;
   private grounded = true;
@@ -149,10 +184,19 @@ export class PlayerController {
     this.accelerationTime = Math.max(0, options.accelerationTime ?? 0);
     this.decelerationTime = Math.max(0, options.decelerationTime ?? 0);
     this.stepHeight = Math.max(0, options.stepHeight ?? 0);
+    this.maxBodyYawOffset = Math.max(0.3, Math.min(Math.PI, options.maxBodyYawOffset ?? 1.75));
+    this.bodyTurnRate = Math.max(1, options.bodyTurnRate ?? 9);
+    this.bodyMaxTurnSpeed = Math.max(0.5, options.bodyMaxTurnSpeed ?? 7);
+    // Gentle on purpose: with camera-relative movement a fast auto-follow
+    // chases the turning body and produces a tight perpetual circle. A slow
+    // rate gives the classic wide arc that settles behind after a turn.
+    this.cameraFollowRate = Math.max(0.5, options.cameraFollowRate ?? 1.6);
+    this.cameraFollowMaxAngle = Math.max(0.5, Math.min(Math.PI, options.cameraFollowMaxAngle ?? 2.1));
     this.stamina = options.stamina ?? null;
     this.onLand = options.onLand;
     this.position = { ...(options.initialPosition ?? { x: 0, y: this.eyeHeight, z: 12 }) };
     this.yaw = options.yaw ?? Math.PI;
+    this.bodyYaw = this.yaw;
     this.pitch = options.pitch ?? 0;
     this.cameraMode = options.cameraMode ?? 'first_person';
     this.camera = options.camera;
@@ -240,20 +284,45 @@ export class PlayerController {
     this.crouching = false;
     this.dead = false;
     this.jumpQueued = false;
+    this.bodyYaw = this.yaw;
     this.thirdPersonRig?.snap();
     this.applyCamera();
   }
 
+  /**
+   * Rotate the CAMERA (RMB look). In third person this never rotates the body
+   * directly — the body follows through update() (movement direction or the
+   * idle offset limit), so the ranger never snaps with the mouse.
+   */
   look(deltaX: number, deltaY: number): void {
     this.yaw -= deltaX * this.lookSensitivity;
     this.pitch -= deltaY * this.lookSensitivity;
     this.pitch = Math.max(-Math.PI * 0.49, Math.min(Math.PI * 0.49, this.pitch));
+    if (this.cameraMode === 'first_person') this.bodyYaw = this.yaw;
     this.applyCamera();
+  }
+
+  /** The demo feeds this every frame: is the right-button look drag live? */
+  setLookDragging(active: boolean): void {
+    this.lookDragging = active;
+  }
+
+  /** Current character body (mesh) yaw — the direction the ranger faces. */
+  getBodyYaw(): number {
+    return this.bodyYaw;
+  }
+
+  /** Force the body yaw (respawn flows). */
+  setBodyYaw(yaw: number): void {
+    this.bodyYaw = yaw;
   }
 
   update(deltaSeconds: number, input?: PlayerInputState): void {
     if (input) this.setInput(input);
     const dt = Math.max(0, deltaSeconds);
+
+    const move = this.dead ? { x: 0, y: 0, z: 0 } : this.computeMovementVector();
+    this.updateBodyYaw(dt, move);
 
     if (this.jumpQueued && this.grounded && !this.dead && !this.crouching) {
       this.verticalVelocity = this.jumpSpeed;
@@ -263,7 +332,6 @@ export class PlayerController {
     }
     this.jumpQueued = false;
 
-    const move = this.dead ? { x: 0, y: 0, z: 0 } : this.computeMovementVector();
     const wantsSprint = this.input.sprint && !this.dead && !this.crouching
       && (!this.stamina || this.stamina.canSprint());
     const targetSpeed = this.dead ? 0
@@ -420,6 +488,9 @@ export class PlayerController {
 
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
+    // First person shows the body straight under the camera; keep them
+    // locked so a mode switch can never leave the mesh visually turned.
+    if (mode === 'first_person') this.bodyYaw = this.yaw;
     // Entering third person hands the camera to the rig: snap it to the
     // character so it never glides in from a stale follow point.
     if (mode === 'third_person') this.thirdPersonRig?.snap();
@@ -435,11 +506,64 @@ export class PlayerController {
     return {
       position: this.getPosition(),
       yaw: this.yaw,
+      bodyYaw: this.bodyYaw,
       pitch: this.pitch,
       verticalVelocity: this.verticalVelocity,
       grounded: this.grounded,
       cameraMode: this.cameraMode,
     };
+  }
+
+  /**
+   * Body yaw logic (third person):
+   *   - moving      → the body turns smoothly toward the movement direction
+   *                   (camera-relative WASD), capped by bodyMaxTurnSpeed, so
+   *                   strafing with A/D reads as a natural turn, not a snap.
+   *   - idle        → the body may lag the camera up to maxBodyYawOffset;
+   *                   past it, the body smoothly trails the camera direction
+   *                   at the limit while the camera keeps orbiting.
+   *   - camera      → while the right-button drag is NOT live, the camera
+   *                   eases behind the body (settles behind without
+   *                   teleporting; offsets beyond cameraFollowMaxAngle are
+   *                   refused so the rig can never spin forever).
+   * First person keeps the body locked to the camera yaw.
+   */
+  private updateBodyYaw(dt: number, move: Vec3): void {
+    if (this.dead) return;
+    if (this.cameraMode === 'first_person') {
+      this.bodyYaw = this.yaw;
+      return;
+    }
+
+    const moving = move.x !== 0 || move.z !== 0;
+    let target = this.bodyYaw;
+    if (moving) {
+      // Yaw whose forward (-sin, -cos) equals the movement direction.
+      target = Math.atan2(-move.x, -move.z);
+    } else {
+      const cameraAhead = wrapAngle(this.yaw - this.bodyYaw);
+      if (Math.abs(cameraAhead) > this.maxBodyYawOffset) {
+        // Trail the orbiting camera at the allowed offset — the character
+        // follows the camera direction for as long as it stays past the limit.
+        target = this.yaw - Math.sign(cameraAhead) * this.maxBodyYawOffset;
+      }
+    }
+
+    const diff = wrapAngle(target - this.bodyYaw);
+    if (diff !== 0) {
+      // Exponential approach clamped by a hard angular speed: large turns
+      // sweep at constant speed and settle smoothly — never a snap.
+      const step = diff * (1 - Math.exp(-this.bodyTurnRate * dt));
+      const maxStep = this.bodyMaxTurnSpeed * dt;
+      this.bodyYaw += Math.abs(step) <= maxStep ? step : Math.sign(step) * maxStep;
+    }
+
+    if (!this.lookDragging) {
+      const behind = wrapAngle(this.bodyYaw - this.yaw);
+      if (Math.abs(behind) <= this.cameraFollowMaxAngle) {
+        this.yaw += behind * (1 - Math.exp(-this.cameraFollowRate * dt));
+      }
+    }
   }
 
   private computeMovementVector(): Vec3 {

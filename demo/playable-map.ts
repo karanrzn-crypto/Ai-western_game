@@ -540,12 +540,15 @@ health.on((event) => {
   respawnCountdown = 2.6;
 });
 
-function syncCharacter(delta: number, previousYaw: number): void {
+function syncCharacter(delta: number, previousBodyYaw: number): void {
   const feet = playerController.getFeetPosition();
   character.root.position.set(feet.x, feet.y, feet.z);
-  character.root.rotation.y = playerController.getYaw();
+  // The MESH follows the BODY yaw (smoothed, movement/camera decoupled) —
+  // never the raw camera yaw, which would snap the whole body with the mouse.
+  const bodyYaw = playerController.getBodyYaw();
+  character.root.rotation.y = bodyYaw;
   const speed = playerController.getHorizontalSpeed();
-  const yawRate = (playerController.getYaw() - previousYaw) / Math.max(delta, 1e-4);
+  const yawRate = (bodyYaw - previousBodyYaw) / Math.max(delta, 1e-4);
   characterStates.evaluate({
     dead: playerController.isDead(),
     grounded: playerController.isGrounded(),
@@ -614,7 +617,7 @@ function setHud(): void {
 }
 
 const clock = new THREE.Clock();
-let previousYaw = playerController.getYaw();
+let previousBodyYaw = playerController.getBodyYaw();
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   // Right-drag look FIRST: the accumulated pixel delta becomes yaw/pitch
@@ -623,6 +626,10 @@ function animate(): void {
   if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
     playerController.look(lookDelta.x, lookDelta.y);
   }
+  // Tell the controller whether the RMB look drag is live: while it is, the
+  // camera belongs to the mouse; while it is not, the camera may ease back
+  // behind the turning body (third-person follow behaviour).
+  playerController.setLookDragging(mouseLook.isDragging);
   updatePlayer(delta);
   // Edge-triggered play actions (death gates everything but respawn).
   if (!editor.isEditMode()) {
@@ -647,8 +654,8 @@ function animate(): void {
       if (element) element.textContent = '';
     }
   }
-  syncCharacter(delta, previousYaw);
-  previousYaw = playerController.getYaw();
+  syncCharacter(delta, previousBodyYaw);
+  previousBodyYaw = playerController.getBodyYaw();
   if (!editor.isEditMode()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

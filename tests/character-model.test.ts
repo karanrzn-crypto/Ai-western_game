@@ -20,10 +20,26 @@ test('character proportions match the designed identity', () => {
   const headWorld = new THREE.Vector3();
   head.getWorldPosition(headWorld);
   assert.ok(Math.abs(headWorld.y - 1.56) < 1e-6, `head joint at ${headWorld.y}`);
-  // Hat crown top: head joint + hat group + crown center + half crown.
+  // Hat top: measured from the real geometry (crown pieces inside the hat
+  // group), not a hardcoded stack of constants.
   const hat = head.getObjectByName('hat');
   assert.ok(hat, 'hat joint exists');
-  const hatTopWorld = 1.56 + hat!.position.y + 0.082 + 0.155 / 2;
+  model.root.updateMatrixWorld(true);
+  let hatTopWorld = -Infinity;
+  hat!.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.geometry.computeBoundingBox();
+      const box = obj.geometry.boundingBox!;
+      for (const corner of [
+        new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+        new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+        new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+        new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+      ]) {
+        hatTopWorld = Math.max(hatTopWorld, obj.localToWorld(corner).y);
+      }
+    }
+  });
   assert.ok(hatTopWorld > 1.86 && hatTopWorld < 2.0, `hat top ${hatTopWorld.toFixed(3)} sits on the head`);
   // Feet: foot joint at 0.05 above ground, boot box bottom touches ~0.
   const foot = model.joints.footL;
@@ -86,11 +102,17 @@ test('character meshes cast shadows and stay low-poly', () => {
   assert.equal(shadowCasters, meshes);
 });
 
-test('gun belt and holster sit on the right hip', () => {
+test('gun belt and holster ride the right side (thigh tie-down)', () => {
   const { model } = build();
   const holster = model.root.getObjectByName('holster');
   assert.ok(holster);
-  assert.ok(holster!.position.x > 0.1, 'holster on the +X (right) hip');
+  // The holster is a rigid child of the RIGHT LEG joint (western tie-down):
+  // it moves WITH the swinging thigh, so it can never intersect the pants.
+  assert.equal(holster!.parent, model.joints.legR, 'holster parented to the right leg joint');
+  model.root.updateMatrixWorld(true);
+  const holsterWorld = new THREE.Vector3();
+  holster!.getWorldPosition(holsterWorld);
+  assert.ok(holsterWorld.x > 0.1, `holster on the +X (right) side (${holsterWorld.x.toFixed(3)})`);
   const gunMetal = model.materials.gunmetal;
   let gunParts = 0;
   holster!.traverse((obj) => {

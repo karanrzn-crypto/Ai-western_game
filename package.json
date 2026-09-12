@@ -6,24 +6,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "vite build",
-    "build:lib": "tsc",
+    "build": "node scripts/build.mjs",
+    "build:lib": "node node_modules/typescript/lib/tsc.js",
     "dev": "vite",
-    "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node scripts/test.mjs"
   },
-  "keywords": [
-    "three-js",
-    "3d",
-    "scene-manager",
-    "data-driven",
-    "western-game",
-    "typescript"
-  ],
+  "keywords": ["three-js", "3d", "scene-manager", "data-driven", "western-game", "typescript"],
   "license": "MIT",
-  "dependencies": {
-    "three": "^0.161.0"
-  },
+  "dependencies": { "three": "^0.161.0" },
   "devDependencies": {
     "@types/three": "^0.161.0",
     "@types/node": "^20.11.0",

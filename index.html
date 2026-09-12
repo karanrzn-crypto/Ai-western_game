@@ -1,90 +1,40 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI-Western Game — Foundation Demo</title>
-    <style>
-      * { box-sizing: border-box; }
-      html, body { margin: 0; min-height: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0d0d12; color: #e8e2d4; }
-      body { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: 52px minmax(0, 1fr); grid-template-areas: "header header" "stage panel"; }
-      header { grid-area: header; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-bottom: 1px solid #2a2a30; background: #15151b; }
-      header h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .08em; }
-      header .meta { color: #918a7d; font-size: 11px; white-space: nowrap; }
-      #stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0b0b10; }
-      #stage canvas { display: block; width: 100%; height: 100%; }
-      #panel { grid-area: panel; min-height: 0; overflow-y: auto; padding: 14px; border-left: 1px solid #2a2a30; background: #14141a; display: flex; flex-direction: column; gap: 12px; }
-      .card { background: #1a1a21; border: 1px solid #2a2a30; border-radius: 7px; padding: 12px; }
-      .card h2 { margin: 0 0 9px; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: #c8b67a; }
-      .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 11px; }
-      .key { color: #918a7d; }
-      .value { color: #f1ead8; font-variant-numeric: tabular-nums; text-align: right; }
-      .ok { color: #7db28b; }
-      .muted { color: #7a756a; }
-      .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; font-size: 10px; margin-top: 7px; }
-      .legend div { display: flex; align-items: center; gap: 7px; color: #b8b0a0; }
-      .dot { width: 10px; height: 10px; border-radius: 2px; border: 1px solid #777; flex: none; }
-      button { width: 100%; padding: 9px 12px; border: 1px solid #3a3240; border-radius: 5px; background: #2a2230; color: #f1ead8; font: inherit; font-size: 11px; cursor: pointer; }
-      button:hover { background: #3a3240; }
-      textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #2a2a30; border-radius: 5px; background: #0d0d12; color: #c8b67a; padding: 8px; font: inherit; font-size: 10px; }
-      .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .status { padding: 9px; border: 1px solid #2a2a30; border-radius: 5px; background: #15151b; }
-      .status .title { color: #918a7d; font-size: 10px; margin-bottom: 4px; }
-      .status .state { font-size: 12px; }
-      .toast { position: absolute; left: 14px; bottom: 14px; padding: 8px 11px; border: 1px solid #2a2a30; border-radius: 5px; background: rgba(20,20,26,.94); color: #c8b67a; font-size: 10px; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
-      .toast.show { opacity: 1; }
-      @media (max-width: 800px) { body { grid-template-columns: 1fr; grid-template-rows: 52px minmax(360px, 1fr) auto; grid-template-areas: "header" "stage" "panel"; } #panel { border-left: 0; border-top: 1px solid #2a2a30; } }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>AI-WESTERN GAME — FOUNDATION DEMO</h1>
-      <div class="meta">1 managed cube · debug helpers visible</div>
-    </header>
-    <main id="stage" aria-label="Three.js validation scene"></main>
-    <aside id="panel">
-      <section class="card">
-        <h2>What you are seeing</h2>
-        <div class="row"><span class="key">Managed game objects</span><span class="value ok" id="stat-count">0</span></div>
-        <div class="row"><span class="key">Rendered game objects</span><span class="value ok" id="stat-render">0</span></div>
-        <div class="row"><span class="key">Asset type</span><span class="value" id="stat-asset">cube</span></div>
-        <div class="row"><span class="key">Object ID</span><span class="value" id="stat-id">—</span></div>
-      </section>
-      <section class="card">
-        <h2>Debug scene</h2>
-        <div class="row"><span class="key">Camera</span><span class="value ok">ACTIVE</span></div>
-        <div class="row"><span class="key">Directional light</span><span class="value ok">ACTIVE</span></div>
-        <div class="row"><span class="key">Grid</span><span class="value ok">VISIBLE</span></div>
-        <div class="row"><span class="key">Axes</span><span class="value ok">VISIBLE</span></div>
-        <div class="row"><span class="key">Helpers</span><span class="value muted">NOT SAVED</span></div>
-        <div class="legend">
-          <div><span class="dot" style="background:#555"></span>Grid = world scale</div>
-          <div><span class="dot" style="background:#e55"></span>X = left/right</div>
-          <div><span class="dot" style="background:#5c6"></span>Y = up/down</div>
-          <div><span class="dot" style="background:#57c"></span>Z = front/back</div>
-        </div>
-      </section>
-      <section class="card">
-        <h2>Architecture checks</h2>
-        <div class="status-grid">
-          <div class="status"><div class="title">REGISTER</div><div class="state ok" id="check-register">OK</div></div>
-          <div class="status"><div class="title">ASSET</div><div class="state ok" id="check-asset">OK</div></div>
-          <div class="status"><div class="title">RENDER</div><div class="state ok" id="check-render">OK</div></div>
-          <div class="status"><div class="title">SAVE</div><div class="state ok" id="check-save">OK</div></div>
-          <div class="status"><div class="title">CLEAR</div><div class="state ok" id="check-clear">OK</div></div>
-          <div class="status"><div class="title">LOAD</div><div class="state ok" id="check-load">OK</div></div>
-        </div>
-      </section>
-      <section class="card">
-        <h2>Round-trip test</h2>
-        <button id="btn-rerun">Re-run save → clear → load</button>
-      </section>
-      <section class="card">
-        <h2>Scene JSON</h2>
-        <textarea id="export-output" readonly placeholder="The serialized scene appears here."></textarea>
-      </section>
-    </aside>
-    <div id="toast" class="toast"></div>
-    <script type="module" src="./demo/main.ts"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-Western Game — Playable Map</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#171717;color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    body{position:relative}
+    #stage{position:fixed;inset:0;background:#6e6758}
+    #stage canvas{display:block;width:100%;height:100%}
+    #hud{position:fixed;inset:0;pointer-events:none}
+    .panel{position:absolute;top:16px;left:16px;min-width:250px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
+    .title{margin-bottom:8px;color:#d7bd7c;font-size:11px;font-weight:800;letter-spacing:.14em}
+    .row{display:flex;justify-content:space-between;gap:20px;padding:3px 0;font-size:11px}.key{color:#a7a195}.value{color:#f1eadf;font-variant-numeric:tabular-nums}
+    #crosshair{position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%)}
+    #crosshair:before,#crosshair:after{content:"";position:absolute;left:50%;top:50%;background:rgba(255,255,255,.9);transform:translate(-50%,-50%);box-shadow:0 0 4px rgba(0,0,0,.6)}
+    #crosshair:before{width:2px;height:16px}#crosshair:after{width:16px;height:2px}
+    #control-hint{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);padding:9px 14px;border:1px solid rgba(255,255,255,.15);border-radius:7px;background:rgba(12,12,14,.72);color:#ddd5c8;font-size:11px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.22)}
+    .badge{display:inline-block;margin-top:7px;padding:3px 6px;border-radius:4px;background:rgba(116,153,100,.2);color:#9fca8b;font-size:9px;letter-spacing:.08em}
+  </style>
+</head>
+<body>
+  <main id="stage" aria-label="AI-Western Game playable map"></main>
+  <div id="hud">
+    <div class="panel">
+      <div class="title">AI-WESTERN GAME // PLAYABLE MAP</div>
+      <div class="row"><span class="key">Managed objects</span><span class="value" id="stat-count">—</span></div>
+      <div class="row"><span class="key">Rendered objects</span><span class="value" id="stat-render">—</span></div>
+      <div class="row"><span class="key">Player X / Y / Z</span><span class="value" id="player-position">—</span></div>
+      <div class="row"><span class="key">Map</span><span class="value">60 × 60</span></div>
+      <div class="badge">FOUNDATION + MOVEMENT</div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="control-hint">Click map · WASD move · mouse look · Shift sprint · Esc release</div>
+  </div>
+  <script type="module" src="./demo/playable-map.ts"></script>
+</body>
 </html>

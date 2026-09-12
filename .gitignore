@@ -1,0 +1,324 @@
+# ============================================================
+# .gitignore for Ai-western_game
+# Comprehensive ignore rules for AI game projects
+# ============================================================
+
+# -------------------- Secrets & Environment --------------------
+# NEVER commit secrets, API keys, or environment files
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.test
+.env.example.local
+*.env
+secrets.json
+secrets.yaml
+secrets.yml
+secret.key
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+*.cert
+token.txt
+tokens.json
+credentials.json
+oauth_tokens.json
+service-account*.json
+
+# -------------------- Python --------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+virtualenv/
+.python-version
+pyvenv.cfg
+
+# Testing & coverage
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+# But allow notebooks themselves if you want them tracked
+# *.ipynb
+
+# -------------------- Node.js / JavaScript --------------------
+node_modules/
+.npm
+.pnpm-store/
+.yarn-integrity
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.eslintcache
+.stylelintcache
+.parcel-cache
+.next/
+.nuxt/
+.output/
+dist/
+build/
+*.tsbuildinfo
+
+# -------------------- Game Engines --------------------
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+Unity[Pp]roject[Ss]/
+*.unitypackage
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.mdb
+*.opendb
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+sysinfo.txt
+Crashlytics.log
+Assets/AssetStoreTools*
+Assets/Plugins/Editor/JetBrains*
+.vs/
+.idea/
+
+# Godot
+.godot/
+*.tmp
+export.cfg
+export_presets.cfg
+
+# Unreal Engine
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.sln
+*.suo
+*.user
+.vs/
+*.VC.db
+
+# -------------------- AI / ML Models & Data --------------------
+# Large model files - DO NOT COMMIT
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+*.onnx
+*.h5
+*.pb
+*.tflite
+*.mlmodel
+*.model
+
+# Model directories
+models/
+model_weights/
+checkpoints/
+checkpoints/
+wandb/
+mlruns/
+runs/
+
+# Large datasets (track separately or use DVC/Git LFS)
+datasets/
+data/raw/
+data/processed/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.csv.gz
+*.parquet
+*.feather
+*.hdf5
+*.h5
+
+# Hugging Face cache
+.cache/huggingface/
+transformers_cache/
+
+# TensorBoard logs
+logs/
+runs/
+events.out.tfevents.*
+
+# DVC
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+
+# -------------------- IDEs & Editors --------------------
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+.factorypath
+*.sublime-workspace
+*.sublime-project
+.history/
+.astro/
+
+# -------------------- Operating System --------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.lnk
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# -------------------- Logs & Temp --------------------
+*.log
+logs/
+log/
+*.out
+*.pid
+*.seed
+*.pid.lock
+pids/
+*.tmp
+tmp/
+temp/
+.cache/
+
+# -------------------- Database --------------------
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+db.sqlite
+db.sqlite3
+
+# -------------------- Build Outputs --------------------
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.dmg
+*.deb
+*.rpm
+*.msi
+*.jar
+*.war
+*.ear
+
+# -------------------- Package Manager Locks (optional) --------------------
+# Uncomment if you want to ignore lock files
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+# poetry.lock
+# Pipfile.lock
+# uv.lock
+
+# -------------------- Misc --------------------
+.DS_Store
+.env
+.env.local
+TODO.md
+NOTES.md
+PRIVATE_NOTES.md
+
+# -------------------- Project-specific --------------------
+# Generated game assets (uncomment if needed)
+# assets/generated/
+# output/
+# results/

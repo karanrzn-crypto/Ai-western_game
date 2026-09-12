@@ -10,26 +10,79 @@
  *
  * Cross-session uuid persistence is preserved by storing and replaying
  * the exact uuid values from the source JSON.
+ *
+ * Scene loading lifecycle (per directive §8):
+ *
+ *     JSON → envelope validation → migration → per-object validation
+ *         → (atomic) clear + commit → renderer sync (via manager)
+ *
+ * Failure modes:
+ *   - Bad envelope (missing version / objects[] / exportedAt) → throws.
+ *   - Unknown schema version with no migration path → throws.
+ *   - Atomic mode (default): any malformed object → throws SceneLoadError
+ *     WITHOUT mutating the target registry.
+ *   - Lenient mode: malformed objects are skipped and reported in the
+ *     returned LoadSummary.skipped[].
  * -----------------------------------------------------------------------------
  */
 
 import type { SceneData, ObjectDefinition } from './types.js';
 import type { SceneStateManager } from './SceneStateManager.js';
 import { isValidUUID } from '../utils/uuid.js';
+import { getSceneMigrations } from '../migrations/SceneMigrations.js';
+import { getConfig } from '../config/GameConfig.js';
+import { logger } from '../utils/Logger.js';
 
 export interface PersistenceManagerOptions {
-  /** Scene-level metadata stamped onto exports. */
-  defaultSceneMetadata?: SceneData['sceneMetadata'];
+  /**
+   * Override the migration registry. By default uses the global
+   * scene-migration singleton bound to the schema version from config.
+   */
+  migrations?: typeof getSceneMigrations extends () => infer M ? M : never;
+}
+
+/** A single failed object during load. */
+export interface SkippedEntry {
+  uuid?: string;
+  reason: string;
+  index: number;
+}
+
+/** Result of a load operation. */
+export interface LoadSummary {
+  loaded: number;
+  skipped: SkippedEntry[];
+  schemaVersion: number;
+  exportedAt: string;
+}
+
+/** Thrown in atomic mode when one or more objects fail validation. */
+export class SceneLoadError extends Error {
+  readonly skipped: SkippedEntry[];
+  constructor(message: string, skipped: SkippedEntry[]) {
+    super(message);
+    this.name = 'SceneLoadError';
+    this.skipped = skipped;
+  }
+}
+
+export interface LoadOptions {
+  /**
+   * 'atomic' (default): any malformed entry aborts the whole load; the
+   *   target registry is left untouched.
+   * 'lenient': malformed entries are skipped and reported in the summary.
+   */
+  mode?: 'atomic' | 'lenient';
 }
 
 export class PersistenceManager {
-  /** Constant schema version for exports. Bump in migrations. */
-  static readonly SCENE_SCHEMA_VERSION = 1 as const;
-
-  private readonly defaultSceneMetadata?: SceneData['sceneMetadata'];
+  private readonly log = logger.child('persistence');
+  // We import the MigrationRegistry type lazily to avoid a circular type
+  // dependency; in practice the default singleton is fine.
+  private readonly migrations?: ReturnType<typeof getSceneMigrations>;
 
   constructor(options: PersistenceManagerOptions = {}) {
-    this.defaultSceneMetadata = options.defaultSceneMetadata;
+    this.migrations = options.migrations ?? getSceneMigrations();
   }
 
   /**
@@ -47,50 +100,114 @@ export class PersistenceManager {
     const objects = manager
       .getAllObjects()
       .map((def) => this.serializeDefinition(def));
-    return {
-      version: PersistenceManager.SCENE_SCHEMA_VERSION,
+    const out: SceneData = {
+      version: getConfig().schemaVersion,
       exportedAt: new Date().toISOString(),
       objects,
-      sceneMetadata: { ...this.defaultSceneMetadata, ...overrides },
+      sceneMetadata: overrides ? { ...overrides } : undefined,
     };
+    manager.bus.emit('scene:exported', { count: objects.length });
+    this.log.debug('scene exported', { count: objects.length });
+    return out;
   }
 
   /**
-   * loadSceneFromJSON(data) — restore a scene dump into the given manager.
-   * Behavior:
-   *   - Clears the existing registry first.
-   *   - Re-registers every object preserving its original uuid.
-   *   - Skips malformed entries (logged to console) rather than aborting
-   *     the entire load, so a partial scene still comes up.
+   * loadSceneFromJSON(data, manager, options) — restore a scene dump.
    *
-   * @returns a summary describing what was loaded.
+   * Flow:
+   *   1. Validate envelope (version, objects[], exportedAt).
+   *   2. If version != current schemaVersion, run migrations.
+   *   3. Deserialize + validate every object into a temp list (no mutation).
+   *   4. If atomic mode and any failure: throw SceneLoadError.
+   *   5. Atomically: clear the manager, then commit every valid object.
+   *   6. Renderer sync happens via the manager's per-register notification.
+   *
+   * @returns a summary of what was loaded (and what was skipped in lenient mode).
    */
   loadSceneFromJSON(
     data: unknown,
     manager: SceneStateManager,
+    options: LoadOptions = {},
   ): LoadSummary {
-    const parsed = this.validate(data);
-    manager.clear();
-    let loaded = 0;
-    const skipped: Array<{ uuid?: string; reason: string }> = [];
-    for (const raw of parsed.objects) {
+    const mode = options.mode ?? 'atomic';
+
+    // --- Step 1: envelope validation -------------------------------
+    const validated = this.validateEnvelope(data);
+
+    // --- Step 2: migration if needed ------------------------------
+    let working: SceneData = validated;
+    if (validated.version !== getConfig().schemaVersion) {
+      if (!this.migrations) {
+        throw new Error(
+          `[PersistenceManager] schema version ${validated.version} is not supported (current: ${getConfig().schemaVersion}) and no migrations are configured`,
+        );
+      }
+      const migrated = this.migrations.migrate<SceneData>(validated);
+      working = migrated;
+      this.log.info('scene migrated', {
+        from: validated.version,
+        to: working.version,
+      });
+    }
+
+    // --- Step 3: deserialize every object into a temp list --------
+    const temp: Array<{ ok: true; def: ObjectDefinition } | { ok: false; entry: SkippedEntry }> = [];
+    const seenUuids = new Set<string>();
+    working.objects.forEach((raw, index) => {
       try {
         const def = this.deserializeDefinition(raw);
-        // registerObject will throw if uuid is malformed or duplicate.
-        manager.registerObject(def);
-        loaded++;
+        if (seenUuids.has(def.uuid)) {
+          throw new Error(`duplicate uuid within scene: ${def.uuid}`);
+        }
+        seenUuids.add(def.uuid);
+        temp.push({ ok: true, def });
       } catch (err) {
-        skipped.push({
-          uuid: typeof raw?.uuid === 'string' ? raw.uuid : undefined,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        const reason = err instanceof Error ? err.message : String(err);
+        const uuid = typeof raw?.uuid === 'string' ? raw.uuid : undefined;
+        temp.push({ ok: false, entry: { uuid, reason, index } });
+      }
+    });
+
+    const skipped = temp
+      .filter((t): t is { ok: false; entry: SkippedEntry } => !t.ok)
+      .map((t) => t.entry);
+
+    // --- Step 4: atomic abort if any malformed --------------------
+    if (mode === 'atomic' && skipped.length > 0) {
+      const reasonList = skipped
+        .map((s) => `  #${s.index}${s.uuid ? ` (${s.uuid})` : ''}: ${s.reason}`)
+        .join('\n');
+      throw new SceneLoadError(
+        `[PersistenceManager] atomic load failed: ${skipped.length} malformed entr${skipped.length === 1 ? 'y' : 'ies'}\n${reasonList}`,
+        skipped,
+      );
+    }
+
+    // --- Step 5: atomic commit ------------------------------------
+    manager.clear();
+    let loaded = 0;
+    for (const t of temp) {
+      if (t.ok) {
+        manager.registerObject(t.def);
+        loaded++;
       }
     }
+
+    // --- Step 6: done ---------------------------------------------
+    manager.bus.emit('scene:loaded', {
+      loaded,
+      skipped: skipped.length,
+    });
+    this.log.info('scene loaded', {
+      loaded,
+      skipped: skipped.length,
+      mode,
+    });
     return {
       loaded,
       skipped,
-      schemaVersion: parsed.version,
-      exportedAt: parsed.exportedAt,
+      schemaVersion: working.version,
+      exportedAt: working.exportedAt,
     };
   }
 
@@ -174,34 +291,28 @@ export class PersistenceManager {
     if (typeof m.name !== 'string' || m.name.length === 0) {
       throw new Error(`object ${uuid}: metadata.name required and must be non-empty string`);
     }
-    const out: ObjectDefinition['metadata'] = { ...m, name: m.name } as ObjectDefinition['metadata'];
-    return out;
+    return { ...m, name: m.name } as ObjectDefinition['metadata'];
   }
 
-  /** Validate the top-level SceneData envelope. */
-  private validate(data: unknown): SceneData {
+  /** Validate the top-level SceneData envelope. Returns the (still-typed) data. */
+  private validateEnvelope(data: unknown): SceneData {
     if (!data || typeof data !== 'object') {
-      throw new Error('scene data is not an object');
+      throw new Error('[PersistenceManager] scene data is not an object');
     }
     const d = data as Record<string, unknown>;
-    if (d.version !== PersistenceManager.SCENE_SCHEMA_VERSION) {
+    if (typeof d.version !== 'number' || !Number.isFinite(d.version)) {
       throw new Error(
-        `unsupported scene schema version: ${String(d.version)} (expected ${PersistenceManager.SCENE_SCHEMA_VERSION})`,
+        `[PersistenceManager] scene data.version must be a finite number, got ${String(d.version)}`,
       );
     }
     if (!Array.isArray(d.objects)) {
-      throw new Error('scene data.objects must be an array');
+      throw new Error('[PersistenceManager] scene data.objects must be an array');
     }
     if (typeof d.exportedAt !== 'string') {
-      throw new Error('scene data.exportedAt must be an ISO timestamp string');
+      throw new Error(
+        '[PersistenceManager] scene data.exportedAt must be an ISO timestamp string',
+      );
     }
     return d as unknown as SceneData;
   }
-}
-
-export interface LoadSummary {
-  loaded: number;
-  skipped: Array<{ uuid?: string; reason: string }>;
-  schemaVersion: number;
-  exportedAt: string;
 }

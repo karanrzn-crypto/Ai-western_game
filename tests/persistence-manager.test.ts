@@ -102,7 +102,7 @@ test('export → load round-trips with full fidelity', () => {
   assert.deepEqual(restored.transform.scale, { x: 2, y: 2, z: 2 });
 });
 
-test('loadSceneFromJSON skips malformed entries but loads valid ones', () => {
+test('loadSceneFromJSON skips malformed entries but loads valid ones (lenient mode)', () => {
   const { manager, persistence } = setup();
   const sceneData = {
     version: 1 as const,
@@ -130,7 +130,7 @@ test('loadSceneFromJSON skips malformed entries but loads valid ones', () => {
       },
     ],
   };
-  const summary = persistence.loadSceneFromJSON(sceneData, manager);
+  const summary = persistence.loadSceneFromJSON(sceneData, manager, { mode: 'lenient' });
   assert.equal(summary.loaded, 1);
   assert.equal(summary.skipped.length, 1);
 });

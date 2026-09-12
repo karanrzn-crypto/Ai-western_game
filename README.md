@@ -22,19 +22,24 @@ restored later, which kills the "state loss" problem permanently.
 │                                                              │
 │   registry: Map<string, ObjectDefinition>                    │
 │   - registerObject(def)        → adds to registry + renderer │
+│   - duplicateObject(uuid)      → clones object, new uuid    │
 │   - unregisterObject(uuid)     → removes from both          │
 │   - updateObjectTransform(u,t) → mutates transform, re-syncs │
 │   - updateObjectMetadata(u,m)                                │
 │   - getObject / getSnapshot / getAllObjects                 │
 │   - getObjectsByAssetType                                    │
+│   - bus: EventBus (lifecycle events)                         │
 │                                                              │
-└───────────────┬──────────────────────────┬──────────────────┘
-                │ dispatch RendererChange   │ uses for export/load
-                ▼                            ▼
+└──────────────┬──────────────────────────────────────────────┘
+               │ dispatch RendererChange   │ uses for export/load
+               ▼                            ▼
    ┌────────────────────────┐   ┌──────────────────────────────┐
    │  IRendererAdapter      │   │  PersistenceManager          │
    │  - syncObject(change)  │   │  - exportSceneToJSON()       │
    │  - getActiveObjectCount│   │  - loadSceneFromJSON(data)   │
+   │                        │   │    (atomic by default)       │
+   │  consumed:             │   │    (drives migrations)        │
+   │  AssetRegistry ←──────┼───┤                              │
    └──────────┬─────────────┘   └──────────────────────────────┘
               │
    ┌──────────┴──────────────┐
@@ -45,8 +50,21 @@ restored later, which kills the "state loss" problem permanently.
 │ Adapter          │   │ (tests / Node)         │
 │ - meshes:        │   │ - activeUUIDs: Set     │
 │   Map<uuid,Mesh> │   │ - change log           │
-└──────────────────┘   └────────────────────────┘
+│ - async-safe     │   └────────────────────────┘
+│   pending queue  │
+└──────────────────┘
+
+Cross-cutting singletons (consumed by every layer above):
+  • GameConfig      (schemaVersion, maxObjects, renderer defaults, …)
+  • EventBus        (typed lifecycle events: object:registered, scene:loaded, …)
+  • MigrationRegistry (scene schema migrations: v1 → v2 → …)
+  • Logger         (scoped leveled: error / warn / info / debug)
 ```
+
+For the complete architecture report (major modules, data flow,
+persistence format, asset flow, rendering flow, what is intentionally
+NOT implemented yet, known limitations, recommended next foundation
+step), see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 
 ### File layout
 
@@ -54,23 +72,36 @@ restored later, which kills the "state loss" problem permanently.
 src/
 ├── core/
 │   ├── types.ts                  ← ObjectDefinition / Transform / AssetType / SceneData
-│   ├── SceneStateManager.ts      ← THE registry + update API
-│   ├── PersistenceManager.ts     ← exportSceneToJSON / loadSceneFromJSON
+│   ├── SceneStateManager.ts      ← THE registry + update + duplicate + clear API
+│   ├── PersistenceManager.ts     ← exportSceneToJSON / loadSceneFromJSON (atomic, migrations)
+│   ├── EventBus.ts               ← minimal typed event emitter
+│   ├── TransformOps.ts           ← IDENTITY_TRANSFORM, equals, clone, makeTransform
 │   ├── validators.ts             ← merge & validate Transform patches
 │   └── clone.ts                  ← deep-clone / deep-freeze helpers
 ├── engine/
 │   ├── IRendererAdapter.ts       ← interface every renderer must satisfy
-│   ├── ThreeRendererAdapter.ts   ← concrete three.js implementation
+│   ├── ThreeRendererAdapter.ts   ← concrete three.js implementation (async-safe)
 │   └── HeadlessRendererAdapter.ts← test/Node-only implementation
+├── assets/
+│   ├── IAssetFactory.ts           ← per-asset-type factory interface
+│   ├── AssetRegistry.ts           ← assetType → factory map (replaces switch statement)
+│   ├── PrimitiveAssetFactory.ts   ← cube factory (only validation asset)
+│   └── index.ts                  ← barrel
+├── config/
+│   └── GameConfig.ts              ← singleton config (schema version, limits, debug, …)
+├── migrations/
+│   └── SceneMigrations.ts         ← MigrationRegistry (v1 → v2 → …)
 ├── utils/
-│   └── uuid.ts                   ← generateUUID / isValidUUID (cross-session stable)
+│   ├── uuid.ts                   ← generateUUID / isValidUUID (cross-session stable)
+│   └── Logger.ts                  ← leveled scoped logger
 └── index.ts                      ← public barrel
 
 index.html                       ← Vite entry (project root)
 demo/                             ← minimal demo entry (main.ts)
 examples/                         ← minimal-scene.json (1-cube validation fixture)
-tests/                            ← node:test tests (no external deps)
+tests/                            ← 79 node:test tests (no external deps)
 vercel.json                       ← Vercel deployment config (Vite framework)
+ARCHITECTURE.md                  ← full architecture report
 ```
 
 > **Status:** This repo contains ONLY the architecture foundation and a
@@ -88,7 +119,7 @@ JSON file — conforms to **exactly** this shape:
 ```jsonc
 {
   "uuid": "00000000-0000-4000-a000-000000000001",  // RFC 4122 v4
-  "assetType": "wall",                              // wall | chair | prop | ...
+  "assetType": "cube",                              // cube | wall | chair | prop | ...
   "transform": {
     "position": { "x": 0, "y": 0, "z": 0 },
     "rotation": { "x": 0, "y": 0, "z": 0 },         // degrees

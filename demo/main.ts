@@ -8,10 +8,11 @@
  * foundation runs end-to-end:
  *
  *   1. registerObject(cube)               — SceneStateManager.add
- *   2. ThreeRendererAdapter mirrors cube — mesh appears in three.js scene
- *   3. exportSceneToJSON()                — registry → portable JSON
- *   4. manager.clear()                    — registry + meshes emptied
- *   5. loadSceneFromJSON()                — JSON → registry (uuid preserved)
+ *   2. AssetRegistry resolves the cube    — primitive factory invoked
+ *   3. ThreeRendererAdapter mirrors cube — mesh appears in three.js scene
+ *   4. exportSceneToJSON()                — registry → portable JSON
+ *   5. manager.clear()                    — registry + meshes emptied
+ *   6. loadSceneFromJSON()                — JSON → registry (uuid preserved)
  *
  * The full round-trip runs automatically on page load and can be re-triggered
  * from the side panel button.
@@ -23,8 +24,17 @@ import {
   SceneStateManager,
   PersistenceManager,
   ThreeRendererAdapter,
+  AssetRegistry,
+  registerPrimitiveFactories,
+  configure,
+  logger,
 } from '../src/index.js';
 import minimalScene from '../examples/minimal-scene.json' assert { type: 'json' };
+
+// ---------------------------------------------------------------------------
+// Config — flip debug on locally if you want verbose logs in the console.
+// ---------------------------------------------------------------------------
+configure({ debug: false, logging: { level: 'info' } });
 
 // ---------------------------------------------------------------------------
 // Three.js bootstrap — one camera, one light, one renderer.
@@ -59,11 +69,24 @@ threeScene.add(light);
 threeScene.add(new THREE.AmbientLight(0x404050, 0.6));
 
 // ---------------------------------------------------------------------------
-// Wire up SceneStateManager + PersistenceManager.
+// Wire up: AssetRegistry → ThreeRendererAdapter → SceneStateManager.
+// Note how the renderer takes the registry as a dependency — no inline
+// asset factory. This is the architecture-validating wiring.
 // ---------------------------------------------------------------------------
-const adapter = new ThreeRendererAdapter({ scene: threeScene });
+const assets = new AssetRegistry();
+registerPrimitiveFactories(assets);
+
+const adapter = new ThreeRendererAdapter({ scene: threeScene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
 const persistence = new PersistenceManager();
+
+// Subscribe to lifecycle events so we can prove the EventBus works.
+manager.bus.on('object:registered', ({ definition }) => {
+  logger.debug('event:object:registered', { uuid: definition.uuid });
+});
+manager.bus.on('scene:loaded', ({ loaded, skipped }) => {
+  logger.debug('event:scene:loaded', { loaded, skipped });
+});
 
 // ---------------------------------------------------------------------------
 // UI helpers.
@@ -98,7 +121,14 @@ function writeExport(text: string): void {
 }
 
 function resetStatuses(): void {
-  for (const id of ['step-register', 'step-render', 'step-export', 'step-clear', 'step-load']) {
+  for (const id of [
+    'step-register',
+    'step-asset',
+    'step-render',
+    'step-export',
+    'step-clear',
+    'step-load',
+  ]) {
     const el = document.getElementById(id);
     el?.classList.remove('ok');
     el?.classList.add('pending');
@@ -127,17 +157,22 @@ async function runRoundTrip(): Promise<void> {
     },
     metadata: { name: 'Demo Cube' },
   });
-  setStatus('step-register', true);
+  setStatus('step-register', manager.getObjectCount() === 1);
 
-  // --- Step 2: ThreeRendererAdapter should have mirrored the cube ---
-  // (no explicit call needed — syncObject ran during registerObject)
+  // --- Step 2: AssetRegistry resolved the cube ---------------------
+  // (This happens synchronously for primitive factories — verify it.)
+  setStatus('step-asset', assets.has('cube'));
+
+  // --- Step 3: ThreeRendererAdapter should have mirrored the cube ---
+  // Give the renderer one frame to commit the mesh.
+  await new Promise((r) => setTimeout(r, 16));
   setStatus('step-render', adapter.getActiveObjectCount() === 1);
   refreshSnapshot();
 
   // Yield a frame so the user sees the cube before we destroy it.
   await new Promise((r) => setTimeout(r, 700));
 
-  // --- Step 3: exportSceneToJSON() ----------------------------------
+  // --- Step 4: exportSceneToJSON() ----------------------------------
   const dump = persistence.exportSceneToJSON(manager);
   writeExport(JSON.stringify(dump, null, 2));
   setStatus('step-export', dump.objects.length === 1);
@@ -145,7 +180,7 @@ async function runRoundTrip(): Promise<void> {
 
   await new Promise((r) => setTimeout(r, 700));
 
-  // --- Step 4: clear() ----------------------------------------------
+  // --- Step 5: clear() ----------------------------------------------
   manager.clear();
   setStatus('step-clear', manager.getObjectCount() === 0);
   refreshSnapshot();
@@ -153,8 +188,10 @@ async function runRoundTrip(): Promise<void> {
 
   await new Promise((r) => setTimeout(r, 700));
 
-  // --- Step 5: loadSceneFromJSON() restores the cube with same uuid --
+  // --- Step 6: loadSceneFromJSON() restores the cube with same uuid -
   const summary = persistence.loadSceneFromJSON(dump, manager);
+  // Give the renderer one frame to commit the mesh after syncObject.
+  await new Promise((r) => setTimeout(r, 16));
   setStatus(
     'step-load',
     summary.loaded === 1 &&
@@ -168,6 +205,7 @@ async function runRoundTrip(): Promise<void> {
   await new Promise((r) => setTimeout(r, 700));
   manager.clear();
   persistence.loadSceneFromJSON(minimalScene, manager);
+  await new Promise((r) => setTimeout(r, 16));
   refreshSnapshot();
   toast('Loaded from examples/minimal-scene.json');
 }
@@ -177,7 +215,7 @@ async function runRoundTrip(): Promise<void> {
 // ---------------------------------------------------------------------------
 document.getElementById('btn-rerun')!.addEventListener('click', () => {
   runRoundTrip().catch((err) => {
-    console.error('Round-trip failed:', err);
+    logger.error('Round-trip failed', { error: err.message ?? String(err) });
     toast(`Round-trip error: ${err.message ?? err}`);
   });
 });

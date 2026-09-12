@@ -8,6 +8,8 @@
  *   - Be the ONLY mutator of object transforms (updateObjectTransform).
  *   - Notify a connected IRendererAdapter of changes so the engine only
  *     re-renders when state actually changes.
+ *   - Broadcast lifecycle events through the EventBus so future systems
+ *     (audio, UI, gameplay) can react without depending on the manager.
  *   - Provide lookup, filtering, and inspection helpers for callers
  *     (especially AI asset-placement agents).
  *
@@ -17,6 +19,8 @@
  *   - metadata.name is always a non-empty string.
  *   - The registry never directly mutates user-supplied input — objects are
  *     deep-cloned on insert so external mutation cannot corrupt state.
+ *   - The renderer is treated as a downstream mirror — renderer failures
+ *     NEVER corrupt the registry.
  * -----------------------------------------------------------------------------
  */
 
@@ -33,15 +37,21 @@ import { generateUUID, isValidUUID } from '../utils/uuid.js';
 import type { IRendererAdapter, RendererChange } from '../engine/IRendererAdapter.js';
 import { deepClone, deepFreeze } from './clone.js';
 import { mergeTransform, validateTransform } from './validators.js';
+import { transformsEqual } from './TransformOps.js';
+import { EventBus } from './EventBus.js';
+import { logger } from '../utils/Logger.js';
+import { getConfig } from '../config/GameConfig.js';
 
 export interface SceneStateManagerOptions {
   /** Optional renderer adapter that mirrors registry state to 3D meshes. */
   renderer?: IRendererAdapter;
   /**
-   * If true (default), updates call renderer.syncObject only when the
-   * serialized transform has actually changed. Set false for debug builds.
+   * If true (default), updateObjectTransform skips renderer sync when the
+   * serialized transform has not actually changed. Set false for debug builds.
    */
   dedupeRenders?: boolean;
+  /** Optional event bus. If omitted, a fresh private bus is created. */
+  events?: EventBus;
 }
 
 export interface SceneSnapshot {
@@ -61,10 +71,19 @@ export class SceneStateManager {
 
   private readonly renderer?: IRendererAdapter;
   private readonly dedupeRenders: boolean;
+  /** Either the injected bus or a private one — never null. */
+  private readonly events: EventBus;
+  private readonly log = logger.child('scene');
 
   constructor(options: SceneStateManagerOptions = {}) {
     this.renderer = options.renderer;
     this.dedupeRenders = options.dedupeRenders ?? true;
+    this.events = options.events ?? new EventBus();
+  }
+
+  /** Access the event bus (e.g. to subscribe from UI/gameplay systems). */
+  get bus(): EventBus {
+    return this.events;
   }
 
   // -------------------------------------------------- registration ----
@@ -75,8 +94,16 @@ export class SceneStateManager {
    * are filled in with defaults when omitted.
    * @returns the canonical, fully-populated ObjectDefinition (frozen).
    * @throws if uuid is supplied but already exists or malformed.
+   * @throws if the registry has hit the configured maxObjects ceiling.
    */
   registerObject(input: PartialObjectDefinition & { uuid?: string }): Readonly<ObjectDefinition> {
+    const max = getConfig().scene.maxObjects;
+    if (this.registry.size >= max) {
+      throw new Error(
+        `[SceneStateManager] maxObjects ceiling (${max}) reached — refusing to register more objects`,
+      );
+    }
+
     const uuid = input.uuid ?? generateUUID();
     if (!isValidUUID(uuid)) {
       throw new Error(`[SceneStateManager] Invalid UUID: "${uuid}"`);
@@ -92,9 +119,57 @@ export class SceneStateManager {
       metadata: { name: input.metadata?.name ?? 'Unnamed', ...input.metadata },
     });
 
-    this.registry.set(uuid, deepFreeze(deepClone(definition)));
-    this.notifyRenderer({ kind: 'add', definition });
+    const stored = deepFreeze(deepClone(definition));
+    this.registry.set(uuid, stored);
+    this.notifyRenderer({ kind: 'add', definition: stored });
+    this.events.emit('object:registered', { definition: stored });
+    this.log.debug('object registered', { uuid, assetType: stored.assetType });
     return this.getObject(uuid)!;
+  }
+
+  /**
+   * Duplicate an existing object.
+   *
+   * Per the UUID system requirement:
+   *  - The duplicate ALWAYS receives a fresh uuid (auto-generated, unless
+   *    an explicit `uuid` is supplied in `overrides`).
+   *  - The duplicate's uuid is checked against the registry for collisions.
+   *  - The source object's metadata, assetType and transform are deep-cloned
+   *    so the duplicate shares no references with the original.
+   *  - The duplicate's metadata.name defaults to "<source name> (copy)" so
+   *    the scene file remains human-readable.
+   *
+   * @returns the canonical ObjectDefinition for the duplicate (frozen).
+   * @throws if source uuid is not registered, or the override uuid collides.
+   */
+  duplicateObject(
+    sourceUuid: string,
+    overrides: PartialObjectDefinition & { uuid?: string } = {},
+  ): Readonly<ObjectDefinition> {
+    const source = this.registry.get(sourceUuid);
+    if (!source) {
+      throw new Error(`[SceneStateManager] duplicateObject: unknown source uuid ${sourceUuid}`);
+    }
+    const newUuid = overrides.uuid ?? generateUUID();
+    if (!isValidUUID(newUuid)) {
+      throw new Error(`[SceneStateManager] duplicateObject: invalid override uuid "${newUuid}"`);
+    }
+    if (this.registry.has(newUuid)) {
+      throw new Error(
+        `[SceneStateManager] duplicateObject: uuid ${newUuid} already registered`,
+      );
+    }
+    const sourceName = source.metadata.name;
+    return this.registerObject({
+      uuid: newUuid,
+      assetType: overrides.assetType ?? source.assetType,
+      transform: mergeTransform(source.transform, overrides.transform ?? {}),
+      metadata: {
+        ...source.metadata,
+        ...overrides.metadata,
+        name: overrides.metadata?.name ?? `${sourceName} (copy)`,
+      },
+    });
   }
 
   /**
@@ -103,15 +178,24 @@ export class SceneStateManager {
    */
   unregisterObject(uuid: string): boolean {
     const existed = this.registry.delete(uuid);
-    if (existed) this.notifyRenderer({ kind: 'remove', uuid });
+    if (existed) {
+      this.notifyRenderer({ kind: 'remove', uuid });
+      this.events.emit('object:unregistered', { uuid });
+      this.log.debug('object unregistered', { uuid });
+    }
     return existed;
   }
 
   /** Clear all objects. Renders a bulk remove to the renderer. */
   clear(): void {
+    const count = this.registry.size;
     const uuids = [...this.registry.keys()];
     this.registry.clear();
     for (const uuid of uuids) this.notifyRenderer({ kind: 'remove', uuid });
+    if (count > 0) {
+      this.events.emit('scene:cleared', { count });
+      this.log.debug('scene cleared', { count });
+    }
   }
 
   // -------------------------------------------------- transforms -----
@@ -138,7 +222,7 @@ export class SceneStateManager {
     const oldTransform = existing.transform;
     const newTransform = mergeTransform(oldTransform, patch);
 
-    if (this.dedupeRenders && serializeTransform(oldTransform) === serializeTransform(newTransform)) {
+    if (this.dedupeRenders && transformsEqual(oldTransform, newTransform)) {
       return oldTransform; // no-op
     }
 
@@ -146,8 +230,14 @@ export class SceneStateManager {
       ...existing,
       transform: newTransform,
     };
-    this.registry.set(uuid, deepFreeze(deepClone(updated)));
+    const stored = deepFreeze(deepClone(updated));
+    this.registry.set(uuid, stored);
     this.notifyRenderer({ kind: 'transform', uuid, transform: newTransform });
+    this.events.emit('object:transform-updated', {
+      uuid,
+      transform: newTransform,
+      previous: oldTransform,
+    });
     return this.getObject(uuid)!.transform;
   }
 
@@ -168,8 +258,10 @@ export class SceneStateManager {
       ...existing,
       metadata: nextMetadata,
     };
-    this.registry.set(uuid, deepFreeze(deepClone(updated)));
+    const stored = deepFreeze(deepClone(updated));
+    this.registry.set(uuid, stored);
     this.notifyRenderer({ kind: 'metadata', uuid, metadata: nextMetadata });
+    this.events.emit('object:metadata-updated', { uuid, metadata: nextMetadata });
     return this.getObject(uuid)!.metadata;
   }
 
@@ -232,16 +324,16 @@ export class SceneStateManager {
   }
 
   private notifyRenderer(change: RendererChange): void {
+    if (!this.renderer) return;
     try {
-      this.renderer?.syncObject(change);
+      this.renderer.syncObject(change);
     } catch (err) {
-      // Renderer failures must not corrupt the registry.
-      console.error('[SceneStateManager] renderer error (ignored):', err);
+      // Renderer failures MUST NOT corrupt the registry.
+      // Log via the logger so the failure is still visible in dev.
+      this.log.error('renderer error (ignored)', {
+        change: change.kind,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
-}
-
-// --- internal serialization helpers (kept here for module-local use) ---
-function serializeTransform(t: Transform): string {
-  return `${t.position.x},${t.position.y},${t.position.z}|${t.rotation.x},${t.rotation.y},${t.rotation.z}|${t.scale.x},${t.scale.y},${t.scale.z}`;
 }

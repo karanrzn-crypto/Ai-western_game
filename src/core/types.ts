@@ -78,10 +78,11 @@ export type PartialObjectDefinition = DeepPartial<Omit<ObjectDefinition, 'uuid'>
 
 /**
  * Top-level scene file format written by exportSceneToJSON().
- * `version` allows future migrations inside loadSceneFromJSON().
+ * `version` is a plain number; the persistence layer compares it to
+ * getConfig().schemaVersion and migrates older versions when needed.
  */
 export interface SceneData {
-  version: 1;
+  version: number;
   exportedAt: string; // ISO 8601 timestamp
   objects: ObjectDefinition[];
   sceneMetadata?: {

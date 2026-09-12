@@ -64,6 +64,11 @@ export class DefaultAssetFactory implements AssetFactory {
           new THREE.PlaneGeometry(50, 50),
           new THREE.MeshStandardMaterial({ color: 0x6b5530 }),
         );
+      case 'cube':
+        return new THREE.Mesh(
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshStandardMaterial({ color: 0xc8b67a }),
+        );
       case 'light':
         return new THREE.PointLight(0xffeeaa, 1.0, 12);
       case 'npc': {

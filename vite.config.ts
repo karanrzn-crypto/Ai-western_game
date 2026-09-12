@@ -1,21 +1,25 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
-// Vite config for the visual demo of SceneStateManager.
-// The actual library source lives in /src and is consumed directly via TS.
+// Standard Vite layout: index.html at project root, entry script at ./demo/main.ts.
+// The library source lives in /src and is consumed directly via TS source.
+//
+// Vercel auto-detects Vite and runs `vite build`, output to `dist/`.
 export default defineConfig({
-  root: 'demo',
-  server: {
-    port: 5173,
-    open: true,
-  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
     },
   },
   build: {
-    outDir: '../dist-demo',
+    outDir: 'dist',
     emptyOutDir: true,
+    // Three.js + OrbitControls examples module pulls in a lot of small
+    // chunks. Keep sourcemaps off in production for a leaner deploy.
+    sourcemap: false,
+  },
+  server: {
+    port: 5173,
+    open: true,
   },
 });

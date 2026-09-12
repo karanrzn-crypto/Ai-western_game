@@ -1,40 +1,46 @@
 /**
  * demo/main.ts
  * -----------------------------------------------------------------------------
- * Visual demo for the SceneStateManager.
+ * Minimal architecture validation demo.
  *
- * Loads examples/default-scene.json into a SceneStateManager wired up
- * to a ThreeRendererAdapter, lets the user shuffle chair transforms,
- * export the scene back to JSON, and verify the registry's state with
- * the in-panel snapshot card.
+ * Deliberately tiny: ONE cube, ONE camera, ONE light. No gameplay, no
+ * player controller, no western world content — exists ONLY to prove the
+ * foundation runs end-to-end:
  *
- * Run with:  npm run dev
+ *   1. registerObject(cube)               — SceneStateManager.add
+ *   2. ThreeRendererAdapter mirrors cube — mesh appears in three.js scene
+ *   3. exportSceneToJSON()                — registry → portable JSON
+ *   4. manager.clear()                    — registry + meshes emptied
+ *   5. loadSceneFromJSON()                — JSON → registry (uuid preserved)
+ *
+ * The full round-trip runs automatically on page load and can be re-triggered
+ * from the side panel button.
  * -----------------------------------------------------------------------------
  */
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   SceneStateManager,
   PersistenceManager,
   ThreeRendererAdapter,
 } from '../src/index.js';
-import defaultScene from '../examples/default-scene.json' assert { type: 'json' };
+import minimalScene from '../examples/minimal-scene.json' assert { type: 'json' };
 
-// --- Three.js bootstrap ----------------------------------------------------
+// ---------------------------------------------------------------------------
+// Three.js bootstrap — one camera, one light, one renderer.
+// ---------------------------------------------------------------------------
 const stageEl = document.getElementById('stage')!;
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d0d12);
-scene.fog = new THREE.Fog(0x0d0d12, 12, 36);
+const threeScene = new THREE.Scene();
+threeScene.background = new THREE.Color(0x0d0d12);
 
 const camera = new THREE.PerspectiveCamera(
   55,
   stageEl.clientWidth / stageEl.clientHeight,
   0.1,
-  200,
+  100,
 );
-camera.position.set(10, 8, 12);
-camera.lookAt(0, 1, 0);
+camera.position.set(3, 3, 5);
+camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -43,121 +49,144 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 stageEl.appendChild(renderer.domElement);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.target.set(0, 1, 0);
+// ONE light.
+const light = new THREE.DirectionalLight(0xffffff, 1.2);
+light.position.set(5, 8, 6);
+light.castShadow = true;
+threeScene.add(light);
 
-// Hemisphere + directional so the saloon reads even before lamps light it.
-scene.add(new THREE.HemisphereLight(0xb3a97a, 0x403426, 0.6));
-const sun = new THREE.DirectionalLight(0xffeebb, 0.9);
-sun.position.set(8, 16, 6);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.near = 0.5;
-sun.shadow.camera.far = 60;
-sun.shadow.camera.left = -20;
-sun.shadow.camera.right = 20;
-sun.shadow.camera.top = 20;
-sun.shadow.camera.bottom = -20;
-scene.add(sun);
+// Subtle ambient so the unlit side of the cube isn't pure black.
+threeScene.add(new THREE.AmbientLight(0x404050, 0.6));
 
-const grid = new THREE.GridHelper(40, 40, 0x3a3240, 0x1f1f25);
-scene.add(grid);
-
-// --- Wire up our SceneStateManager ----------------------------------------
-const adapter = new ThreeRendererAdapter({ scene });
+// ---------------------------------------------------------------------------
+// Wire up SceneStateManager + PersistenceManager.
+// ---------------------------------------------------------------------------
+const adapter = new ThreeRendererAdapter({ scene: threeScene });
 const manager = new SceneStateManager({ renderer: adapter });
 const persistence = new PersistenceManager();
 
-function refreshSnapshot() {
-  const snap = manager.getSnapshot();
-  document.getElementById('stat-count')!.textContent = String(snap.objectCount);
-  document.getElementById('stat-render')!.textContent = String(adapter.getActiveObjectCount());
-  const typeSummary = Object.entries(snap.byAssetType)
-    .map(([k, v]) => `${k}×${v}`)
-    .join(', ') || '—';
-  document.getElementById('stat-bytype')!.textContent = typeSummary;
-
-  // List
-  const list = document.getElementById('obj-list')!;
-  list.innerHTML = '';
-  for (const def of manager.getAllObjects()) {
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <span class="name">${escapeHTML(def.metadata.name)}</span>
-      <span class="type">${escapeHTML(def.assetType)}</span>
-      <span class="uuid">${escapeHTML(def.uuid.slice(0, 8))}</span>
-    `;
-    list.appendChild(li);
-  }
+// ---------------------------------------------------------------------------
+// UI helpers.
+// ---------------------------------------------------------------------------
+function setStatus(stepId: string, ok: boolean): void {
+  const el = document.getElementById(stepId);
+  if (!el) return;
+  el.classList.remove('ok', 'pending');
+  el.classList.add(ok ? 'ok' : 'pending');
 }
 
-function escapeHTML(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&#39;';
-      default: return c;
-    }
-  });
+function refreshSnapshot(): void {
+  const snap = manager.getSnapshot();
+  document.getElementById('stat-count')!.textContent = String(snap.objectCount);
+  document.getElementById('stat-render')!.textContent = String(
+    adapter.getActiveObjectCount(),
+  );
+  const firstUuid = snap.uuids[0] ?? '—';
+  document.getElementById('stat-uuid')!.textContent =
+    firstUuid === '—' ? '—' : firstUuid.slice(0, 13) + '…';
 }
 
 function toast(msg: string): void {
   const t = document.getElementById('toast')!;
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
+  setTimeout(() => t.classList.remove('show'), 2400);
 }
 
-// --- Action buttons --------------------------------------------------------
-document.getElementById('btn-load')!.addEventListener('click', () => {
-  const summary = persistence.loadSceneFromJSON(defaultScene, manager);
-  toast(
-    `Loaded ${summary.loaded} objects (skipped: ${summary.skipped.length})`,
+function writeExport(text: string): void {
+  (document.getElementById('export-output') as HTMLTextAreaElement).value = text;
+}
+
+function resetStatuses(): void {
+  for (const id of ['step-register', 'step-render', 'step-export', 'step-clear', 'step-load']) {
+    const el = document.getElementById(id);
+    el?.classList.remove('ok');
+    el?.classList.add('pending');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The full architecture-validation round-trip.
+// ---------------------------------------------------------------------------
+async function runRoundTrip(): Promise<void> {
+  resetStatuses();
+  writeExport('');
+  manager.clear();
+  refreshSnapshot();
+
+  // --- Step 1: register one cube via SceneStateManager --------------
+  // We register it programmatically (not by loading JSON) so this demo
+  // also exercises the registerObject() API path, not just loadSceneFromJSON.
+  manager.registerObject({
+    uuid: '00000000-0000-4000-a000-000000000001',
+    assetType: 'cube',
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    },
+    metadata: { name: 'Demo Cube' },
+  });
+  setStatus('step-register', true);
+
+  // --- Step 2: ThreeRendererAdapter should have mirrored the cube ---
+  // (no explicit call needed — syncObject ran during registerObject)
+  setStatus('step-render', adapter.getActiveObjectCount() === 1);
+  refreshSnapshot();
+
+  // Yield a frame so the user sees the cube before we destroy it.
+  await new Promise((r) => setTimeout(r, 700));
+
+  // --- Step 3: exportSceneToJSON() ----------------------------------
+  const dump = persistence.exportSceneToJSON(manager);
+  writeExport(JSON.stringify(dump, null, 2));
+  setStatus('step-export', dump.objects.length === 1);
+  toast(`Exported ${dump.objects.length} object(s)`);
+
+  await new Promise((r) => setTimeout(r, 700));
+
+  // --- Step 4: clear() ----------------------------------------------
+  manager.clear();
+  setStatus('step-clear', manager.getObjectCount() === 0);
+  refreshSnapshot();
+  toast('Registry cleared — cube removed');
+
+  await new Promise((r) => setTimeout(r, 700));
+
+  // --- Step 5: loadSceneFromJSON() restores the cube with same uuid --
+  const summary = persistence.loadSceneFromJSON(dump, manager);
+  setStatus(
+    'step-load',
+    summary.loaded === 1 &&
+      manager.has('00000000-0000-4000-a000-000000000001'),
   );
   refreshSnapshot();
-});
+  toast(`Loaded ${summary.loaded} object(s) — uuid preserved`);
 
-document.getElementById('btn-export')!.addEventListener('click', () => {
-  const data = persistence.exportSceneToJSON(manager);
-  const pretty = JSON.stringify(data, null, 2);
-  (document.getElementById('export-output') as HTMLTextAreaElement).value = pretty;
-  navigator.clipboard?.writeText(pretty).catch(() => {});
-  toast(`Exported ${data.objects.length} objects — JSON copied to clipboard`);
-});
-
-document.getElementById('btn-clear')!.addEventListener('click', () => {
+  // Also exercise loadSceneFromJSON from the on-disk minimal-scene.json
+  // so we prove the JSON file is interchangeable with the in-memory dump.
+  await new Promise((r) => setTimeout(r, 700));
   manager.clear();
-  (document.getElementById('export-output') as HTMLTextAreaElement).value = '';
-  toast('Registry cleared');
+  persistence.loadSceneFromJSON(minimalScene, manager);
   refreshSnapshot();
+  toast('Loaded from examples/minimal-scene.json');
+}
+
+// ---------------------------------------------------------------------------
+// Boot.
+// ---------------------------------------------------------------------------
+document.getElementById('btn-rerun')!.addEventListener('click', () => {
+  runRoundTrip().catch((err) => {
+    console.error('Round-trip failed:', err);
+    toast(`Round-trip error: ${err.message ?? err}`);
+  });
 });
 
-document.getElementById('btn-shuffle')!.addEventListener('click', () => {
-  // Demonstrate the updateObjectTransform API: rotate every chair by 15°.
-  const chairs = manager.getObjectsByAssetType('chair');
-  if (chairs.length === 0) {
-    toast('No chairs to shuffle — load the scene first.');
-    return;
-  }
-  for (const chair of chairs) {
-    const newRotY = (chair.transform.rotation.y + 15) % 360;
-    manager.updateObjectTransform(chair.uuid, {
-      rotation: { ...chair.transform.rotation, y: newRotY },
-    });
-  }
-  toast(`Rotated ${chairs.length} chairs by +15°`);
-  refreshSnapshot();
-});
+void runRoundTrip();
 
-// --- Bootstrap: load the default scene on startup -------------------------
-persistence.loadSceneFromJSON(defaultScene, manager);
-refreshSnapshot();
-
-// --- Resize handler --------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Resize + render loop.
+// ---------------------------------------------------------------------------
 window.addEventListener('resize', () => {
   const w = stageEl.clientWidth;
   const h = stageEl.clientHeight;
@@ -166,10 +195,8 @@ window.addEventListener('resize', () => {
   renderer.setSize(w, h);
 });
 
-// --- Render loop -----------------------------------------------------------
-function animate() {
-  controls.update();
-  renderer.render(scene, camera);
+function animate(): void {
+  renderer.render(threeScene, camera);
   requestAnimationFrame(animate);
 }
 animate();

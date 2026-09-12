@@ -38,6 +38,7 @@ export type AssetType =
   | 'npc'
   | 'light'
   | 'ground'
+  | 'cube'
   | (string & {}); // allow forward-compat for unknown types
 
 /**

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "exportedAt": "2025-01-01T00:00:00.000Z",
+  "sceneMetadata": {
+    "name": "Minimal Architecture Validation Scene",
+    "description": "Single cube only. Used to validate SceneStateManager + PersistenceManager + ThreeRendererAdapter. No gameplay, no world content."
+  },
+  "objects": [
+    {
+      "uuid": "00000000-0000-4000-a000-000000000001",
+      "assetType": "cube",
+      "transform": {
+        "position": { "x": 0, "y": 0, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Demo Cube" }
+    }
+  ]
+}

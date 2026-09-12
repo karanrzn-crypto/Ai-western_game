@@ -66,10 +66,17 @@ src/
 │   └── uuid.ts                   ← generateUUID / isValidUUID (cross-session stable)
 └── index.ts                      ← public barrel
 
-demo/                             ← Vite + three.js live demo
-examples/                         ← default-scene.json (saloon starter)
+index.html                       ← Vite entry (project root)
+demo/                             ← minimal demo entry (main.ts)
+examples/                         ← minimal-scene.json (1-cube validation fixture)
 tests/                            ← node:test tests (no external deps)
+vercel.json                       ← Vercel deployment config (Vite framework)
 ```
+
+> **Status:** This repo contains ONLY the architecture foundation and a
+> minimal validation demo. There is intentionally NO gameplay, NO player
+> controller, NO NPCs, NO weapons, NO missions, and NO western world
+> content. The single demo exists solely to prove the foundation runs.
 
 ---
 
@@ -112,21 +119,32 @@ The `SceneData` envelope written by `exportSceneToJSON()`:
 npm install
 ```
 
-### Run the visual demo
+### Run the architecture validation demo
 
 ```bash
 npm run dev
 ```
 
 Opens a Vite-served page that:
-- loads `examples/default-scene.json` into a `SceneStateManager` wired to a
-  three.js renderer,
-- shows a snapshot panel (object count, breakdown by assetType, list of
-  registered UUIDs),
-- provides four buttons: **Load default-scene.json**, **Export to JSON**
-  (dumps the live registry to the textarea + copies it to clipboard),
-  **Clear registry**, and **Shuffle chair transforms** (demonstrates the
-  `updateObjectTransform` API by rotating every chair +15°).
+- sets up a minimal three.js scene (one camera, one light, no world),
+- registers **one** cube via `SceneStateManager.registerObject()`,
+- runs the full round-trip automatically and on button click:
+  1. `registerObject(cube)` → cube appears in the three.js scene
+  2. `ThreeRendererAdapter` mirrors the cube to a mesh
+  3. `exportSceneToJSON()` → JSON dump shown in the side panel
+  4. `manager.clear()` → cube removed from both registry and renderer
+  5. `loadSceneFromJSON()` → cube restored with the **same uuid**
+- finally loads `examples/minimal-scene.json` to prove the on-disk file is
+  interchangeable with the in-memory dump.
+
+### Run the production build
+
+```bash
+npm run build
+```
+
+Produces a static Vite bundle in `dist/` deployable to Vercel (or any
+static host). `vercel.json` is included so the repo auto-deploys on push.
 
 ### Type-check the project
 

@@ -35,8 +35,14 @@ import * as THREE from 'three';
 import type { ObjectDefinition } from '../core/types.js';
 import { DEBUG_HELPER_KEY, isDebugHelper } from './DebugAxes.js';
 
-/** Max surface separation (world units) that still counts as "flush". */
-export const DEFAULT_CONTACT_EPSILON = 0.08;
+/**
+ * Max surface separation that still counts as "flush". Deliberately tight
+ * (1 cm at the demo's ~1u=1m scale): the marker must appear only when two
+ * surfaces are REALLY touching, not slightly before/after. Move drags are
+ * clamped exactly at the contact boundary (see MoveClamp), so a clamped drag
+ * holds gap ≈ 0 and the marker stays rock-steady there.
+ */
+export const DEFAULT_CONTACT_EPSILON = 0.01;
 /** Min overlap (world units) required on the two non-contact axes. */
 export const DEFAULT_MIN_FACE_OVERLAP = 0.05;
 

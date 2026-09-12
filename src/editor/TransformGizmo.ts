@@ -25,6 +25,17 @@
  *   - Drags apply changes EXCLUSIVELY through
  *     SceneStateManager.updateObjectTransform(). The gizmo only reads state;
  *     it never mutates definitions directly.
+ *
+ * Move direction guarantee (fixed behaviour):
+ *   - MOVE drags travel along the WORLD X/Y/Z axis named by the handle —
+ *     never along the object's rotated local axis, its geometry tips or its
+ *     rotated bounding box — so dragging X changes ONLY position.x even when
+ *     the object carries a 45° rotation. The move arms are counter-rotated
+ *     so they always RENDER on those same world axes. Rotation rings stay
+ *     attached to the object's local axes, untouched.
+ *   - The optional clampMoveDelta hook (see editor/MoveClamp.ts) lets the
+ *     host stop a move drag exactly at the contact boundary instead of
+ *     letting the object sink into the ground or a neighbouring object.
  * -----------------------------------------------------------------------------
  */
 
@@ -50,6 +61,13 @@ export interface TransformGizmoOptions {
   ringRadius?: number;
   /** Fired ONCE per completed drag, after the final transform is applied. */
   onTransformCommitted?: (uuid: string) => void;
+  /**
+   * Optional penetration guard for MOVE drags (see editor/MoveClamp.ts).
+   * Receives the desired signed step along the world drag axis and returns
+   * the clamped step; movement then stops at the contact boundary instead
+   * of sinking into the ground or another object. No snapping is performed.
+   */
+  clampMoveDelta?: (uuid: string, axis: GizmoAxis, delta: number) => number;
 }
 
 interface DragState {
@@ -90,7 +108,10 @@ export class TransformGizmo {
 
   private readonly manager: SceneStateManager;
   private readonly onTransformCommitted?: (uuid: string) => void;
+  private readonly clampMoveDelta?: (uuid: string, axis: GizmoAxis, delta: number) => number;
   private readonly proxies = new Map<GizmoHandleId, THREE.Mesh>();
+  /** Move-handle groups, counter-rotated so the arms always render on world axes. */
+  private readonly moveGroups = new Map<GizmoAxis, THREE.Group>();
   private readonly picker = new THREE.Raycaster();
   private readonly size: number;
   private readonly ringRadius: number;
@@ -101,6 +122,7 @@ export class TransformGizmo {
   constructor(options: TransformGizmoOptions) {
     this.manager = options.manager;
     this.onTransformCommitted = options.onTransformCommitted;
+    this.clampMoveDelta = options.clampMoveDelta;
     this.size = options.size ?? 1.4;
     this.ringRadius = options.ringRadius ?? 0.55;
 
@@ -174,6 +196,7 @@ export class TransformGizmo {
     shaft.renderOrder = tip.renderOrder = 1000;
     this.root.add(this.tag(group));
     this.proxies.set(handle, proxy);
+    this.moveGroups.set(axis, group);
   }
 
   private buildRotateHandle(axis: GizmoAxis): void {
@@ -206,6 +229,11 @@ export class TransformGizmo {
   isDragging(): boolean { return this.drag !== null; }
   getActiveHandle(): GizmoHandleId | null { return this.drag?.handle ?? null; }
 
+  /** Inspection/test access to a move-handle group (kept world-aligned). */
+  getMoveHandleGroup(axis: GizmoAxis): THREE.Group | undefined {
+    return this.moveGroups.get(axis);
+  }
+
   /**
    * Per-frame sync. Shows the gizmo ONLY when edit mode is active AND an
    * editable object is selected; rides the object's position + rotation.
@@ -225,6 +253,11 @@ export class TransformGizmo {
     this.root.quaternion.setFromEuler(
       new THREE.Euler(t.rotation.x * DEG2RAD, t.rotation.y * DEG2RAD, t.rotation.z * DEG2RAD, 'XYZ'),
     );
+    // Move arms ride the object's POSITION but not its rotation: they are
+    // counter-rotated so they always render along the world X/Y/Z axes the
+    // move drags actually travel on. The rotation rings keep the local axes.
+    const inverse = this.root.quaternion.clone().invert();
+    for (const group of this.moveGroups.values()) group.quaternion.copy(inverse);
   }
 
   // -------------------------------------------------- picking ---------
@@ -273,7 +306,10 @@ export class TransformGizmo {
 
     if (handle.startsWith('move:')) {
       const axis = handle.slice(5) as GizmoAxis;
-      const axisDir = this.worldAxisDir(rotation, axis);
+      // Move along the WORLD axis named by the handle — NEVER along the
+      // object's rotated local axis or its bounding box — so dragging X
+      // changes only position.x regardless of the object's rotation.
+      const axisDir = AXIS_VECTORS[axis];
       const startParam = closestAxisParamFromRay(position, axisDir, rayOrigin, rayDir);
       if (startParam === null) return false;
       this.drag = {
@@ -311,12 +347,19 @@ export class TransformGizmo {
     if (drag.kind === 'move') {
       const param = closestAxisParamFromRay(drag.startPosition, drag.axisDir, rayOrigin, rayDir);
       if (param === null) return;
-      const delta = param - drag.startParam;
-      this.manager.updateObjectTransform(drag.uuid, { position: {
-        x: drag.startPosition.x + drag.axisDir.x * delta,
-        y: drag.startPosition.y + drag.axisDir.y * delta,
-        z: drag.startPosition.z + drag.axisDir.z * delta,
-      }});
+      // Target measured along the world axis from the drag-start position;
+      // the step is measured from wherever the object CURRENTLY is, so a
+      // clamped drag stays pinned at the boundary yet releases instantly
+      // when the pointer moves back.
+      const targetAlong = drag.startPosition[drag.axis] + (param - drag.startParam);
+      const current = definition.transform.position;
+      let step = targetAlong - current[drag.axis];
+      if (step === 0) return;
+      if (this.clampMoveDelta) step = this.clampMoveDelta(drag.uuid, drag.axis, step);
+      if (step === 0) return;
+      const position = { x: current.x, y: current.y, z: current.z };
+      position[drag.axis] = current[drag.axis] + step;
+      this.manager.updateObjectTransform(drag.uuid, { position });
       return;
     }
 

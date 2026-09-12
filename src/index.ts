@@ -55,6 +55,13 @@ export type {
   ContactIndicatorUpdateParams,
   ContactIndicatorManagerLike,
 } from './editor/ContactIndicator.js';
+export {
+  clampAxisDelta,
+  collectBlockerBoxes,
+  makeSceneAxisClamp,
+  DEFAULT_LATERAL_OVERLAP_THRESHOLD,
+} from './editor/MoveClamp.js';
+export type { AxisDeltaClampInput, AxisClampController, ClampAxis } from './editor/MoveClamp.js';
 export { closestAxisParamFromRay, rayAngleAroundAxis, wrapAngle, planeBasis } from './editor/GizmoMath.js';
 export {
   formatSelectedObjectInfo,

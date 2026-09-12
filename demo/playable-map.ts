@@ -12,6 +12,7 @@ import {
   ObjectEditorController,
   TransformGizmo,
   ContactIndicator,
+  makeSceneAxisClamp,
   createDebugAxes,
   formatSelectedObjectInfo,
   formatPanelNumber,
@@ -99,6 +100,10 @@ const editor = new ObjectEditorController(manager, {
 // collider — every node carries the debug-helper tag.
 const gizmo = new TransformGizmo({
   manager,
+  // Penetration guard: a move drag stops exactly at the contact boundary
+  // with the ground or another object (world-AABB based) instead of sinking
+  // into it. No snapping — only the penetration direction is clamped.
+  clampMoveDelta: makeSceneAxisClamp(scene, manager),
   onTransformCommitted: () => {
     // One save per completed drag keeps localStorage write volume sane while
     // the pointer moves continuously.

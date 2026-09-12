@@ -68,24 +68,44 @@ test('detects EXACT face-to-face contact (gap 0) on X, not center distance', () 
   vecApprox(contact.point, 0.5, 0, 0);
 });
 
-test('detects a near-flush gap within epsilon and reports the midpoint', () => {
+test('detects a near-flush gap within the tight epsilon and reports the midpoint', () => {
   const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
-  const b = box(0.53, -0.5, -0.5, 1.53, 0.5, 0.5); // gap = 0.03
+  const b = box(0.508, -0.5, -0.5, 1.508, 0.5, 0.5); // gap = 0.008 (< 0.01)
   const contact = computeBoxContact(a, b, EPS);
   assert.ok(contact);
-  approx(contact.gap, 0.03);
-  approx(contact.point.x, (0.5 + 0.53) / 2, 1e-9, 'marker between the two surfaces');
+  approx(contact.gap, 0.008);
+  approx(contact.point.x, (0.5 + 0.508) / 2, 1e-9, 'marker between the two surfaces');
+});
+
+test('marker is HIDDEN a little before contact (gap 0.03) — the old loose threshold bug', () => {
+  const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
+  const b = box(0.53, -0.5, -0.5, 1.53, 0.5, 0.5); // gap = 0.03 > 0.01
+  assert.equal(computeBoxContact(a, b, EPS), null);
+});
+
+test('marker is HIDDEN when surfaces sink just past epsilon (0.02 penetration)', () => {
+  const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
+  const b = box(0.48, -0.5, -0.5, 1.48, 0.5, 0.5); // 0.02 deep — merged, not flush
+  assert.equal(computeBoxContact(a, b, EPS), null);
+});
+
+test('a hair of penetration (0.005) still reads as flush contact', () => {
+  const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
+  const b = box(0.495, -0.5, -0.5, 1.495, 0.5, 0.5);
+  const contact = computeBoxContact(a, b, EPS);
+  assert.ok(contact);
+  approx(contact.gap, -0.005);
 });
 
 test('no contact when the surface gap exceeds epsilon', () => {
   const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
-  const b = box(0.75, -0.5, -0.5, 1.75, 0.5, 0.5); // gap = 0.25 > 0.08
+  const b = box(0.75, -0.5, -0.5, 1.75, 0.5, 0.5); // gap = 0.25 > 0.01
   assert.equal(computeBoxContact(a, b, EPS), null);
 });
 
 test('no contact for a corner graze (gap on two axes at once)', () => {
   const a = box(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
-  const b = box(0.53, -0.5, 1.53, 1.53, 0.5, 2.53); // x gap 0.03, z gap 1.03
+  const b = box(0.505, -0.5, 1.53, 1.505, 0.5, 2.53); // x gap 0.005, z gap 1.03
   assert.equal(computeBoxContact(a, b, EPS), null);
 });
 
@@ -102,15 +122,15 @@ test('no contact when boxes deeply interpenetrate (merged, not flush)', () => {
 });
 
 test('GROUND contact: flat ground below, marker at the object footprint midpoint', () => {
-  const cube = box(-1.5, 0.02, -1.5, 1.5, 0.52, 1.5); // floating 0.02 above the floor
+  const cube = box(-1.5, 0.005, -1.5, 1.5, 0.505, 1.5); // floating 0.005 above the floor
   const ground = box(-30, 0, -30, 30, 0, 30); // degenerate (flat) ground AABB
   const contact = computeBoxContact(cube, ground, EPS);
   assert.ok(contact);
   assert.equal(contact.axis, 'y');
-  approx(contact.gap, 0.02);
+  approx(contact.gap, 0.005);
   vecApprox(contact.normal, 0, -1, 0, 1e-9, 'normal points from the cube toward the ground');
   // Centered on the CUBE's footprint (0, y, 0) — not the ground's center.
-  vecApprox(contact.point, 0, 0.01, 0);
+  vecApprox(contact.point, 0, 0.0025, 0);
 });
 
 test('ground contact fires when the object rests EXACTLY on the floor (gap 0)', () => {
@@ -121,23 +141,18 @@ test('ground contact fires when the object rests EXACTLY on the floor (gap 0)', 
   approx(contact.gap, 0);
 });
 
-test('no ground contact while the object floats beyond epsilon', () => {
-  const cube = box(-1.5, 0.3, -1.5, 1.5, 0.8, 1.5);
+test('no contact while the object floats only 0.03 above the floor (beyond tight epsilon)', () => {
+  const cube = box(-1.5, 0.03, -1.5, 1.5, 0.53, 1.5);
   const ground = box(-30, 0, -30, 30, 0, 30);
   assert.equal(computeBoxContact(cube, ground, EPS), null);
 });
 
-test('most flush axis wins when two slightly-sunken faces both qualify', () => {
-  // Two face contacts can only co-exist when the boxes sink slightly into
-  // each other near a corner (both gaps negative but within epsilon):
-  //   x face: gap -0.07, overlaps y=0.05, z=0.5  → qualifies
-  //   y face: gap -0.05, overlaps x=0.07, z=0.5  → qualifies and is MORE flush
+test('deeply sunken faces do not qualify even for the most-flush ranking', () => {
+  // Sunk 0.07 into x and 0.05 into y — both beyond the tight epsilon, so
+  // neither face counts as flush any more (merged, not touching).
   const a = box(0, 0, 0, 1, 1, 1);
   const b = box(0.93, 0.95, -0.5, 1.93, 1.6, 0.5);
-  const contact = computeBoxContact(a, b, EPS);
-  assert.ok(contact);
-  assert.equal(contact.axis, 'y', '|-0.05| is more flush than |-0.07|');
-  approx(contact.gap, -0.05);
+  assert.equal(computeBoxContact(a, b, EPS), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -184,7 +199,7 @@ test('indicator appears between two touching cubes and hides when they separate'
   indicator.update({ editMode: true, selectedUuid: UUID_A, scene, manager });
   assert.equal(indicator.group.visible, false, 'hidden while apart');
 
-  meshB.position.x = 1.02; // gap 0.02 — flush
+  meshB.position.x = 1.005; // gap 0.005 — flush within the tight epsilon
   const contact = computeBoxContact(
     new THREE.Box3().setFromObject(meshA),
     new THREE.Box3().setFromObject(meshB),
@@ -195,14 +210,14 @@ test('indicator appears between two touching cubes and hides when they separate'
   assert.equal(indicator.group.visible, true, 'shown while flush');
   vecApprox(indicator.group.position, contact.point.x, contact.point.y, contact.point.z, 1e-9);
 
-  meshB.position.x = 2.5; // separated again
+  meshB.position.x = 1.05; // separated again (gap 0.05 > epsilon)
   indicator.update({ editMode: true, selectedUuid: UUID_A, scene, manager });
   assert.equal(indicator.group.visible, false, 'hidden IMMEDIATELY once contact ends');
 });
 
 test('ground contact through update(): ring lies flat under the object', () => {
   const scene = new THREE.Scene();
-  addCubeMesh(scene, UUID_A, 0, 0.52, 0); // cube bottom at y = 0.02
+  addCubeMesh(scene, UUID_A, 0, 0.505, 0); // cube bottom at y = 0.005
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60));
   ground.uuid = UUID_GROUND;
   ground.rotation.x = -Math.PI / 2; // horizontal plane, AABB y-extent 0
@@ -220,7 +235,7 @@ test('ground contact through update(): ring lies flat under the object', () => {
 
   indicator.update({ editMode: true, selectedUuid: UUID_A, scene, manager });
   assert.equal(indicator.group.visible, true, 'ground counts as a contact surface');
-  approx(indicator.group.position.y, 0.01, 1e-6, 'marker between the cube bottom and the ground');
+  approx(indicator.group.position.y, 0.0025, 1e-6, 'marker between the cube bottom and the ground');
   const expected = new THREE.Quaternion().setFromUnitVectors(
     new THREE.Vector3(0, 0, 1),
     new THREE.Vector3(0, -1, 0),
@@ -276,7 +291,9 @@ test('live gizmo-style drag: contact state follows every transform commit', () =
   dragTo(1.5);
   assert.equal(indicator.group.visible, false, 'gap 0.5');
   dragTo(1.05);
-  assert.equal(indicator.group.visible, true, 'gap 0.05 — flush while dragging');
+  assert.equal(indicator.group.visible, false, 'gap 0.05 — beyond the tight epsilon, no ghost marker');
+  dragTo(1.005);
+  assert.equal(indicator.group.visible, true, 'gap 0.005 — flush while dragging');
   dragTo(1.0);
   assert.equal(indicator.group.visible, true, 'gap 0 — exact contact');
   dragTo(1.9);

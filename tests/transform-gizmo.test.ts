@@ -185,17 +185,79 @@ test('move gizmo: Y handle changes only Y; Z handle changes only Z (exact values
   gizmo.endDrag();
 });
 
-test('move gizmo follows the rotated local axis: X handle on a y=90 object moves world -Z only', () => {
+test('move gizmo is WORLD-axis: X handle on a y=90 object changes ONLY position.x', () => {
   const manager = makeManager();
   const { gizmo } = makeGizmo(manager);
   manager.updateObjectTransform(UUID_A, { rotation: { x: 0, y: 90, z: 0 } });
   gizmo.sync(true, UUID_A);
 
-  // Rays deliberately NOT parallel to the local X axis (world (0,0,-1)).
+  // Ray deliberately NOT parallel to the world X axis, to prove the drag is
+  // axis-constrained, not ray-derived (params come from the z=0 crossings).
   assert.equal(gizmo.beginDrag('move:x', rayAt(1, 0.75, 5, -1, 0, -1)), true);
   gizmo.updateDrag(rayAt(1, 0.75, 3, -1, 0, -1));
-  assertVecNear(manager.getObject(UUID_A)!.transform.position, { x: 0, y: 0.75, z: -2 }, 1e-9, 'local X handle moved world -Z');
+  assertVecNear(
+    manager.getObject(UUID_A)!.transform.position,
+    { x: 2, y: 0.75, z: 0 },
+    1e-9,
+    'world X drag: only x changed, z untouched despite the 90deg rotation',
+  );
   gizmo.endDrag();
+});
+
+test('move gizmo is WORLD-axis: 45deg-rotated object, X drag moves only X, Z drag only Z', () => {
+  const manager = makeManager();
+  const { gizmo } = makeGizmo(manager);
+  manager.updateObjectTransform(UUID_A, { rotation: { x: 0, y: 45, z: 0 } });
+  gizmo.sync(true, UUID_A);
+
+  // Old local-axis behaviour would have moved world (0.707, 0, -0.707) here.
+  gizmo.beginDrag('move:x', rayAt(0, 0.75, 5, 1, 0, -1));
+  gizmo.updateDrag(rayAt(3, 0.75, 5, 1, 0, -1));
+  assertVecNear(
+    manager.getObject(UUID_A)!.transform.position,
+    { x: 3, y: 0.75, z: 0 },
+    1e-9,
+    'X drag on a 45deg object changes only x',
+  );
+  gizmo.endDrag();
+
+  gizmo.sync(true, UUID_A);
+  gizmo.beginDrag('move:z', rayAt(3, 0.75, 5, 1, 0, -1));
+  gizmo.updateDrag(rayAt(3, 0.75, 8, 1, 0, -1));
+  assertVecNear(
+    manager.getObject(UUID_A)!.transform.position,
+    { x: 3, y: 0.75, z: 3 },
+    1e-9,
+    'Z drag on a 45deg object changes only z',
+  );
+  gizmo.endDrag();
+
+  // The fix must not touch the object's rotation.
+  assertVecNear(manager.getObject(UUID_A)!.transform.rotation, { x: 0, y: 45, z: 0 }, 1e-9, 'rotation untouched by move drags');
+});
+
+test('move arms render on the WORLD axes even when the object is rotated (rings stay local)', () => {
+  const manager = makeManager();
+  const { gizmo } = makeGizmo(manager);
+  manager.updateObjectTransform(UUID_A, { rotation: { x: 0, y: 45, z: 0 } });
+  gizmo.sync(true, UUID_A);
+  gizmo.root.updateMatrixWorld(true);
+
+  const identity = new THREE.Quaternion();
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const group = gizmo.getMoveHandleGroup(axis);
+    assert.ok(group, `move group ${axis} exists`);
+    const world = group.getWorldQuaternion(new THREE.Quaternion());
+    assert.ok(
+      world.angleTo(identity) < 1e-6,
+      `move:${axis} arm is world-aligned (angle ${world.angleTo(identity)})`,
+    );
+  }
+
+  // The rotation rings must still ride the object's local axes (unchanged).
+  const rootWorld = gizmo.root.getWorldQuaternion(new THREE.Quaternion());
+  const expectedRoot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 4, 0, 'XYZ'));
+  assert.ok(rootWorld.angleTo(expectedRoot) < 1e-6, 'root (and rings) keep the object rotation');
 });
 
 // ---------------------------------------------------------------------------

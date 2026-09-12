@@ -1,0 +1,33 @@
+{
+  "name": "ai-western-game",
+  "version": "0.1.0",
+  "description": "Data-driven 3D scene management for an AI-powered western game",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "vite demo",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "keywords": [
+    "three-js",
+    "3d",
+    "scene-manager",
+    "data-driven",
+    "western-game",
+    "typescript"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.161.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.161.0",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.0"
+  }
+}

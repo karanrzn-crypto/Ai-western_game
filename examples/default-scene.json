@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "exportedAt": "2025-01-01T00:00:00.000Z",
+  "sceneMetadata": {
+    "name": "Saloon Interior — Starter Scene",
+    "description": "A small starter scene with walls, a door, a few chairs, a table, and a barrel. Use as the regression baseline for the SceneStateManager."
+  },
+  "objects": [
+    {
+      "uuid": "00000000-0000-4000-a000-000000000001",
+      "assetType": "ground",
+      "transform": {
+        "position": { "x": 0, "y": 0, "z": 0 },
+        "rotation": { "x": 90, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Saloon Floor" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000002",
+      "assetType": "wall",
+      "transform": {
+        "position": { "x": 0, "y": 1, "z": -8 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "North Wall" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000003",
+      "assetType": "wall",
+      "transform": {
+        "position": { "x": 0, "y": 1, "z": 8 },
+        "rotation": { "x": 0, "y": 180, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "South Wall" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000004",
+      "assetType": "wall",
+      "transform": {
+        "position": { "x": -8, "y": 1, "z": 0 },
+        "rotation": { "x": 0, "y": 90, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "West Wall" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000005",
+      "assetType": "wall",
+      "transform": {
+        "position": { "x": 8, "y": 1, "z": 0 },
+        "rotation": { "x": 0, "y": -90, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "East Wall" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000006",
+      "assetType": "door",
+      "transform": {
+        "position": { "x": 0, "y": 1.2, "z": -8 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Swing Door (front)" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000007",
+      "assetType": "table",
+      "transform": {
+        "position": { "x": 0, "y": 0.45, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Center Poker Table" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000008",
+      "assetType": "chair",
+      "transform": {
+        "position": { "x": -1.2, "y": 0.45, "z": -0.9 },
+        "rotation": { "x": 0, "y": 45, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Chair NW" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000009",
+      "assetType": "chair",
+      "transform": {
+        "position": { "x": 1.2, "y": 0.45, "z": -0.9 },
+        "rotation": { "x": 0, "y": -45, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Chair NE" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000010",
+      "assetType": "chair",
+      "transform": {
+        "position": { "x": -1.2, "y": 0.45, "z": 0.9 },
+        "rotation": { "x": 0, "y": 135, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Chair SW" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000011",
+      "assetType": "chair",
+      "transform": {
+        "position": { "x": 1.2, "y": 0.45, "z": 0.9 },
+        "rotation": { "x": 0, "y": -135, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Chair SE" }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000012",
+      "assetType": "barrel",
+      "transform": {
+        "position": { "x": -5, "y": 0.55, "z": 5 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Whiskey Barrel", "filled": true }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000013",
+      "assetType": "light",
+      "transform": {
+        "position": { "x": 0, "y": 4, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Hanging Lamp", "intensity": 1.0 }
+    },
+    {
+      "uuid": "00000000-0000-4000-a000-000000000014",
+      "assetType": "npc",
+      "transform": {
+        "position": { "x": 5, "y": 0, "z": 5 },
+        "rotation": { "x": 0, "y": -135, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": { "name": "Bartender Sam", "role": "bartender" }
+    }
+  ]
+}

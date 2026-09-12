@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ai-western_game — SceneStateManager Demo</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; font-family: ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+      body {
+        background: #0d0d12;
+        color: #e8e2d4;
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        grid-template-rows: 48px 1fr;
+        grid-template-areas: "header header" "stage panel";
+        height: 100vh;
+      }
+      header {
+        grid-area: header;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        border-bottom: 1px solid #2a2a30;
+        background: linear-gradient(180deg, #18181d, #0d0d12);
+      }
+      header h1 { font-size: 14px; font-weight: 500; margin: 0; letter-spacing: 0.08em; }
+      header .meta { color: #918a7d; font-size: 11px; }
+      #stage { grid-area: stage; position: relative; overflow: hidden; }
+      #stage canvas { display: block; width: 100%; height: 100%; }
+      #panel {
+        grid-area: panel;
+        background: #14141a;
+        border-left: 1px solid #2a2a30;
+        padding: 16px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .card { background: #1b1b22; border: 1px solid #2a2a30; border-radius: 6px; padding: 12px; }
+      .card h2 { font-size: 11px; margin: 0 0 8px; color: #c8b67a; text-transform: uppercase; letter-spacing: 0.12em; }
+      .stat-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+      .stat-row .key { color: #918a7d; }
+      .stat-row .value { color: #f1ead8; font-variant-numeric: tabular-nums; }
+      button {
+        background: #2a2230;
+        color: #f1ead8;
+        border: 1px solid #3a3240;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      button:hover { background: #3a3240; }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+      ul.objects { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
+      ul.objects li {
+        font-size: 11px;
+        padding: 4px 6px;
+        border-bottom: 1px dashed #2a2a30;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      ul.objects li .uuid { color: #5a8a6a; font-size: 10px; }
+      ul.objects li .name { color: #c8b67a; }
+      ul.objects li .type { color: #918a7d; font-size: 10px; }
+      .controls { display: flex; gap: 6px; flex-wrap: wrap; }
+      textarea {
+        width: 100%;
+        min-height: 100px;
+        background: #0d0d12;
+        color: #c8b67a;
+        border: 1px solid #2a2a30;
+        border-radius: 4px;
+        padding: 8px;
+        font: inherit;
+        font-size: 10px;
+        resize: vertical;
+      }
+      .toast {
+        position: absolute;
+        bottom: 16px;
+        left: 16px;
+        background: rgba(20, 20, 26, 0.92);
+        border: 1px solid #2a2a30;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 11px;
+        color: #c8b67a;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+      .toast.show { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AI-WESTERN GAME — SCENE STATE MANAGER DEMO</h1>
+      <div class="meta">data-driven · uuid-persistent · three.js</div>
+    </header>
+    <div id="stage"></div>
+    <aside id="panel">
+      <div class="card">
+        <h2>Registry Snapshot</h2>
+        <div class="stat-row"><span class="key">Object count</span><span class="value" id="stat-count">0</span></div>
+        <div class="stat-row"><span class="key">Renderer count</span><span class="value" id="stat-render">0</span></div>
+        <div class="stat-row"><span class="key">By assetType</span><span class="value" id="stat-bytype">—</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Actions</h2>
+        <div class="controls">
+          <button id="btn-load">Load default-scene.json</button>
+          <button id="btn-export">Export to JSON</button>
+          <button id="btn-clear">Clear registry</button>
+          <button id="btn-shuffle">Shuffle chair transforms</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Registered objects</h2>
+        <ul class="objects" id="obj-list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Exported SceneData</h2>
+        <textarea id="export-output" readonly placeholder="Click 'Export to JSON' to dump the registry here."></textarea>
+      </div>
+    </aside>
+    <div class="toast" id="toast"></div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

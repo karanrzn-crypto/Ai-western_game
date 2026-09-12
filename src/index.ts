@@ -40,6 +40,9 @@ export { ObjectEditorController } from './editor/ObjectEditorController.js';
 export type { ObjectEditorControllerOptions, EditorMoveCommand, EditorRotationSign } from './editor/ObjectEditorController.js';
 export { createDebugAxes, isDebugHelper, DEBUG_HELPER_KEY } from './editor/DebugAxes.js';
 export type { DebugAxesOptions } from './editor/DebugAxes.js';
+export { TransformGizmo } from './editor/TransformGizmo.js';
+export type { TransformGizmoOptions, GizmoAxis, GizmoHandleId } from './editor/TransformGizmo.js';
+export { closestAxisParamFromRay, rayAngleAroundAxis, wrapAngle, planeBasis } from './editor/GizmoMath.js';
 export { formatSelectedObjectInfo, NO_SELECTION_INFO } from './editor/SelectionInfo.js';
 export type { SelectedObjectInfo } from './editor/SelectionInfo.js';
 export {

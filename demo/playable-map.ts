@@ -10,6 +10,7 @@ import {
   LocalSceneStorage,
   PlayerController,
   ObjectEditorController,
+  TransformGizmo,
   createDebugAxes,
   formatSelectedObjectInfo,
   configure,
@@ -86,6 +87,21 @@ const editor = new ObjectEditorController(manager, {
   },
 });
 
+// Mouse transform gizmo (primary editor control). Purely an editor tool:
+// never registered in the manager, never saved, never selectable, never a
+// collider — every node carries the debug-helper tag.
+const gizmo = new TransformGizmo({
+  manager,
+  onTransformCommitted: () => {
+    // One save per completed drag keeps localStorage write volume sane while
+    // the pointer moves continuously.
+    storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
+    updateSaveStatus();
+  },
+});
+gizmo.root.visible = false;
+scene.add(gizmo.root);
+
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
   uuid: groundUuid,
@@ -153,11 +169,15 @@ function findManagedUuid(object: THREE.Object3D): string | null {
   return null;
 }
 
-function selectObjectFromPointer(event: MouseEvent): void {
-  if (!editor.isEditMode()) return;
+function updatePointerFromEvent(event: MouseEvent): void {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function selectObjectFromPointer(event: MouseEvent): void {
+  if (!editor.isEditMode()) return;
+  updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
   const candidates = adapter.getActiveUUIDs()
     .map((uuid) => scene.getObjectByProperty('uuid', uuid))
@@ -185,7 +205,7 @@ function updateControlHint(): void {
   const hint = document.getElementById('control-hint');
   if (!hint) return;
   if (editor.isEditMode()) {
-    hint.textContent = 'TAB play · click object · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
+    hint.textContent = 'TAB play · drag gizmo axes/rings to transform · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
   hint.textContent = pointerLocked
@@ -276,8 +296,37 @@ window.addEventListener('keydown', (event) => {
 
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 
-renderer.domElement.addEventListener('click', (event: MouseEvent) => {
-  if (editor.isEditMode()) { selectObjectFromPointer(event); return; }
+// --- Gizmo mouse interaction -------------------------------------------
+// Selection moved to pointerdown: gizmo handles are checked FIRST; if one is
+// hit the drag starts and object selection is skipped for this press, so the
+// gizmo can never select/move anything but its own target.
+renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
+  if (!editor.isEditMode() || event.button !== 0) return;
+  updatePointerFromEvent(event);
+  raycaster.setFromCamera(pointer, camera);
+  const handle = gizmo.pickHandle(raycaster.ray);
+  if (handle) {
+    gizmo.beginDrag(handle, raycaster.ray);
+    event.preventDefault();
+    return;
+  }
+  selectObjectFromPointer(event);
+});
+
+window.addEventListener('pointermove', (event: PointerEvent) => {
+  if (!gizmo.isDragging()) return;
+  updatePointerFromEvent(event);
+  raycaster.setFromCamera(pointer, camera);
+  gizmo.updateDrag(raycaster.ray);
+  refreshSelectionHelper();
+});
+
+window.addEventListener('pointerup', () => {
+  if (gizmo.isDragging()) gizmo.endDrag();
+});
+
+renderer.domElement.addEventListener('click', () => {
+  if (editor.isEditMode()) return; // selection/drag handled on pointerdown
   renderer.domElement.requestPointerLock?.();
 });
 
@@ -332,6 +381,7 @@ function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   updatePlayer(delta);
   dayNight.update(delta);
+  gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
   refreshSelectionHelper();
   updateSelectionPanel();
   setHud();

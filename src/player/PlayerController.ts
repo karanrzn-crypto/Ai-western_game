@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../core/types.js';
 import { CollisionWorld } from '../physics/CollisionWorld.js';
+import { CHARACTER_PROPORTIONS } from './character/CharacterProportions.js';
 import type { StaminaSystem } from './Vitals.js';
 import type { ThirdPersonCamera } from './ThirdPersonCamera.js';
 
@@ -33,6 +34,14 @@ export interface PlayerControllerOptions {
   crouchSpeed?: number;
   /** Eye-height multiplier while crouched (collision height follows). */
   crouchEyeFactor?: number;
+  /**
+   * Explicit crouch eye height (m). When set it wins over `crouchEyeFactor`;
+   * defaults come from CHARACTER_PROPORTIONS so every camera height shares
+   * one source of truth.
+   */
+  crouchEyeHeight?: number;
+  /** Camera eye can never sink below this (guards neck/chest-level cameras). */
+  minEyeHeight?: number;
   /** Time to reach full speed (0 = legacy instant velocity). */
   accelerationTime?: number;
   /** Time to stop when input releases (0 = legacy instant stop). */
@@ -41,6 +50,12 @@ export interface PlayerControllerOptions {
   stepHeight?: number;
   /** Optional stamina pool: sprint degrades to walk when it runs out. */
   stamina?: StaminaSystem;
+  /**
+   * Stamina charged per jump. 0 = free jumps. A jump is denied while the
+   * pool holds less than the cost (and the cost is paid only when the jump
+   * actually leaves the ground).
+   */
+  jumpStaminaCost?: number;
   /** Fired when the controller lands after being airborne. */
   onLand?: (impactSpeed: number) => void;
 }
@@ -67,6 +82,9 @@ export class PlayerController {
   private readonly lookSensitivity: number;
   private readonly crouchSpeed: number;
   private readonly crouchEyeFactor: number;
+  private readonly crouchEyeHeight: number;
+  private readonly minEyeHeight: number;
+  private readonly jumpStaminaCost: number;
   private readonly accelerationTime: number;
   private readonly decelerationTime: number;
   private readonly stepHeight: number;
@@ -87,6 +105,11 @@ export class PlayerController {
   private sprintingActual = false;
   private currentEyeHeight: number;
   private readonly velocity: Vec3 = { x: 0, y: 0, z: 0 };
+  // Scratch vectors — reused every frame, never reallocated (no GC churn).
+  private readonly scratchForward = new THREE.Vector3();
+  private readonly scratchRight = new THREE.Vector3();
+  private readonly scratchDirection = new THREE.Vector3();
+  private readonly scratchCamTarget = new THREE.Vector3();
   private input: Required<PlayerInputState> = {
     forward: false,
     backward: false,
@@ -108,6 +131,21 @@ export class PlayerController {
     this.lookSensitivity = options.lookSensitivity ?? 0.0022;
     this.crouchSpeed = options.crouchSpeed ?? 2.6;
     this.crouchEyeFactor = Math.min(1, Math.max(0.3, options.crouchEyeFactor ?? 0.58));
+    // One source of truth for camera heights (CharacterProportions): an
+    // explicit crouchEyeHeight wins, then an explicit crouchEyeFactor, and
+    // otherwise the proportions' crouch ratio scales with the stand eye.
+    const standEye = Math.max(0.5, options.eyeHeight ?? CHARACTER_PROPORTIONS.eyeHeight);
+    const defaultCrouchEye = standEye * (CHARACTER_PROPORTIONS.crouchEyeHeight / CHARACTER_PROPORTIONS.eyeHeight);
+    const explicitCrouchEye = options.crouchEyeHeight ?? (options.crouchEyeFactor !== undefined
+      ? standEye * this.crouchEyeFactor
+      : defaultCrouchEye);
+    this.crouchEyeHeight = Math.min(standEye, Math.max(0.3, explicitCrouchEye));
+    // The eye floor can never exceed the crouch eye (crouch must stay usable).
+    this.minEyeHeight = Math.min(
+      this.crouchEyeHeight,
+      Math.max(0.1, options.minEyeHeight ?? CHARACTER_PROPORTIONS.minEyeHeight),
+    );
+    this.jumpStaminaCost = Math.max(0, options.jumpStaminaCost ?? 0);
     this.accelerationTime = Math.max(0, options.accelerationTime ?? 0);
     this.decelerationTime = Math.max(0, options.decelerationTime ?? 0);
     this.stepHeight = Math.max(0, options.stepHeight ?? 0);
@@ -148,6 +186,10 @@ export class PlayerController {
 
   requestJump(): boolean {
     if (!this.grounded || this.dead || this.crouching) return false;
+    // A jump with a stamina price is denied when the pool can't pay it.
+    if (this.stamina && this.jumpStaminaCost > 0 && this.stamina.current < this.jumpStaminaCost) {
+      return false;
+    }
     this.jumpQueued = true;
     return true;
   }
@@ -216,6 +258,8 @@ export class PlayerController {
     if (this.jumpQueued && this.grounded && !this.dead && !this.crouching) {
       this.verticalVelocity = this.jumpSpeed;
       this.grounded = false;
+      // Pay the stamina cost only when the jump actually happens.
+      if (this.stamina && this.jumpStaminaCost > 0) this.stamina.spend(this.jumpStaminaCost);
     }
     this.jumpQueued = false;
 
@@ -246,8 +290,10 @@ export class PlayerController {
       this.velocity.z = targetVz;
     }
 
-    const targetEye = this.crouching ? this.eyeHeight * this.crouchEyeFactor : this.eyeHeight;
+    const targetEye = this.crouching ? this.crouchEyeHeight : this.eyeHeight;
     this.currentEyeHeight += (targetEye - this.currentEyeHeight) * (1 - Math.exp(-12 * dt));
+    // The camera eye may never drop below the configured floor.
+    if (this.currentEyeHeight < this.minEyeHeight) this.currentEyeHeight = this.minEyeHeight;
 
     const deltaX = this.velocity.x * dt;
     const deltaZ = this.velocity.z * dt;
@@ -350,6 +396,15 @@ export class PlayerController {
   /** Actual sprint state this frame (input + stamina + actually moving). */
   isSprinting(): boolean { return this.sprintingActual; }
 
+  /** Standing camera eye height (m) — single source: CharacterProportions. */
+  getStandingEyeHeight(): number { return this.eyeHeight; }
+
+  /** Crouching camera eye height (m). */
+  getCrouchEyeHeight(): number { return this.crouchEyeHeight; }
+
+  /** Hard floor for the camera eye (m). */
+  getMinEyeHeight(): number { return this.minEyeHeight; }
+
   /** Current smoothed eye height (drops while crouched). */
   getEyeHeight(): number { return this.currentEyeHeight; }
 
@@ -365,12 +420,14 @@ export class PlayerController {
 
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
+    // Entering third person hands the camera to the rig: snap it to the
+    // character so it never glides in from a stale follow point.
+    if (mode === 'third_person') this.thirdPersonRig?.snap();
     this.applyCamera();
   }
 
   toggleCameraMode(): CameraMode {
-    this.cameraMode = this.cameraMode === 'first_person' ? 'third_person' : 'first_person';
-    this.applyCamera();
+    this.setCameraMode(this.cameraMode === 'first_person' ? 'third_person' : 'first_person');
     return this.cameraMode;
   }
 
@@ -386,9 +443,11 @@ export class PlayerController {
   }
 
   private computeMovementVector(): Vec3 {
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const direction = new THREE.Vector3();
+    // Camera-relative: forward/right derive from the shared yaw, so WASD
+    // always moves the way the camera looks in BOTH first and third person.
+    const forward = this.scratchForward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const right = this.scratchRight.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const direction = this.scratchDirection.set(0, 0, 0);
 
     if (this.input.forward) direction.add(forward);
     if (this.input.backward) direction.sub(forward);
@@ -414,7 +473,7 @@ export class PlayerController {
     // pitch, so looking up/down actually raises/lowers the camera instead of
     // leaving it fixed (the old behaviour ignored pitch entirely).
     // At pitch = 0 this reproduces the legacy neutral pose exactly.
-    const target = new THREE.Vector3(this.position.x, this.position.y - 0.5, this.position.z);
+    const target = this.scratchCamTarget.set(this.position.x, this.position.y - 0.5, this.position.z);
     const cosPitch = Math.cos(this.pitch);
     this.camera.position.set(
       this.position.x + Math.sin(this.yaw) * cosPitch * this.thirdPersonDistance,

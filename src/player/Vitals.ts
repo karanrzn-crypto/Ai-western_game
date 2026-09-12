@@ -173,6 +173,20 @@ export class StaminaSystem {
     if (this.sprintLocked && this.currentStamina >= this.recoverThreshold) this.sprintLocked = false;
   }
 
+  /**
+   * Immediate one-shot cost (e.g. a jump). Like sprint drain it delays
+   * regeneration and engages the sprint lock when it dips to/below the lock
+   * threshold. Returns the amount actually spent.
+   */
+  spend(amount: number): number {
+    if (amount <= 0 || this.currentStamina <= 0) return 0;
+    const applied = Math.min(this.currentStamina, amount);
+    this.currentStamina -= applied;
+    this.sinceSprintSeconds = 0;
+    if (!this.sprintLocked && this.currentStamina <= this.lockThreshold) this.sprintLocked = true;
+    return applied;
+  }
+
   /** Full restore used by the respawn flow. */
   reset(): void {
     this.currentStamina = this.maxStamina;

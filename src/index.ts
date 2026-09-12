@@ -44,6 +44,8 @@ export { InteractionSystem } from './player/InteractionSystem.js';
 export type { Interactable, InteractionSystemOptions } from './player/InteractionSystem.js';
 export { ThirdPersonCamera, rayAabbDistance } from './player/ThirdPersonCamera.js';
 export type { ThirdPersonCameraOptions, ThirdPersonCameraInput, ThirdPersonCameraSnapshot } from './player/ThirdPersonCamera.js';
+export { MouseLookController, MOUSE_LOOK_BUTTON } from './player/MouseLookController.js';
+export type { MouseLookDelta } from './player/MouseLookController.js';
 export { findSafeSpawnPosition } from './player/Spawn.js';
 export type { SpawnProbeOptions } from './player/Spawn.js';
 export { createCharacterModel } from './player/character/CharacterModel.js';

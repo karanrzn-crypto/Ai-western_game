@@ -58,6 +58,12 @@ export interface CharacterModel {
   updateLOD(cameraPosition: THREE.Vector3, detailDistance?: number): boolean;
   /** First-person: hide head+hat so they never block the camera. */
   setHeadVisible(visible: boolean): void;
+  /**
+   * Full first-person body treatment: hides the head AND the neck/bandana
+   * stub that sits directly under the camera, so the view can never read as
+   * "a camera parked on the collar". Third person restores both.
+   */
+  setFirstPerson(firstPerson: boolean): void;
   dispose(): void;
 }
 
@@ -96,6 +102,7 @@ export function createCharacterModel(): CharacterModel {
   const detailParts: THREE.Object3D[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   let headJoint: THREE.Group | null = null;
+  let neckJoint: THREE.Group | null = null;
   let handSocketR: THREE.Group | null = null;
   let handSocketL: THREE.Group | null = null;
 
@@ -162,6 +169,7 @@ export function createCharacterModel(): CharacterModel {
   const footR = group('footR', kneeR, 0, -P.lowerLeg, 0);
   Object.assign(joints, { hips, spine, chest, neck, head, shoulderL, elbowL, handL, shoulderR, elbowR, handR, legL, kneeL, footL, legR, kneeR, footR });
   headJoint = head;
+  neckJoint = neck;
 
   handSocketR = group('hand-socket-r', handR);
   handSocketL = group('hand-socket-l', handL);
@@ -273,6 +281,13 @@ export function createCharacterModel(): CharacterModel {
     },
     setHeadVisible(visible: boolean): void {
       if (headJoint) headJoint.visible = visible;
+    },
+    setFirstPerson(firstPerson: boolean): void {
+      // Head (with hat/hair/face) AND the neck+bandana stub hide in first
+      // person: both sit exactly at/under the camera eye line and would
+      // otherwise read as the camera hanging at the collar.
+      if (headJoint) headJoint.visible = !firstPerson;
+      if (neckJoint) neckJoint.visible = !firstPerson;
     },
     dispose(): void {
       for (const geometry of geometries) geometry.dispose();

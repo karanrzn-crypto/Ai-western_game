@@ -27,9 +27,11 @@ import {
   InputBindings,
   InteractionSystem,
   ThirdPersonCamera,
+  MouseLookController,
   findSafeSpawnPosition,
 } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
+import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
 
 configure({ debug: false, logging: { level: 'info' } });
 
@@ -86,7 +88,6 @@ const stamina = new StaminaSystem({ drainPerSecond: 13, regenPerSecond: 17, rege
 const characterStates = new CharacterStateMachine();
 const input = new InputBindings(window);
 input.attach();
-input.setEnabled(false); // enabled when play mode starts
 
 const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
@@ -111,18 +112,21 @@ const persistence = new PersistenceManager();
 // old v3 saves (previous names) must not shadow the renamed default map.
 const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v4' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
-const RESPAWN_POINT = { x: 0, y: 1.7, z: 12 };
-const STAND_EYE = 1.7;
-const CROUCH_EYE = 1.7 * 0.58;
+const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
   camera,
   initialPosition: { ...RESPAWN_POINT },
   cameraMode: 'third_person',
   stamina,
   crouchSpeed: 2.6,
+  // Camera heights come from ONE source (CharacterProportions) — no local
+  // copies of the eye height anywhere in this file.
+  crouchEyeHeight: CHARACTER_PROPORTIONS.crouchEyeHeight,
+  minEyeHeight: CHARACTER_PROPORTIONS.minEyeHeight,
   accelerationTime: 0.16,
   decelerationTime: 0.12,
   stepHeight: 0.35,
+  jumpStaminaCost: 10,
   // Landing feeds the animator's impulse and (future) fall damage.
   onLand: (impactSpeed) => {
     characterAnimator.notifyLanding(impactSpeed);
@@ -130,8 +134,10 @@ const playerController = new PlayerController(collisionWorld, {
   },
 });
 const thirdPersonCamera = new ThirdPersonCamera(camera, () => collisionWorld.getCollisionBounds(), {
-  targetHeight: 1.55,
-  crouchTargetHeight: 1.0,
+  // Framing heights derive from the same eye metrics (slightly below the eye
+  // so the hat stays in frame without the camera staring over the head).
+  targetHeight: CHARACTER_PROPORTIONS.eyeHeight - 0.15,
+  crouchTargetHeight: CHARACTER_PROPORTIONS.crouchEyeHeight - 0.12,
   defaultDistance: 4.8,
   minDistance: 0.9,
   shoulderOffset: 0.34,
@@ -142,7 +148,6 @@ const dayNight = new DayNightCycle(scene, sun, hemisphere, {
   startTime: 8,
 });
 
-let pointerLocked = false;
 const editor = new ObjectEditorController(manager, {
   onObjectModified: () => {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
@@ -244,7 +249,6 @@ interactions.register({
   onInteract: () => showStatusMessage('The crate holds jerky, rifle rounds and a worn tin star.'),
 });
 
-const keys = new Set<string>();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
@@ -308,9 +312,7 @@ function updateControlHint(): void {
     hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
-  hint.textContent = pointerLocked
-    ? 'WASD move · Mouse look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · H/J damage/heal (debug) · R respawn · TAB edit · Esc release'
-    : 'Click map · WASD move · Shift sprint · Space jump · C crouch · E interact · V camera · TAB edit';
+  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · H/J damage/heal (debug) · R respawn · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -391,6 +393,21 @@ function loadSavedScene(): void {
   updateSaveStatus();
 }
 
+/**
+ * Mode wiring — the ONE place that mirrors the game mode into the input
+ * systems. Boot and every Tab toggle go through this, so the character can
+ * never sit in play mode with a dead keyboard again (the original movement
+ * bug: input stayed disabled until the player pressed Tab twice).
+ */
+function applyModeState(): void {
+  const editMode = editor.isEditMode();
+  input.setEnabled(!editMode); // character controls only live in play mode
+  debugAxes.visible = editMode;
+  if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
+  updateEditorHud();
+  updateControlHint();
+}
+
 window.addEventListener('keydown', (event) => {
   // While typing in a panel input the editor shortcuts must stay silent
   // ("1e5" would otherwise trigger the KeyE rotation, arrows would move the
@@ -400,27 +417,17 @@ window.addEventListener('keydown', (event) => {
 
   if (event.code === 'Tab') {
     event.preventDefault();
-    const enabled = editor.toggleEditMode();
-    if (enabled && document.pointerLockElement === renderer.domElement) document.exitPointerLock();
-    input.setEnabled(!enabled); // character controls only live in play mode
-    debugAxes.visible = enabled;
+    editor.toggleEditMode();
+    applyModeState();
     refreshSelectionHelper();
-    updateEditorHud();
-    updateControlHint();
     return;
   }
 
-  if (event.code === 'KeyV' && !editor.isEditMode()) {
-    playerController.toggleCameraMode();
-    updateEditorHud();
-    return;
-  }
+  // NOTE: KeyV (camera) and Space (jump) are intentionally NOT handled here.
+  // They are edge actions of InputBindings consumed once per frame in
+  // animate() — handling them here as well toggled/applied every action
+  // TWICE (the camera toggle cancelled itself out and never switched).
 
-  keys.add(event.code);
-  if (event.code === 'Space' && !editor.isEditMode()) {
-    playerController.requestJump();
-    event.preventDefault();
-  }
   if (!editor.isEditMode()) return;
 
   const fast = event.shiftKey;
@@ -441,7 +448,37 @@ window.addEventListener('keydown', (event) => {
   if (handled) { event.preventDefault(); refreshSelectionHelper(); updateEditorHud(); }
 });
 
-window.addEventListener('keyup', (event) => keys.delete(event.code));
+// --- Mouse look: RIGHT-button drag only ----------------------------------
+// The camera rotates ONLY while the right mouse button is held. Left click
+// never rotates, and there is no pointer-lock look path at all — a locked
+// pointer without the right button held must stay inert.
+const mouseLook = new MouseLookController();
+
+renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
+  if (editor.isEditMode()) return; // the editor owns the mouse in edit mode
+  if (event.button !== 2) return;  // left/middle clicks never touch the camera
+  if (mouseLook.beginDrag(event.button, event.clientX, event.clientY)) {
+    // Capture so the release outside the window still ends the drag.
+    renderer.domElement.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+});
+
+// The context menu would steal the right button's pointerup and leave the
+// drag stuck — suppress it in play mode.
+renderer.domElement.addEventListener('contextmenu', (event) => {
+  if (!editor.isEditMode()) event.preventDefault();
+});
+
+window.addEventListener('pointerup', (event: PointerEvent) => {
+  if (mouseLook.isDragging && mouseLook.endDrag(event.button)) {
+    renderer.domElement.releasePointerCapture?.(event.pointerId);
+  }
+});
+
+window.addEventListener('blur', () => {
+  mouseLook.cancel();
+});
 
 // --- Gizmo mouse interaction -------------------------------------------
 // Selection moved to pointerdown: gizmo handles are checked FIRST; if one is
@@ -465,6 +502,9 @@ renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
 });
 
 window.addEventListener('pointermove', (event: PointerEvent) => {
+  // Right-drag look accumulates pixel deltas; consumed once per frame so a
+  // burst of mouse events applies smoothly and nothing is processed twice.
+  if (mouseLook.isDragging) mouseLook.updateMove(event.clientX, event.clientY);
   if (!gizmo.isDragging()) return;
   updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
@@ -475,29 +515,6 @@ window.addEventListener('pointermove', (event: PointerEvent) => {
 window.addEventListener('pointerup', () => {
   if (gizmo.isDragging()) gizmo.endDrag();
 });
-
-renderer.domElement.addEventListener('click', () => {
-  if (editor.isEditMode()) return; // selection/drag handled on pointerdown
-  renderer.domElement.requestPointerLock?.();
-});
-
-document.addEventListener('pointerlockchange', () => {
-  pointerLocked = document.pointerLockElement === renderer.domElement;
-  updateControlHint();
-});
-
-document.addEventListener('mousemove', (event) => {
-  if (!pointerLocked || editor.isEditMode()) return;
-  playerController.look(event.movementX, event.movementY);
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.code === 'Escape' && pointerLocked) {
-    document.exitPointerLock();
-    pointerLocked = false;
-    updateControlHint();
-  }
-}, true);
 
 function updatePlayer(delta: number): void {
   if (editor.isEditMode()) return;
@@ -544,8 +561,12 @@ function syncCharacter(delta: number, previousYaw: number): void {
   stamina.update(delta, playerController.isSprinting() && speed > 0.5 && playerController.isGrounded());
   // Camera: the rig owns third person; the controller keeps first person.
   if (playerController.getCameraMode() === 'third_person') {
+    // Crouch factor from the CONTROLLER's own eye metrics (single source) —
+    // 1 = standing, 0 = fully crouched.
+    const standEye = playerController.getStandingEyeHeight();
+    const crouchEye = playerController.getCrouchEyeHeight();
     const eye = playerController.getEyeHeight();
-    const crouchFactor = Math.max(0, Math.min(1, (eye - CROUCH_EYE) / (STAND_EYE - CROUCH_EYE)));
+    const crouchFactor = Math.max(0, Math.min(1, (eye - crouchEye) / Math.max(1e-5, standEye - crouchEye)));
     thirdPersonCamera.update({
       targetPosition: feet,
       yaw: playerController.getYaw(),
@@ -554,7 +575,8 @@ function syncCharacter(delta: number, previousYaw: number): void {
       deltaSeconds: delta,
     });
   }
-  character.setHeadVisible(playerController.getCameraMode() === 'third_person');
+  // First person hides the head AND the neck/bandana stub under the camera.
+  character.setFirstPerson(playerController.getCameraMode() === 'first_person');
   character.updateLOD(camera.position);
 }
 
@@ -595,6 +617,12 @@ const clock = new THREE.Clock();
 let previousYaw = playerController.getYaw();
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
+  // Right-drag look FIRST: the accumulated pixel delta becomes yaw/pitch
+  // before the player updates, so movement and the camera agree this frame.
+  const lookDelta = mouseLook.consumeLookDelta();
+  if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
+    playerController.look(lookDelta.x, lookDelta.y);
+  }
   updatePlayer(delta);
   // Edge-triggered play actions (death gates everything but respawn).
   if (!editor.isEditMode()) {
@@ -627,7 +655,9 @@ function animate(): void {
   );
   dayNight.update(delta);
   gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
-  refreshSelectionHelper();
+  // The selection box only needs to track transforms in edit mode; the one
+  // frame after leaving edit mode hides it for good.
+  if (editor.isEditMode() || selectionBox.visible) refreshSelectionHelper();
   contactIndicator.update({
     editMode: editor.isEditMode(),
     selectedUuid: editor.getSelectedUuid(),
@@ -649,8 +679,7 @@ window.addEventListener('resize', () => {
 });
 
 loadSavedScene();
+applyModeState(); // boot: play mode → input ENABLED (the movement fix)
 setHud();
-updateEditorHud();
-updateControlHint();
 updateSelectionPanel();
 animate();

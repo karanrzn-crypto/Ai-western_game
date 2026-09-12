@@ -26,6 +26,13 @@ export const CHARACTER_PROPORTIONS = {
   lowerLeg: 0.4,
   footHeight: 0.1,
   footLength: 0.27,
+  // --- Camera eye metrics (the SINGLE source for every camera height) ------
+  /** Camera eye line above the feet while standing (≈93% of body height). */
+  eyeHeight: 1.7,
+  /** Camera eye line while fully crouched (matches the crouch pose's head). */
+  crouchEyeHeight: 1.02,
+  /** Hard floor for the camera eye — it must never sink to neck/chest level. */
+  minEyeHeight: 0.85,
 } as const;
 
 /** Joint names of the character rig (animator targets). */

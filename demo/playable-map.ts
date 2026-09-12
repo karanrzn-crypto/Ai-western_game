@@ -5,6 +5,8 @@ import {
   AssetRegistry,
   registerPrimitiveFactories,
   PersistenceManager,
+  CollisionWorld,
+  DayNightCycle,
   configure,
 } from '../src/index.js';
 import { GroundAssetFactory } from '../src/assets/GroundAssetFactory.js';
@@ -14,6 +16,9 @@ configure({ debug: false, logging: { level: 'info' } });
 const stage = document.getElementById('stage');
 if (!stage) throw new Error('Missing #stage');
 
+// -----------------------------------------------------------------------------
+// Renderer / world
+// -----------------------------------------------------------------------------
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9a8d72);
 scene.fog = new THREE.Fog(0x9a8d72, 35, 90);
@@ -24,10 +29,6 @@ const camera = new THREE.PerspectiveCamera(
   0.05,
   120,
 );
-const player = new THREE.Vector3(0, 1.7, 12);
-let yaw = Math.PI;
-let pitch = 0;
-camera.position.copy(player);
 camera.rotation.order = 'YXZ';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -43,7 +44,9 @@ sun.position.set(-25, 35, 15);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2));
+
+const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);
+scene.add(hemisphere);
 
 const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
@@ -53,6 +56,9 @@ const axes = new THREE.AxesHelper(3);
 axes.position.set(0, 0.03, 0);
 scene.add(axes);
 
+// -----------------------------------------------------------------------------
+// State / assets
+// -----------------------------------------------------------------------------
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
 assets.register('ground', new GroundAssetFactory(), 'World Ground');
@@ -60,7 +66,12 @@ assets.register('ground', new GroundAssetFactory(), 'World Ground');
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
 const persistence = new PersistenceManager();
-const SAVE_KEY = 'ai-western-game.playable-map.scene.v1';
+const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), 0);
+const dayNight = new DayNightCycle(scene, sun, hemisphere, {
+  dayDurationSeconds: 180,
+  startTime: 8,
+});
+const SAVE_KEY = 'ai-western-game.playable-map.scene.v2';
 
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
@@ -71,10 +82,15 @@ manager.registerObject({
     rotation: { x: -90, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
-  metadata: { name: 'Main Map Ground', size: 60 },
+  metadata: { name: 'Main Map Ground', size: 60, collider: false, editable: false },
 });
 
-function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3) {
+function addBoundary(
+  uuid: string,
+  name: string,
+  position: THREE.Vector3,
+  scale: THREE.Vector3,
+): void {
   manager.registerObject({
     uuid,
     assetType: 'cube',
@@ -83,7 +99,7 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
       rotation: { x: 0, y: 0, z: 0 },
       scale: { x: scale.x, y: scale.y, z: scale.z },
     },
-    metadata: { name, mapBoundary: true, editable: false },
+    metadata: { name, mapBoundary: true, editable: false, collider: true },
   });
 }
 
@@ -121,13 +137,32 @@ manager.registerObject({
     rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 3, y: 1.5, z: 3 },
   },
-  metadata: { name: 'Spawn Landmark', editable: true },
+  metadata: { name: 'Spawn Landmark', editable: true, collider: true },
 });
 
-const keys = new Set<string>();
+// -----------------------------------------------------------------------------
+// Player state / controls
+// -----------------------------------------------------------------------------
+const EYE_HEIGHT = 1.7;
+const PLAYER_RADIUS = 0.35;
+const WALK_SPEED = 6;
+const SPRINT_SPEED = 11;
+const JUMP_SPEED = 6.5;
+const GRAVITY = 18;
+const THIRD_PERSON_DISTANCE = 5.5;
+const THIRD_PERSON_HEIGHT = 2.2;
+
+const player = new THREE.Vector3(0, EYE_HEIGHT, 12);
+let yaw = Math.PI;
+let pitch = 0;
+let verticalVelocity = 0;
+let grounded = true;
 let pointerLocked = false;
 let editMode = false;
+let thirdPerson = false;
 let selectedUuid: string | null = null;
+
+const keys = new Set<string>();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
@@ -135,7 +170,10 @@ selectionBox.visible = false;
 scene.add(selectionBox);
 
 function saveScene(): void {
-  const data = persistence.exportSceneToJSON(manager, { map: 'playable-map', mode: 'development' });
+  const data = persistence.exportSceneToJSON(manager, {
+    map: 'playable-map',
+    mode: 'development',
+  });
   localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   const saved = document.getElementById('save-status');
   if (saved) saved.textContent = `Saved ${new Date().toLocaleTimeString()}`;
@@ -166,6 +204,15 @@ function refreshSelectionHelper(): void {
   selectionBox.visible = true;
 }
 
+function findManagedUuid(object: THREE.Object3D): string | null {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (manager.has(current.uuid)) return current.uuid;
+    current = current.parent;
+  }
+  return null;
+}
+
 function selectObjectFromPointer(event: MouseEvent): void {
   if (!editMode) return;
   const rect = renderer.domElement.getBoundingClientRect();
@@ -173,49 +220,75 @@ function selectObjectFromPointer(event: MouseEvent): void {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
-  const candidates = adapter.getActiveUUIDs()
+  const candidates = adapter
+    .getActiveUUIDs()
     .map((uuid) => scene.getObjectByProperty('uuid', uuid))
     .filter((obj): obj is THREE.Object3D => Boolean(obj));
   const hits = raycaster.intersectObjects(candidates, true);
   const hit = hits[0]?.object;
   const uuid = hit ? findManagedUuid(hit) : null;
-  if (uuid && manager.getObject(uuid)?.metadata.editable !== false) {
-    selectedUuid = uuid;
-  } else {
-    selectedUuid = null;
-  }
+
+  selectedUuid =
+    uuid && manager.getObject(uuid)?.metadata.editable !== false ? uuid : null;
   refreshSelectionHelper();
   updateEditorHud();
-}
-
-function findManagedUuid(object: THREE.Object3D): string | null {
-  let current: THREE.Object3D | null = object;
-  while (current) {
-    const candidate = current.uuid;
-    if (manager.has(candidate)) return candidate;
-    current = current.parent;
-  }
-  return null;
 }
 
 function updateEditorHud(): void {
   const mode = document.getElementById('editor-mode');
   const selected = document.getElementById('editor-selection');
+  const cameraLabel = document.getElementById('camera-mode');
   if (mode) mode.textContent = editMode ? 'EDIT MODE' : 'PLAY MODE';
-  if (selected) selected.textContent = selectedUuid ? (manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid) : 'None';
+  if (selected) {
+    selected.textContent = selectedUuid
+      ? manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid
+      : 'None';
+  }
+  if (cameraLabel) cameraLabel.textContent = thirdPerson ? 'THIRD PERSON' : 'FIRST PERSON';
+}
+
+function updateControlHint(): void {
+  const hint = document.getElementById('control-hint');
+  if (!hint) return;
+  if (editMode) {
+    hint.textContent =
+      'TAB play/edit · click object · arrows move · Shift = 1m · PageUp/PageDown height';
+    return;
+  }
+  hint.textContent = pointerLocked
+    ? 'WASD move · Mouse look · Shift sprint · Space jump · V camera · TAB edit · Esc release'
+    : 'Click map · WASD move · Mouse look · Space jump · V camera · TAB edit';
 }
 
 window.addEventListener('keydown', (event) => {
   if (event.code === 'Tab') {
     event.preventDefault();
     editMode = !editMode;
-    if (editMode && document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+    if (editMode && document.pointerLockElement === renderer.domElement) {
+      document.exitPointerLock();
+    }
     if (!editMode) selectedUuid = null;
     refreshSelectionHelper();
     updateEditorHud();
+    updateControlHint();
     return;
   }
+
+  if (event.code === 'KeyV') {
+    if (!editMode) {
+      thirdPerson = !thirdPerson;
+      updateEditorHud();
+    }
+    return;
+  }
+
   keys.add(event.code);
+
+  if (event.code === 'Space' && !editMode && grounded) {
+    verticalVelocity = JUMP_SPEED;
+    grounded = false;
+    event.preventDefault();
+  }
 
   if (!editMode || !selectedUuid) return;
   const current = manager.getObject(selectedUuid);
@@ -259,14 +332,7 @@ renderer.domElement.addEventListener('click', (event) => {
 
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
-  const hint = document.getElementById('control-hint');
-  if (hint) {
-    hint.textContent = editMode
-      ? 'TAB play/edit · click object · arrows move · Shift = 1m · PageUp/PageDown height'
-      : pointerLocked
-        ? 'WASD move · mouse look · Shift sprint · Esc release · TAB edit mode'
-        : 'Click map · WASD move · mouse look · TAB edit mode';
-  }
+  updateControlHint();
 });
 
 document.addEventListener('mousemove', (event) => {
@@ -277,25 +343,9 @@ document.addEventListener('mousemove', (event) => {
   pitch = Math.max(-Math.PI * 0.49, Math.min(Math.PI * 0.49, pitch));
 });
 
-function setHud(): void {
-  const position = document.getElementById('player-position');
-  const managed = document.getElementById('stat-count');
-  const rendered = document.getElementById('stat-render');
-  if (position) position.textContent = `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
-  if (managed) managed.textContent = String(manager.getObjectCount());
-  if (rendered) rendered.textContent = String(adapter.getActiveObjectCount());
-}
+function updatePlayer(delta: number): void {
+  if (editMode) return;
 
-const clock = new THREE.Clock();
-function updateMovement(delta: number): void {
-  if (editMode) {
-    camera.position.copy(player);
-    camera.rotation.set(pitch, yaw, 0);
-    return;
-  }
-
-  // Camera looks along local -Z. These vectors therefore make W = forward
-  // and S = backward for every yaw, including the initial yaw of PI.
   const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
   const direction = new THREE.Vector3();
@@ -307,23 +357,69 @@ function updateMovement(delta: number): void {
 
   if (direction.lengthSq() > 0) {
     direction.normalize();
-    const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
-    const speed = sprint ? 11 : 6;
-    player.addScaledVector(direction, speed * delta);
+    const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPRINT_SPEED : WALK_SPEED;
+    const result = collisionWorld.movePlayer(
+      { x: player.x, y: player.y, z: player.z },
+      { x: direction.x * speed * delta, y: 0, z: direction.z * speed * delta },
+      PLAYER_RADIUS,
+      EYE_HEIGHT,
+    );
+    player.x = result.position.x;
+    player.z = result.position.z;
   }
 
-  const limit = 27.5;
-  player.x = Math.max(-limit, Math.min(limit, player.x));
-  player.z = Math.max(-limit, Math.min(limit, player.z));
-  player.y = 1.7;
+  verticalVelocity -= GRAVITY * delta;
+  const verticalResult = collisionWorld.movePlayer(
+    { x: player.x, y: player.y, z: player.z },
+    { x: 0, y: verticalVelocity * delta, z: 0 },
+    PLAYER_RADIUS,
+    EYE_HEIGHT,
+  );
+  player.y = verticalResult.position.y;
+  if (verticalResult.grounded) {
+    grounded = true;
+    verticalVelocity = 0;
+  } else {
+    grounded = false;
+  }
 
-  camera.position.copy(player);
-  camera.rotation.set(pitch, yaw, 0);
+  camera.rotation.order = 'YXZ';
+  if (!thirdPerson) {
+    camera.position.copy(player);
+    camera.rotation.set(pitch, yaw, 0);
+    return;
+  }
+
+  const backward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+  const target = new THREE.Vector3(player.x, player.y - 0.5, player.z);
+  camera.position.copy(player).addScaledVector(backward, THIRD_PERSON_DISTANCE);
+  camera.position.y += THIRD_PERSON_HEIGHT - EYE_HEIGHT;
+  camera.lookAt(target);
 }
 
+function setHud(): void {
+  const position = document.getElementById('player-position');
+  const managed = document.getElementById('stat-count');
+  const rendered = document.getElementById('stat-render');
+  const time = document.getElementById('time-of-day');
+  if (position) {
+    position.textContent = `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
+  }
+  if (managed) managed.textContent = String(manager.getObjectCount());
+  if (rendered) rendered.textContent = String(adapter.getActiveObjectCount());
+  if (time) {
+    const hours = dayNight.getTimeOfDay();
+    const hour = Math.floor(hours);
+    const minute = Math.floor((hours - hour) * 60);
+    time.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+}
+
+const clock = new THREE.Clock();
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
-  updateMovement(delta);
+  updatePlayer(delta);
+  dayNight.update(delta);
   refreshSelectionHelper();
   setHud();
   renderer.render(scene, camera);
@@ -341,4 +437,5 @@ window.addEventListener('resize', () => {
 loadSavedScene();
 setHud();
 updateEditorHud();
+updateControlHint();
 animate();

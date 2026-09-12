@@ -27,11 +27,17 @@ export type { HeadlessChangeRecord } from './engine/HeadlessRendererAdapter.js';
 // --- Asset layer --------------------------------------------------------
 export * from './assets/index.js';
 
-// --- World / physics foundation ---------------------------------------
+// --- Reusable world, player, editor, and persistence foundation ---------
 export { CollisionWorld } from './physics/CollisionWorld.js';
-export type { PlayerCollisionResult } from './physics/CollisionWorld.js';
+export type { PlayerCollisionResult, CollisionWorldOptions, CollisionBounds } from './physics/CollisionWorld.js';
 export { DayNightCycle } from './world/DayNightCycle.js';
-export type { DayNightCycleOptions } from './world/DayNightCycle.js';
+export type { DayNightCycleOptions, DayNightSnapshot } from './world/DayNightCycle.js';
+export { PlayerController } from './player/PlayerController.js';
+export type { PlayerControllerOptions, PlayerControllerSnapshot, PlayerInputState, CameraMode } from './player/PlayerController.js';
+export { LocalSceneStorage, MemoryStorage } from './persistence/LocalSceneStorage.js';
+export type { LocalSceneStorageOptions, StorageLike } from './persistence/LocalSceneStorage.js';
+export { ObjectEditorController } from './editor/ObjectEditorController.js';
+export type { ObjectEditorControllerOptions, EditorMoveCommand } from './editor/ObjectEditorController.js';
 
 // --- Config & migrations & utils ---------------------------------------
 export { getConfig, configure, resetConfig } from './config/GameConfig.js';

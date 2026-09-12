@@ -44,8 +44,11 @@ export class CollisionWorld {
       blockedZ = true;
     }
 
-    // The foundation player is a vertical capsule approximation. Gravity is
-    // handled by the caller; collision resolves the feet against the floor.
+    // Apply the requested vertical movement, then clamp to the floor.
+    // The foundation player is a vertical capsule approximation; gravity
+    // is supplied by the caller as delta.y, and collision resolves the
+    // feet against the floor.
+    next.y += delta.y;
     const feetY = next.y - height;
     if (feetY < this.floorY) next.y = this.floorY + height;
 

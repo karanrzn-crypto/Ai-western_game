@@ -27,7 +27,8 @@ test('registerPrimitiveFactories wires up the cube asset type', () => {
   const reg = new AssetRegistry();
   registerPrimitiveFactories(reg);
   assert.equal(reg.has('cube'), true);
-  assert.deepEqual(reg.getRegisteredTypes(), ['cube']);
+  // Note: 'ground' is also registered by default (see GroundAssetFactory).
+  assert.deepEqual([...reg.getRegisteredTypes()].sort(), ['cube', 'ground']);
 });
 
 test('create() returns a THREE.Object3D for the cube asset type', async () => {

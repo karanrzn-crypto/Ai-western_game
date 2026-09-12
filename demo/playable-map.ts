@@ -71,6 +71,7 @@ const dayNight = new DayNightCycle(scene, sun, hemisphere, {
   startTime: 8,
 });
 
+let pointerLocked = false;
 const editor = new ObjectEditorController(manager, {
   onObjectModified: () => {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
@@ -126,7 +127,6 @@ const pointer = new THREE.Vector2();
 const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
 selectionBox.visible = false;
 scene.add(selectionBox);
-let pointerLocked = false;
 
 function refreshSelectionHelper(): void {
   const selectedUuid = editor.getSelectedUuid();
@@ -248,6 +248,14 @@ document.addEventListener('mousemove', (event) => {
   if (!pointerLocked || editor.isEditMode()) return;
   playerController.look(event.movementX, event.movementY);
 });
+
+document.addEventListener('keydown', (event) => {
+  if (event.code === 'Escape' && pointerLocked) {
+    document.exitPointerLock();
+    pointerLocked = false;
+    updateControlHint();
+  }
+}, true);
 
 function updatePlayer(delta: number): void {
   if (editor.isEditMode()) return;

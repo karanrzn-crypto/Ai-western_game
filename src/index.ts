@@ -37,7 +37,19 @@ export type { PlayerControllerOptions, PlayerControllerSnapshot, PlayerInputStat
 export { LocalSceneStorage, MemoryStorage } from './persistence/LocalSceneStorage.js';
 export type { LocalSceneStorageOptions, StorageLike } from './persistence/LocalSceneStorage.js';
 export { ObjectEditorController } from './editor/ObjectEditorController.js';
-export type { ObjectEditorControllerOptions, EditorMoveCommand } from './editor/ObjectEditorController.js';
+export type { ObjectEditorControllerOptions, EditorMoveCommand, EditorRotationSign } from './editor/ObjectEditorController.js';
+export { createDebugAxes, isDebugHelper, DEBUG_HELPER_KEY } from './editor/DebugAxes.js';
+export type { DebugAxesOptions } from './editor/DebugAxes.js';
+export { formatSelectedObjectInfo, NO_SELECTION_INFO } from './editor/SelectionInfo.js';
+export type { SelectedObjectInfo } from './editor/SelectionInfo.js';
+export {
+  applyLocalRotationDegrees,
+  eulerDegreesToQuaternion,
+  quaternionToEulerDegrees,
+  quaternionMultiply,
+  axisAngleQuaternion,
+} from './core/RotationMath.js';
+export type { Quaternion, RotationAxis } from './core/RotationMath.js';
 
 // --- Config & migrations & utils ---------------------------------------
 export { getConfig, configure, resetConfig } from './config/GameConfig.js';

@@ -10,6 +10,8 @@ import {
   LocalSceneStorage,
   PlayerController,
   ObjectEditorController,
+  createDebugAxes,
+  formatSelectedObjectInfo,
   configure,
 } from '../src/index.js';
 
@@ -50,8 +52,14 @@ const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
 scene.add(grid);
 
-// NOTE: no AxesHelper here on purpose — debug axes poking through the spawn
-// cube read as "a second object stuck inside it" and confused object editing.
+// Coordinate reference: world origin (0,0,0) + X/Y/Z direction axes.
+// Purely visual debug overlay — never registered in the manager, so it can
+// never be selected or moved; drawn with depthTest off so it reads as an
+// overlay instead of "an object poking out of the spawn cube".
+// Shown only while Edit Mode is active.
+const debugAxes = createDebugAxes();
+debugAxes.visible = false;
+scene.add(debugAxes);
 
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
@@ -177,12 +185,33 @@ function updateControlHint(): void {
   const hint = document.getElementById('control-hint');
   if (!hint) return;
   if (editor.isEditMode()) {
-    hint.textContent = 'TAB play/edit · click object · arrows move · Shift = 1m · PageUp/PageDown height';
+    hint.textContent = 'TAB play · click object · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
   hint.textContent = pointerLocked
     ? 'WASD move · Mouse look · Shift sprint · Space jump · V camera · TAB edit · Esc release'
     : 'Click map · WASD move · Mouse look · Space jump · V camera · TAB edit';
+}
+
+function updateSelectionPanel(): void {
+  const info = formatSelectedObjectInfo(
+    editor.getSelectedUuid() ? manager.getObject(editor.getSelectedUuid()!) : undefined,
+  );
+  const panel = document.getElementById('selection-panel');
+  const name = document.getElementById('sel-name');
+  const uuid = document.getElementById('sel-uuid');
+  const position = document.getElementById('sel-position');
+  const rotation = document.getElementById('sel-rotation');
+  const scale = document.getElementById('sel-scale');
+  if (panel) panel.classList.toggle('no-selection', !editor.getSelectedUuid());
+  if (name) name.textContent = info.name;
+  if (uuid) {
+    uuid.textContent = info.uuid;
+    uuid.title = info.uuid;
+  }
+  if (position) position.textContent = info.position;
+  if (rotation) rotation.textContent = info.rotation;
+  if (scale) scale.textContent = info.scale;
 }
 
 function updateSaveStatus(): void {
@@ -207,6 +236,7 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     const enabled = editor.toggleEditMode();
     if (enabled && document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+    debugAxes.visible = enabled;
     refreshSelectionHelper();
     updateEditorHud();
     updateControlHint();
@@ -234,6 +264,13 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'ArrowDown') handled = editor.moveSelected('backward', fast);
   if (event.code === 'PageUp') handled = editor.moveSelected('up', fast);
   if (event.code === 'PageDown') handled = editor.moveSelected('down', fast);
+  // Local-axis rotation: Q/E = Y, R/F = X, T/G = Z (Shift = 45° instead of 15°).
+  if (event.code === 'KeyQ') handled = editor.rotateSelected('y', 1, fast);
+  if (event.code === 'KeyE') handled = editor.rotateSelected('y', -1, fast);
+  if (event.code === 'KeyR') handled = editor.rotateSelected('x', 1, fast);
+  if (event.code === 'KeyF') handled = editor.rotateSelected('x', -1, fast);
+  if (event.code === 'KeyT') handled = editor.rotateSelected('z', 1, fast);
+  if (event.code === 'KeyG') handled = editor.rotateSelected('z', -1, fast);
   if (handled) { event.preventDefault(); refreshSelectionHelper(); updateEditorHud(); }
 });
 
@@ -296,6 +333,7 @@ function animate(): void {
   updatePlayer(delta);
   dayNight.update(delta);
   refreshSelectionHelper();
+  updateSelectionPanel();
   setHud();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
@@ -313,4 +351,5 @@ loadSavedScene();
 setHud();
 updateEditorHud();
 updateControlHint();
+updateSelectionPanel();
 animate();

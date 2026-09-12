@@ -20,6 +20,10 @@
     #control-hint{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);max-width:calc(100% - 32px);padding:9px 14px;border:1px solid rgba(255,255,255,.15);border-radius:7px;background:rgba(12,12,14,.72);color:#ddd5c8;font-size:11px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.22)}
     .badge{display:inline-block;margin-top:7px;padding:3px 6px;border-radius:4px;background:rgba(116,153,100,.2);color:#9fca8b;font-size:9px;letter-spacing:.08em}
     #save-status{margin-top:7px;color:#b8b0a4;font-size:10px;min-height:12px}
+    #selection-panel{position:absolute;top:16px;right:16px;min-width:250px;max-width:320px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
+    #selection-panel .value{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #selection-panel.no-selection .title{color:#a7a195}
+    #sel-uuid{direction:ltr;text-align:right}
   </style>
 </head>
 <body>
@@ -37,6 +41,14 @@
       <div class="row"><span class="key">Map</span><span class="value">60 × 60</span></div>
       <div class="badge">WORLD + PLAYER + PHYSICS + DAY/NIGHT + EDITOR</div>
       <div id="save-status"></div>
+    </div>
+    <div id="selection-panel" class="no-selection">
+      <div class="title">SELECTED OBJECT</div>
+      <div class="row"><span class="key">Name</span><span class="value" id="sel-name">None</span></div>
+      <div class="row"><span class="key">UUID</span><span class="value" id="sel-uuid">No selection</span></div>
+      <div class="row"><span class="key">Position X / Y / Z</span><span class="value" id="sel-position">—</span></div>
+      <div class="row"><span class="key">Rotation X / Y / Z</span><span class="value" id="sel-rotation">—</span></div>
+      <div class="row"><span class="key">Scale X / Y / Z</span><span class="value" id="sel-scale">—</span></div>
     </div>
     <div id="crosshair"></div>
     <div id="control-hint">Click map · WASD move · Mouse look · Space jump · V camera · TAB edit</div>

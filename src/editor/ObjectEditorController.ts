@@ -1,11 +1,18 @@
 import type { Vec3 } from '../core/types.js';
 import { SceneStateManager } from '../core/SceneStateManager.js';
+import { applyLocalRotationDegrees } from '../core/RotationMath.js';
+import type { RotationAxis } from '../core/RotationMath.js';
 
 export type EditorMoveCommand = 'left' | 'right' | 'forward' | 'backward' | 'up' | 'down';
+export type EditorRotationSign = 1 | -1;
 
 export interface ObjectEditorControllerOptions {
   normalStep?: number;
   fastStep?: number;
+  /** Rotation step in degrees for a normal (no modifier) rotation key. Default 15. */
+  rotationStep?: number;
+  /** Rotation step in degrees when Shift is held. Default 45. */
+  fastRotationStep?: number;
   onObjectModified?: (uuid: string) => void;
 }
 
@@ -13,6 +20,8 @@ export class ObjectEditorController {
   private readonly manager: SceneStateManager;
   private readonly normalStep: number;
   private readonly fastStep: number;
+  private readonly rotationStep: number;
+  private readonly fastRotationStep: number;
   private readonly onObjectModified?: (uuid: string) => void;
   private editMode = false;
   private selectedUuid: string | null = null;
@@ -21,6 +30,8 @@ export class ObjectEditorController {
     this.manager = manager;
     this.normalStep = options.normalStep ?? 0.25;
     this.fastStep = options.fastStep ?? 1;
+    this.rotationStep = options.rotationStep ?? 15;
+    this.fastRotationStep = options.fastRotationStep ?? 45;
     this.onObjectModified = options.onObjectModified;
   }
 
@@ -59,6 +70,33 @@ export class ObjectEditorController {
       y: current.transform.position.y + delta.y,
       z: current.transform.position.z + delta.z,
     }});
+    this.onObjectModified?.(this.selectedUuid);
+    return true;
+  }
+
+  /**
+   * Rotate the selected object around its OWN local axis.
+   *
+   * @param axis   local axis to rotate around ('x' | 'y' | 'z')
+   * @param sign   +1 or -1 rotation direction
+   * @param fast   true when Shift is held (larger step)
+   * @returns true if a rotation was applied.
+   *
+   * Goes exclusively through SceneStateManager.updateObjectTransform, so the
+   * rotation is mirrored to the renderer AND preserved by Save/Load.
+   */
+  rotateSelected(axis: RotationAxis, sign: EditorRotationSign, fast = false): boolean {
+    const step = (fast ? this.fastRotationStep : this.rotationStep) * sign;
+    return this.rotateSelectedBy(axis, step);
+  }
+
+  /** Apply an exact degree delta around the selected object's local axis. */
+  rotateSelectedBy(axis: RotationAxis, deltaDegrees: number): boolean {
+    if (!this.editMode || !this.selectedUuid) return false;
+    const current = this.manager.getObject(this.selectedUuid);
+    if (!current || current.metadata.editable === false) return false;
+    const rotation = applyLocalRotationDegrees(current.transform.rotation, axis, deltaDegrees);
+    this.manager.updateObjectTransform(this.selectedUuid, { rotation });
     this.onObjectModified?.(this.selectedUuid);
     return true;
   }

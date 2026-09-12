@@ -49,7 +49,18 @@ stage.appendChild(renderer.domElement);
 const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.mapSize.set(2048, 2048);
+// Wide, static shadow frustum: the three.js default ±5 ortho box only covers
+// a 10x10 patch around the origin, so shadows of everything else popped in
+// and out as the sun orbited. Static settings — no time-based switching.
+sun.shadow.camera.left = -55;
+sun.shadow.camera.right = 55;
+sun.shadow.camera.top = 55;
+sun.shadow.camera.bottom = -55;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 200;
+sun.shadow.bias = -0.0002;
+sun.shadow.normalBias = 0.03;
 scene.add(sun);
 
 const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);

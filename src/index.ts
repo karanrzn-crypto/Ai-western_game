@@ -42,6 +42,19 @@ export { createDebugAxes, isDebugHelper, DEBUG_HELPER_KEY } from './editor/Debug
 export type { DebugAxesOptions } from './editor/DebugAxes.js';
 export { TransformGizmo } from './editor/TransformGizmo.js';
 export type { TransformGizmoOptions, GizmoAxis, GizmoHandleId } from './editor/TransformGizmo.js';
+export {
+  ContactIndicator,
+  computeBoxContact,
+  DEFAULT_CONTACT_EPSILON,
+  DEFAULT_MIN_FACE_OVERLAP,
+} from './editor/ContactIndicator.js';
+export type {
+  BoxContact,
+  ContactAxis,
+  ContactIndicatorOptions,
+  ContactIndicatorUpdateParams,
+  ContactIndicatorManagerLike,
+} from './editor/ContactIndicator.js';
 export { closestAxisParamFromRay, rayAngleAroundAxis, wrapAngle, planeBasis } from './editor/GizmoMath.js';
 export {
   formatSelectedObjectInfo,

@@ -11,6 +11,7 @@ import {
   PlayerController,
   ObjectEditorController,
   TransformGizmo,
+  ContactIndicator,
   createDebugAxes,
   formatSelectedObjectInfo,
   formatPanelNumber,
@@ -107,6 +108,15 @@ const gizmo = new TransformGizmo({
 });
 gizmo.root.visible = false;
 scene.add(gizmo.root);
+
+// Flush-contact indicator: while dragging the selected object, a small ring
+// appears BETWEEN the two facing surfaces (object-object or object-ground)
+// as soon as they are flush. Surface/bounds based (world AABBs), never
+// center-distance. Purely visual — never registered, never saved, never a
+// collider, never selectable; updated per frame so gizmo drags are live and
+// the marker vanishes the instant the surfaces separate.
+const contactIndicator = new ContactIndicator();
+scene.add(contactIndicator.group);
 
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
@@ -439,6 +449,12 @@ function animate(): void {
   dayNight.update(delta);
   gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
   refreshSelectionHelper();
+  contactIndicator.update({
+    editMode: editor.isEditMode(),
+    selectedUuid: editor.getSelectedUuid(),
+    scene,
+    manager,
+  });
   updateSelectionPanel();
   setHud();
   renderer.render(scene, camera);

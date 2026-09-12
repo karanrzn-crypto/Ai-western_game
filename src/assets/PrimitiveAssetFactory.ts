@@ -30,4 +30,5 @@ export function registerPrimitiveFactories(registry: AssetRegistry): void {
   registry.register('ground', new GroundAssetFactory(), 'World Ground');
 }
 
+export { GroundAssetFactory };
 export { AssetRegistry } from './AssetRegistry.js';

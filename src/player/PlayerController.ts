@@ -60,16 +60,20 @@ export interface PlayerControllerOptions {
    * The camera can never separate from the character beyond this angle.
    */
   maxOrbitOffset?: number;
-  /**
-   * Rate (1/s) at which the orbit offset eases back to zero WHILE the
-   * character is moving and the mouse is hands-off. Idle frames never touch
-   * it, so stopping can never start a camera swing.
-   */
-  orbitReturnRate?: number;
   /** Exponential turn rate of the body toward its movement heading. */
   bodyTurnRate?: number;
   /** Hard cap on the body's angular speed (rad/s) — turns never snap. */
   bodyMaxTurnSpeed?: number;
+  /** Hard bound (rad) of the head-look yaw offset relative to the body. */
+  maxHeadYaw?: number;
+  /** Exponential smoothing rate of the head yaw toward the camera. */
+  headYawRate?: number;
+  /** Fraction of the camera pitch that bleeds into the head/neck. */
+  headPitchFactor?: number;
+  /** Hard bound (rad) of the head-look pitch offset. */
+  maxHeadPitch?: number;
+  /** Exponential smoothing rate of the head pitch toward the camera. */
+  headPitchRate?: number;
   /** Max ledge height the controller can step onto while grounded. */
   stepHeight?: number;
   /** Optional stamina pool: sprint degrades to walk when it runs out. */
@@ -86,9 +90,9 @@ export interface PlayerControllerOptions {
 
 export interface PlayerControllerSnapshot {
   position: Vec3;
-  /** Camera yaw — always `bodyYaw + cameraOrbitOffset`. */
+  /** Camera yaw — the independent, mouse-orbited view heading. */
   yaw: number;
-  /** Character body (mesh) yaw — the single source the camera derives from. */
+  /** Character body (mesh) yaw — where the ranger's body faces. */
   bodyYaw: number;
   pitch: number;
   verticalVelocity: number;
@@ -96,33 +100,58 @@ export interface PlayerControllerSnapshot {
   cameraMode: CameraMode;
 }
 
+/** Per-frame movement sample handed to the body-yaw logic. */
+interface MovementIntent {
+  /** Camera-relative movement direction (0,0 when no keys are held). */
+  x: number;
+  z: number;
+  /** Yaw of the movement direction (only meaningful when x/z ≠ 0). */
+  yaw: number;
+  /** W held without S: the body is allowed to chase the movement heading. */
+  forwardDominant: boolean;
+}
+
+const NO_MOVEMENT: MovementIntent = { x: 0, z: 0, yaw: 0, forwardDominant: false };
+
 /**
- * PlayerController — one heading, one derived camera.
+ * PlayerController — three separated layers: BODY, HEAD, CAMERA.
  *
  * ARCHITECTURE CONTRACT (regression-tested in tests/player-yaw-camera.test.ts):
  *
- *   bodyYaw                THE player heading — single source of truth.
- *   cameraOrbitOffset      bounded horizontal orbit offset (RMB-driven only).
- *   camera yaw ≡ bodyYaw + cameraOrbitOffset   (derived EVERY frame — the
- *                          camera is never an independent yaw system).
+ *   bodyYaw      THE player heading — what the visible body faces. It turns
+ *                smoothly (exponential + angular-speed cap) toward the
+ *                movement heading, and ONLY while the movement is
+ *                forward-dominant (W held, S released). Strafing (A/D) and
+ *                backpedaling (S) never spin the body — they slide it.
  *
- *   Frame order:
- *     input → movement direction → target body yaw → smooth body yaw →
- *     camera yaw (body + offset) → camera position → render.
+ *   headYaw /    The look layer: clamp(normalizeAngle(cameraYaw - bodyYaw),
+ *   headPitch    ±maxHeadYaw) and a clamped fraction of the camera pitch,
+ *                smoothed every frame. The head/neck track the camera
+ *                naturally (idle included) while the body keeps its course.
  *
- *   Movement heading (third person): LATCHED in world space. Whenever the
- *   pressed movement-key set changes, the direction is computed from the
- *   CURRENT camera basis (normalized, diagonals included) and frozen as the
- *   intent until the keys change again. Consequences:
- *     - pressing S retargets the body the same frame and the camera follows
- *       the body DURING the turn (no waiting for a stop),
- *     - holding any direction runs a straight world-fixed line — lateral or
- *       backward holds can never degenerate into a perpetual spin,
- *     - orbiting the camera mid-run never bends the path.
- *   First person keeps classic view-relative movement every frame.
+ *   cameraYaw    The camera's own view heading. RMB drags rotate it in real
+ *                time — it is the ONLY thing that ever rotates the camera —
+ *                and it stays within ±maxOrbitOffset of the body (bounded
+ *                orbit, clamped on every mouse delta). Because the movement
+ *                basis is sampled from this yaw every frame, W keeps running
+ *                toward where the camera looks while the body swings around
+ *                it: the body realigns with the camera DURING the movement
+ *                (never as a post-stop catch-up swing).
  *
- *   Nothing auto-rotates while idle: releasing the keys freezes both the
- *   body and the camera, so "stop → camera suddenly swings" cannot exist.
+ *   Movement: recomputed EVERY frame from the CURRENT camera basis —
+ *   rotating the camera changes where W/A/S/D carry the player on the very
+ *   next frame. Nothing is latched, cached or delayed:
+ *
+ *     input → camera basis (this frame) → movement direction →
+ *     target body yaw (forward-dominant only) → smooth body yaw →
+ *     head look (camera − body, clamped) → camera position → render.
+ *
+ *   First person: look() drives the body directly (the body IS the camera)
+ *   and movement stays view-relative every frame.
+ *
+ *   Nothing auto-rotates while idle: releasing the keys freezes the body,
+ *   the head target and the camera, so "stop → camera suddenly swings"
+ *   cannot exist.
  */
 export class PlayerController {
   private readonly collisionWorld: CollisionWorld;
@@ -144,9 +173,13 @@ export class PlayerController {
   private readonly decelerationTime: number;
   private readonly stepHeight: number;
   private readonly maxOrbitOffset: number;
-  private readonly orbitReturnRate: number;
   private readonly bodyTurnRate: number;
   private readonly bodyMaxTurnSpeed: number;
+  private readonly maxHeadYaw: number;
+  private readonly headYawRate: number;
+  private readonly headPitchFactor: number;
+  private readonly maxHeadPitch: number;
+  private readonly headPitchRate: number;
   private readonly stamina: StaminaSystem | null;
   private readonly onLand?: (impactSpeed: number) => void;
 
@@ -155,23 +188,20 @@ export class PlayerController {
   private readonly position: Vec3;
   /**
    * THE player heading (what the visible character faces). Movement turns it
-   * smoothly toward the movement intent; first-person look drives it
-   * directly. The camera NEVER has a yaw of its own — it is always derived
-   * from this plus the bounded orbit offset.
+   * smoothly toward the movement intent while that intent is
+   * forward-dominant; first-person look drives it directly.
    */
   private bodyYaw: number;
-  /** Bounded horizontal camera offset relative to the body (RMB orbit). */
-  private cameraOrbitOffset = 0;
   /**
-   * World-space movement heading (third person). Re-sampled from the camera
-   * basis only when the pressed movement-key set changes; holding keys keeps
-   * the heading world-fixed so the run never chases a rotating camera.
+   * The camera's own view heading (third person). RMB drags rotate it in
+   * real time; it is kept within ±maxOrbitOffset of the body. The mouse
+   * NEVER rotates the body — only this yaw.
    */
-  private intentYaw: number;
-  /** Latch key of the last sampled movement-key set (null = force re-sample). */
-  private lastMoveKeySet: string | null = null;
-  /** Whether the right-button look drag is currently live (set by the demo). */
-  private lookDragging = false;
+  private cameraYaw: number;
+  /** Smoothed head-look yaw offset (body-relative, clamped) — the look layer. */
+  private headYaw = 0;
+  /** Smoothed head-look pitch offset (clamped fraction of the camera pitch). */
+  private headPitch = 0;
   private pitch: number;
   private verticalVelocity = 0;
   private grounded = true;
@@ -227,14 +257,18 @@ export class PlayerController {
     this.decelerationTime = Math.max(0, options.decelerationTime ?? 0);
     this.stepHeight = Math.max(0, options.stepHeight ?? 0);
     this.maxOrbitOffset = Math.max(0.3, Math.min(Math.PI, options.maxOrbitOffset ?? 1.9));
-    this.orbitReturnRate = Math.max(0.5, options.orbitReturnRate ?? 3.5);
     this.bodyTurnRate = Math.max(1, options.bodyTurnRate ?? 9);
     this.bodyMaxTurnSpeed = Math.max(0.5, options.bodyMaxTurnSpeed ?? 7);
+    this.maxHeadYaw = Math.max(0.2, Math.min(Math.PI, options.maxHeadYaw ?? 1.0));
+    this.headYawRate = Math.max(0.5, options.headYawRate ?? 7);
+    this.headPitchFactor = Math.max(0, Math.min(1, options.headPitchFactor ?? 0.55));
+    this.maxHeadPitch = Math.max(0.1, Math.min(Math.PI * 0.5, options.maxHeadPitch ?? 0.6));
+    this.headPitchRate = Math.max(0.5, options.headPitchRate ?? 7);
     this.stamina = options.stamina ?? null;
     this.onLand = options.onLand;
     this.position = { ...(options.initialPosition ?? { x: 0, y: this.eyeHeight, z: 12 }) };
     this.bodyYaw = options.yaw ?? Math.PI;
-    this.intentYaw = this.bodyYaw;
+    this.cameraYaw = this.bodyYaw;
     this.pitch = options.pitch ?? 0;
     this.cameraMode = options.cameraMode ?? 'first_person';
     this.camera = options.camera;
@@ -322,36 +356,30 @@ export class PlayerController {
     this.crouching = false;
     this.dead = false;
     this.jumpQueued = false;
-    this.cameraOrbitOffset = 0;
-    this.lastMoveKeySet = null; // the next input re-samples the intent
+    this.cameraYaw = this.bodyYaw; // camera exactly behind the body again
+    this.headYaw = 0;
+    this.headPitch = 0;
     this.thirdPersonRig?.snap();
     this.applyCamera();
   }
 
   /**
    * Rotate the CAMERA (RMB look). In third person this ONLY moves the
-   * bounded orbit offset around the body — the mouse never rotates the
-   * character. In first person the body IS the camera, so look drives the
-   * heading directly.
+   * camera's own view heading, kept within ±maxOrbitOffset of the body —
+   * the mouse never rotates the character. In first person the body IS the
+   * camera, so look drives the heading directly.
    */
   look(deltaX: number, deltaY: number): void {
     this.pitch -= deltaY * this.lookSensitivity;
     this.pitch = clamp(this.pitch, -Math.PI * 0.49, Math.PI * 0.49);
     if (this.cameraMode === 'first_person') {
       this.bodyYaw -= deltaX * this.lookSensitivity;
+      this.cameraYaw = this.bodyYaw;
     } else {
-      this.cameraOrbitOffset = clamp(
-        this.cameraOrbitOffset - deltaX * this.lookSensitivity,
-        -this.maxOrbitOffset,
-        this.maxOrbitOffset,
-      );
+      this.cameraYaw -= deltaX * this.lookSensitivity;
+      this.clampOrbitOffset();
     }
     this.applyCamera();
-  }
-
-  /** The demo feeds this every frame: is the right-button look drag live? */
-  setLookDragging(active: boolean): void {
-    this.lookDragging = active;
   }
 
   /** Current character body (mesh) yaw — the direction the ranger faces. */
@@ -359,22 +387,27 @@ export class PlayerController {
     return this.bodyYaw;
   }
 
-  /** Force the body yaw (respawn flows). The camera follows automatically. */
+  /** Force the body yaw (respawn flows). The camera realigns with it. */
   setBodyYaw(yaw: number): void {
     this.bodyYaw = yaw;
+    this.cameraYaw = yaw;
   }
 
   /**
-   * Camera yaw — ALWAYS `bodyYaw + cameraOrbitOffset`. The camera has no
-   * independent yaw anywhere in this class.
+   * Camera yaw — the independent view heading. It never drifts beyond
+   * ±maxOrbitOffset of the body, but it is NOT rigidly derived from the
+   * body: RMB orbit is the only thing that moves it.
    */
   getYaw(): number {
-    return this.bodyYaw + this.cameraOrbitOffset;
+    return this.cameraYaw;
   }
 
-  /** Current bounded orbit offset of the camera relative to the body. */
+  /** Current bounded orbit offset of the camera relative to the body.
+   *  Raw (unwrapped) on purpose: clampOrbitOffset() guarantees |offset| ≤
+   *  maxOrbitOffset < π at all times, so no wrap is ever needed and the
+   *  clamped value stays bit-exact. */
   getCameraOrbitOffset(): number {
-    return this.cameraOrbitOffset;
+    return this.cameraYaw - this.bodyYaw;
   }
 
   getPitch(): number {
@@ -422,13 +455,22 @@ export class PlayerController {
     return { x: this.position.x, y: this.position.y - this.currentEyeHeight, z: this.position.z };
   }
 
+  /** Smoothed head-look yaw offset (rad, body-relative) — 0 in first person. */
+  getHeadLookYaw(): number {
+    return this.cameraMode === 'third_person' && !this.dead ? this.headYaw : 0;
+  }
+
+  /** Smoothed head-look pitch offset (rad) — 0 in first person. */
+  getHeadLookPitch(): number {
+    return this.cameraMode === 'third_person' && !this.dead ? this.headPitch : 0;
+  }
+
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
     // (Re)entering a mode puts the camera exactly on the body heading: the
-    // offset resets, so the third-person rig starts behind the character and
-    // first person starts looking the way the character faces.
-    this.cameraOrbitOffset = 0;
-    this.lastMoveKeySet = null;
+    // third-person rig starts behind the character and first person starts
+    // looking the way the character faces.
+    this.cameraYaw = this.bodyYaw;
     // Entering third person hands the camera to the rig: snap it to the
     // character so it never glides in from a stale follow point.
     if (mode === 'third_person') this.thirdPersonRig?.snap();
@@ -444,8 +486,9 @@ export class PlayerController {
     if (input) this.setInput(input);
     const dt = Math.max(0, deltaSeconds);
 
-    const move = this.dead ? { x: 0, y: 0, z: 0 } : this.computeMovementVector();
+    const move = this.dead ? NO_MOVEMENT : this.computeMovement();
     this.updateBodyYaw(dt, move);
+    this.updateHeadLook(dt);
 
     if (this.jumpQueued && this.grounded && !this.dead && !this.crouching) {
       this.verticalVelocity = this.jumpSpeed;
@@ -574,66 +617,80 @@ export class PlayerController {
 
   /**
    * Body yaw logic (third person):
-   *   - moving  → the body turns smoothly (exponential + angular-speed cap)
-   *               toward the LATCHED movement heading, which was sampled from
-   *               the camera when the movement keys changed. The turn starts
-   *               the same frame the keys change — S never waits for a stop.
-   *   - idle    → the body keeps its heading; nothing rotates.
-   *   - camera  → camera yaw ≡ body yaw + orbit offset on EVERY frame, so
-   *               the camera rotates with the body during the turn itself.
-   *               While moving with the mouse hands-off, the orbit offset
-   *               eases back to zero (the camera settles behind); while idle
-   *               or while the RMB drag is live the offset is untouched.
+   *   - forward-dominant movement (W held, S released) turns the body
+   *     smoothly (exponential + angular-speed cap) toward the movement
+   *     heading. Because the camera only moves via RMB drag, the chase
+   *     target is stable while the mouse is hands-off — the body arrives at
+   *     the camera heading and the orbit offset closes DURING the run.
+   *   - strafing (A/D) and backpedaling (S) slide the body without
+   *     rotating it; idle frames rotate nothing.
    * First person: look() owns the heading; nothing turns here.
    */
-  private updateBodyYaw(dt: number, move: Vec3): void {
+  private updateBodyYaw(dt: number, move: MovementIntent): void {
     if (this.dead) return;
     if (this.cameraMode === 'first_person') return;
+    if (move.x === 0 && move.z === 0) return;
+    if (!move.forwardDominant) return;
 
-    const moving = move.x !== 0 || move.z !== 0;
-    if (!moving) return;
-
-    const diff = wrapAngle(this.intentYaw - this.bodyYaw);
-    if (diff !== 0) {
-      // Exponential approach clamped by a hard angular speed: large turns
-      // sweep at constant speed and settle smoothly — never a snap.
-      const step = diff * (1 - Math.exp(-this.bodyTurnRate * dt));
-      const maxStep = this.bodyMaxTurnSpeed * dt;
-      this.bodyYaw += Math.abs(step) <= maxStep ? step : Math.sign(step) * maxStep;
-    }
-
-    if (!this.lookDragging) {
-      this.cameraOrbitOffset *= Math.exp(-this.orbitReturnRate * dt);
-      if (Math.abs(this.cameraOrbitOffset) < 1e-4) this.cameraOrbitOffset = 0;
-    }
+    const diff = wrapAngle(move.yaw - this.bodyYaw);
+    if (diff === 0) return;
+    // Exponential approach clamped by a hard angular speed: large turns
+    // sweep at constant speed and settle smoothly — never a snap.
+    const step = diff * (1 - Math.exp(-this.bodyTurnRate * dt));
+    const maxStep = this.bodyMaxTurnSpeed * dt;
+    this.bodyYaw += Math.abs(step) <= maxStep ? step : Math.sign(step) * maxStep;
   }
 
   /**
-   * Movement direction for this frame. Third person runs along the LATCHED
-   * world-space intent; first person stays view-relative every frame.
+   * The look layer: the head/neck ease toward the camera's view every frame
+   * (idle included) — the character's gaze stays connected to the camera
+   * while the body keeps its course. Clamped so the neck never breaks.
    */
-  private computeMovementVector(): Vec3 {
-    const keys = this.moveKeySet();
-    const anyKey = keys !== '0000';
-
-    if (this.cameraMode === 'third_person' && keys !== this.lastMoveKeySet) {
-      this.lastMoveKeySet = keys;
-      if (anyKey) {
-        // Fresh input: sample the heading from the CURRENT camera basis
-        // (normalized — diagonals included), then freeze it in world space.
-        const dir = this.cameraRelativeDirection();
-        if (dir.x !== 0 || dir.z !== 0) this.intentYaw = Math.atan2(-dir.x, -dir.z);
-      }
+  private updateHeadLook(dt: number): void {
+    if (this.dead || this.cameraMode === 'first_person') {
+      this.headYaw = 0;
+      this.headPitch = 0;
+      return;
     }
+    const yawTarget = clamp(wrapAngle(this.cameraYaw - this.bodyYaw), -this.maxHeadYaw, this.maxHeadYaw);
+    this.headYaw += (yawTarget - this.headYaw) * (1 - Math.exp(-this.headYawRate * dt));
+    const pitchTarget = clamp(this.pitch * this.headPitchFactor, -this.maxHeadPitch, this.maxHeadPitch);
+    this.headPitch += (pitchTarget - this.headPitch) * (1 - Math.exp(-this.headPitchRate * dt));
+    if (Math.abs(this.headYaw) < 1e-4) this.headYaw = 0;
+    if (Math.abs(this.headPitch) < 1e-4) this.headPitch = 0;
+  }
 
-    if (!anyKey) return { x: 0, y: 0, z: 0 };
-    if (this.cameraMode === 'first_person') return this.cameraRelativeDirection();
-    return { x: -Math.sin(this.intentYaw), y: 0, z: -Math.cos(this.intentYaw) };
+  /** Keep the camera within ±maxOrbitOffset of the body (UNWRAPPED — a long
+   *  drag must saturate at the bound, not wrap across ±π). */
+  private clampOrbitOffset(): void {
+    const offset = this.cameraYaw - this.bodyYaw;
+    if (offset > this.maxOrbitOffset) this.cameraYaw = this.bodyYaw + this.maxOrbitOffset;
+    else if (offset < -this.maxOrbitOffset) this.cameraYaw = this.bodyYaw - this.maxOrbitOffset;
+  }
+
+  /**
+   * Movement direction for this frame — recomputed from the CURRENT camera
+   * basis every frame in both modes. Rotating the camera therefore changes
+   * where W/A/S/D carry the player on the very next frame; nothing is
+   * latched, cached or held until a stop.
+   */
+  private computeMovement(): MovementIntent {
+    if (this.moveKeySet() === '0000') return NO_MOVEMENT;
+
+    const dir = this.cameraRelativeDirection();
+    if (dir.x === 0 && dir.z === 0) return NO_MOVEMENT;
+
+    return {
+      x: dir.x,
+      z: dir.z,
+      yaw: Math.atan2(-dir.x, -dir.z),
+      forwardDominant: this.input.forward && !this.input.backward,
+    };
   }
 
   /** Normalized camera-relative WASD direction (0,0,0 when no keys). */
   private cameraRelativeDirection(): Vec3 {
-    const camYaw = this.bodyYaw + this.cameraOrbitOffset;
+    const camYaw = this.cameraMode === 'first_person' ? this.bodyYaw : this.cameraYaw;
     const forward = this.scratchForward.set(-Math.sin(camYaw), 0, -Math.cos(camYaw));
     const right = this.scratchRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
     const direction = this.scratchDirection.set(0, 0, 0);
@@ -654,22 +711,21 @@ export class PlayerController {
   private applyCamera(): void {
     if (!this.camera) return;
     this.camera.rotation.order = 'YXZ';
-    const camYaw = this.bodyYaw + this.cameraOrbitOffset;
     if (this.cameraMode === 'first_person') {
       this.camera.position.set(this.position.x, this.position.y, this.position.z);
-      this.camera.rotation.set(this.pitch, camYaw, 0);
+      this.camera.rotation.set(this.pitch, this.bodyYaw, 0);
       return;
     }
     // A collision-aware rig owns third-person framing when attached.
     if (this.thirdPersonRig) return;
 
-    // Built-in third person: orbit behind the body yaw + bounded offset.
+    // Built-in third person: orbit behind the camera's view yaw.
     const target = this.scratchCamTarget.set(this.position.x, this.position.y - 0.5, this.position.z);
     const cosPitch = Math.cos(this.pitch);
     this.camera.position.set(
-      this.position.x + Math.sin(camYaw) * cosPitch * this.thirdPersonDistance,
+      this.position.x + Math.sin(this.cameraYaw) * cosPitch * this.thirdPersonDistance,
       this.position.y + (this.thirdPersonHeight - this.eyeHeight) - Math.sin(this.pitch) * this.thirdPersonDistance,
-      this.position.z + Math.cos(camYaw) * cosPitch * this.thirdPersonDistance,
+      this.position.z + Math.cos(this.cameraYaw) * cosPitch * this.thirdPersonDistance,
     );
     this.camera.lookAt(target);
   }

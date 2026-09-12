@@ -559,7 +559,16 @@ function syncCharacter(delta: number, previousBodyYaw: number): void {
     interacting: interactHold > 0,
   });
   characterStates.tick(delta);
-  characterAnimator.update({ state: characterStates.current, deltaSeconds: delta, speed, turnRate: yawRate });
+  characterAnimator.update({
+    state: characterStates.current,
+    deltaSeconds: delta,
+    speed,
+    turnRate: yawRate,
+    // Head-look: the gaze layer tracks the camera (clamped + smoothed by the
+    // controller) while the body keeps its own course.
+    lookYaw: playerController.getHeadLookYaw(),
+    lookPitch: playerController.getHeadLookPitch(),
+  });
   // Stamina only drains while actually sprinting forward.
   stamina.update(delta, playerController.isSprinting() && speed > 0.5 && playerController.isGrounded());
   // Camera: the rig owns third person; the controller keeps first person.
@@ -626,10 +635,6 @@ function animate(): void {
   if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
     playerController.look(lookDelta.x, lookDelta.y);
   }
-  // Tell the controller whether the RMB look drag is live: while it is, the
-  // camera belongs to the mouse; while it is not, the camera may ease back
-  // behind the turning body (third-person follow behaviour).
-  playerController.setLookDragging(mouseLook.isDragging);
   updatePlayer(delta);
   // Edge-triggered play actions (death gates everything but respawn).
   if (!editor.isEditMode()) {

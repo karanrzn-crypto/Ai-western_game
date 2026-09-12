@@ -1,16 +1,16 @@
 /**
  * Regression tests for the third-person camera / body-yaw architecture:
  *
- *  1. BODY TURN — pressing A/D/S turns the body smoothly toward the movement
- *     direction (angular-speed limited, never an instant snap) while the
- *     movement itself stays camera-relative from the very first frame.
- *  2. RMB ORBIT — the mouse only moves a BOUNDED offset around the body
- *     (camera yaw ≡ body yaw + offset); it never rotates the character and
- *     can never separate the camera from the body.
- *  3. SYNCHRONOUS FOLLOW — the camera rotates with the body during every
- *     movement turn (S never waits for a stop), nothing auto-rotates while
- *     idle (a stop can never start a camera swing), and the orbit offset
- *     only re-centers while moving with the mouse hands-off.
+ *  1. BODY — strafing (A/D) and backpedaling (S) SLIDE the character without
+ *     rotating it; forward-dominant movement (W/W±A/D) turns the body
+ *     smoothly toward the movement heading (angular-speed limited, never a
+ *     snap) while the movement itself is camera-relative from every frame.
+ *  2. RMB ORBIT — the mouse only rotates the camera's own view yaw, kept
+ *     within a bounded offset of the body; it never rotates the character.
+ *  3. FOLLOW — the camera eases back behind the body during pure-forward
+ *     runs (realign happens DURING the movement), nothing auto-rotates
+ *     while idle (a stop can never start a camera swing), and the orbit
+ *     offset only re-centers while running pure-forward hands-off.
  *  4. FIRST PERSON — the body is locked to the camera yaw; the FP camera eye
  *     never sinks toward neck/chest in any state (crouch/jump/fall stress).
  *  5. GEOMETRY — no cape/cloak/flowing-cloth parts exist on the model, boot
@@ -44,57 +44,59 @@ function thirdPerson(options: ConstructorParameters<typeof PlayerController>[1] 
   });
 }
 
-// --- 1. Body turn toward the movement direction --------------------------------
+// --- 1. Body turn rules -----------------------------------------------------------
 
-test('REGRESSION: A/D turns the body smoothly toward the movement direction — no snap', () => {
+test('REGRESSION: strafing never rotates the body — movement is camera-relative from frame one', () => {
   const controller = thirdPerson();
 
-  // yaw 0 looks -Z; D strafes +X → movement heading = atan2(-1, 0) = -π/2.
+  // yaw 0 looks -Z; D strafes +X. First frame must already move and NOT turn.
   controller.update(1 / 60, { right: true });
-  const bodyAfterOneFrame = controller.getBodyYaw();
-  const maxStep = 7 * (1 / 60) + 1e-9;
-  assert.ok(
-    Math.abs(wrap(bodyAfterOneFrame)) <= maxStep,
-    `first frame rotated ${Math.abs(wrap(bodyAfterOneFrame)).toFixed(3)} rad — an instant snap`,
-  );
-
-  // The character still MOVES along the strafe direction immediately.
+  assert.equal(controller.getBodyYaw(), 0, 'the first strafe frame did not rotate the body');
   assert.ok(controller.getPosition().x > 0, 'movement is camera-relative from frame one');
 
-  // Sustained input: the body converges to the movement heading smoothly —
-  // and STOPS there (a held strafe is a straight line, not a spin).
+  // Sustained input: a straight lateral line, zero body rotation.
   for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { right: true });
-  const final = wrap(controller.getBodyYaw());
-  assert.ok(Math.abs(final - (-Math.PI / 2)) < 0.03, `body settles facing the movement direction (${final.toFixed(3)})`);
+  assert.equal(wrap(controller.getBodyYaw()), 0, `body held its heading (${wrap(controller.getBodyYaw()).toFixed(3)})`);
+  assert.ok(controller.getPosition().x > 3, 'strafe kept moving along camera-right');
 });
 
-test('REGRESSION: the turn is a continuous sweep — no frame jumps beyond the angular cap', () => {
+test('REGRESSION: forward-dominant turns are a continuous sweep — no frame jumps beyond the angular cap', () => {
   const controller = thirdPerson();
+  controller.look(-400, 0); // camera +0.88 off the body
   let previous = controller.getBodyYaw();
   let worst = 0;
   for (let i = 0; i < 120; i += 1) {
-    controller.update(1 / 60, { left: true });
+    controller.update(1 / 60, { forward: true });
     const step = Math.abs(wrap(controller.getBodyYaw() - previous));
     worst = Math.max(worst, step);
     previous = controller.getBodyYaw();
   }
   assert.ok(worst <= 7 / 60 + 1e-9, `largest single-frame turn ${worst.toFixed(4)} rad exceeds the cap`);
+  assert.ok(Math.abs(wrap(controller.getBodyYaw() - 0.88)) < 0.03, 'body settled on the camera heading');
 });
 
-test('REGRESSION: backward input turns the body around (shortest way), not a strafe-lock', () => {
+test('REGRESSION: backward input backpedals — the body holds its heading and the move goes camera-backward', () => {
   const controller = thirdPerson();
   for (let i = 0; i < 300; i += 1) controller.update(1 / 60, { backward: true });
-  const body = wrap(controller.getBodyYaw());
-  // Movement heading is camera-backward (|yaw| = π): the body faces it.
-  assert.ok(Math.abs(Math.abs(body) - Math.PI) < 0.03, `body faced ${body.toFixed(3)} after sustained S`);
+  assert.equal(wrap(controller.getBodyYaw()), 0, 'S never spun the body around');
   assert.ok(controller.getPosition().z > 0.5, 'and the character moved camera-backward');
+});
+
+test('REGRESSION: W+A converges the body onto the diagonal (forward-dominant chase), movement stays straight', () => {
+  const controller = thirdPerson();
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, left: true });
+  const body = wrap(controller.getBodyYaw());
+  assert.ok(Math.abs(body - Math.PI / 4) < 0.03, `body settled on the W+A diagonal (${body.toFixed(3)})`);
+  // The travelled path runs along the same diagonal (camera stayed put).
+  const p = controller.getPosition();
+  const dirAngle = Math.atan2(-p.x, -p.z);
+  assert.ok(Math.abs(wrap(dirAngle - Math.PI / 4)) < 0.05, 'travelled along the diagonal heading');
 });
 
 // --- 2. RMB orbit: a bounded offset around the body ------------------------------
 
 test('REGRESSION: RMB orbit never rotates the body and stays within the offset bound', () => {
   const controller = thirdPerson();
-  controller.setLookDragging(true);
 
   controller.look(-400, 0); // 0.88 rad < 1.9 bound (yaw -= dx·sens)
   for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
@@ -115,66 +117,64 @@ test('REGRESSION: RMB orbit never rotates the body and stays within the offset b
 
 test('REGRESSION: third-person look() alone never rotates the body (mouse moves the camera, not the cowboy)', () => {
   const controller = thirdPerson();
-  controller.setLookDragging(true);
   const before = controller.getBodyYaw();
   controller.look(-300, 0);
   controller.update(1 / 60, {});
   assert.equal(controller.getBodyYaw(), before, 'body untouched by pure look input');
 });
 
-// --- 3. Synchronous follow: camera yaw ≡ body yaw + offset -----------------------
+// --- 3. Realignment: the body chases the camera, never the reverse ----------------
 
-test('REGRESSION: camera yaw equals body yaw + orbit offset at every frame of a mixed session', () => {
+test('REGRESSION: the orbit offset closes only when the body chases the camera (forward movement), never while idle or dragging without W', () => {
   const controller = thirdPerson();
-  controller.setLookDragging(true);
-  // A chaotic session: orbit, move, release, move again…
-  const script: Array<Parameters<PlayerController['update']>[1]> = [
-    { forward: true }, { forward: true }, { right: true }, { right: true }, {},
-    { backward: true }, { left: true }, {}, { forward: true, left: true },
-  ];
-  for (let i = 0; i < 270; i += 1) {
-    if (i % 30 === 0) controller.look(-40, 3); // RMB flicks mid-session
-    controller.update(1 / 60, script[i % script.length]);
-    const offset = controller.getYaw() - controller.getBodyYaw();
-    assert.ok(
-      Math.abs(wrap(offset) - controller.getCameraOrbitOffset()) < 1e-9,
-      'camera yaw is ALWAYS body yaw + orbit offset',
-    );
-    assert.ok(Math.abs(controller.getCameraOrbitOffset()) <= 1.9 + 1e-9, 'offset never exceeds the bound');
-  }
+
+  // Idle: the offset persists (no camera motion after stopping).
+  controller.look(-270, 0); // +0.594 rad
+  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
+  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'idle never closes the offset');
+
+  // Lateral and backward movement: the body slides without turning.
+  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { left: true });
+  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'strafe never closes the offset');
+  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { backward: true });
+  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'backpedal never closes the offset');
+
+  // Pure forward run: the BODY arrives at the camera heading — offset closes.
+  const cameraBefore = controller.getYaw();
+  for (let i = 0; i < 150; i += 1) controller.update(1 / 60, { forward: true });
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, `offset closed while running (${controller.getCameraOrbitOffset().toFixed(3)})`);
+  assert.ok(Math.abs(wrap(controller.getYaw() - cameraBefore)) < 1e-9, 'the camera itself never moved');
+
+  // While dragging mid-run the body still chases the live camera heading.
+  controller.look(-400, 0); // flick +0.88 while W is held
+  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
+  assert.ok(
+    Math.abs(wrap(controller.getBodyYaw() - controller.getYaw())) < 0.05,
+    'body chased the camera even while the drag was live',
+  );
 });
 
-test('REGRESSION: S retargets the body the same frame and the camera follows DURING the turn', () => {
+test('REGRESSION: the movement heading is re-sampled EVERY frame — a mid-run drag bends the path', () => {
   const controller = thirdPerson();
 
-  // Frame 1 of the S press: the body already begins turning (target set).
-  const first = controller.update(1 / 60, { backward: true });
-  void first;
-  const bodyStep = Math.abs(wrap(controller.getBodyYaw()));
-  assert.ok(bodyStep > 0, 'the body retargets on the press frame itself');
-  assert.ok(bodyStep <= 7 / 60 + 1e-9, '…smoothly, never a snap');
-  // And the camera moved WITH it (same frame) — it never stays behind.
-  assert.ok(
-    Math.abs(wrap(controller.getYaw() - controller.getBodyYaw())) < 1e-9,
-    'camera yaw tracked the body on the very first turn frame',
-  );
-
-  // Through the whole 180° turn the camera stays glued to the body.
-  for (let i = 0; i < 120; i += 1) {
-    controller.update(1 / 60, { backward: true });
-    assert.ok(
-      Math.abs(wrap(controller.getYaw() - controller.getBodyYaw())) < 1e-9,
-      'camera follows the body during the turn',
-    );
+  // Run forward, then sweep the camera while W stays held.
+  for (let i = 0; i < 30; i += 1) controller.update(1 / 60, { forward: true });
+  const before = controller.getPosition();
+  for (let i = 0; i < 42; i += 1) {
+    controller.look(-12, 0);
+    controller.update(1 / 60, { forward: true });
   }
-  // Settled: the camera is behind the character again (offset decayed to 0).
-  assert.ok(Math.abs(wrap(controller.getBodyYaw())) > 3.0, 'the body completed its 180°');
-  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 1e-3, 'orbit offset re-centered while moving');
+  const after = controller.getPosition();
+  const heading = Math.atan2(-(after.x - before.x), -(after.z - before.z));
+  assert.ok(
+    Math.abs(wrap(heading)) > 0.25,
+    `displacement heading ${heading.toFixed(3)} — a latched path would still head ~0`,
+  );
 });
 
 test('REGRESSION: stopping freezes the camera — no post-stop catch-up rotation', () => {
   const controller = thirdPerson();
-  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { backward: true });
+  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { forward: true });
   const cameraAtStop = controller.getYaw();
   const bodyAtStop = controller.getBodyYaw();
 
@@ -219,40 +219,18 @@ test('REGRESSION: held lateral input converges to a straight line — no perpetu
   }
   assert.ok(totalBodyRotation < 1e-3, `body rotated ${totalBodyRotation.toFixed(5)} rad in the last 2s — spin`);
   assert.ok(totalCameraRotation < 1e-3, `camera rotated ${totalCameraRotation.toFixed(5)} rad in the last 2s — spin`);
-  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 1e-3, 'camera settled behind the character');
 });
 
-test('REGRESSION: the orbit offset re-centers only while moving hands-off, never while idle or dragging', () => {
+test('REGRESSION: a fresh W press uses the rotated camera basis immediately', () => {
   const controller = thirdPerson();
-
-  // Idle: the offset persists (no camera motion after stopping).
-  controller.setLookDragging(true);
-  controller.look(-270, 0); // +0.594 rad
-  controller.setLookDragging(false);
-  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
-  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'idle never decays the offset');
-
-  // Moving hands-off: the offset eases back behind the body.
-  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
-  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, `offset re-centered while moving (${controller.getCameraOrbitOffset().toFixed(3)})`);
-
-  // Moving while dragging: the mouse owns the camera — no decay.
-  controller.setLookDragging(true);
-  controller.look(270, 0);
-  const duringDrag = controller.getCameraOrbitOffset();
-  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
-  assert.equal(controller.getCameraOrbitOffset(), duringDrag, 'dragging freezes the re-center');
-});
-
-test('REGRESSION: a fresh input re-samples the heading from the rotated camera', () => {
-  const controller = thirdPerson();
-  controller.setLookDragging(true);
   controller.look(-100, 0); // camera yaw now +0.22 relative to the body
-  controller.setLookDragging(false);
-  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
-  // The body turned to face where the CAMERA was looking at press time.
-  const body = wrap(controller.getBodyYaw());
-  assert.ok(Math.abs(body - 0.22) < 0.03, `body faced the camera direction (${body.toFixed(3)})`);
+  const p0 = controller.getPosition();
+  for (let i = 0; i < 10; i += 1) controller.update(1 / 60, { forward: true });
+  const heading = Math.atan2(
+    -(controller.getPosition().x - p0.x),
+    -(controller.getPosition().z - p0.z),
+  );
+  assert.ok(Math.abs(wrap(heading - 0.22)) < 0.2, `first frames ran along the camera heading (${heading.toFixed(3)})`);
 });
 
 // --- 4. First person -------------------------------------------------------------
@@ -271,7 +249,6 @@ test('REGRESSION: first person locks the body to the camera yaw exactly', () => 
 
 test('REGRESSION: respawn realigns the camera behind the body', () => {
   const controller = thirdPerson();
-  controller.setLookDragging(true);
   controller.look(-1400, 0);
   for (let i = 0; i < 30; i += 1) controller.update(1 / 60, {});
   controller.respawnAt({ x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 0 });

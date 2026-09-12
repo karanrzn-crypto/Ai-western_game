@@ -19,6 +19,14 @@ export interface AnimatorInput {
   speed: number;
   /** Yaw change rate (rad/s) — drives the lean-into-turn channels. */
   turnRate?: number;
+  /**
+   * Head-look yaw offset (rad, body-relative) — the clamped, smoothed
+   * camera-minus-body gaze from the controller. Added on top of whatever
+   * the active pose/overlays composed for the head and neck.
+   */
+  lookYaw?: number;
+  /** Head-look pitch offset (rad), clamped by the controller. */
+  lookPitch?: number;
 }
 
 type PoseKey =
@@ -133,6 +141,7 @@ export class CharacterAnimator {
     this.applyIdleOverlay(input, dt, moving);
     this.applyLandOverlay(dt);
     this.applyTurnLean(input, dt);
+    this.applyHeadLook(input);
     this.flush(dt);
   }
 
@@ -274,6 +283,25 @@ export class CharacterAnimator {
     this.setAll((set) => {
       set('chest.rz', lean, 8);
       set('head.ry', clamp(turnRate * 0.18, -0.4, 0.4), 8);
+    });
+  }
+
+  /**
+   * Head-look overlay — the gaze layer. Adds the controller's clamped,
+   * smoothed camera-follow offsets on top of the composed head/neck targets
+   * so the character's gaze tracks the camera (orbit included) while the
+   * body keeps its course. The neck takes a fraction of the offset so the
+   * look reads as head+neck, never a robot neck-snap.
+   */
+  private applyHeadLook(input: AnimatorInput): void {
+    const yaw = clamp(input.lookYaw ?? 0, -1.2, 1.2);
+    const pitch = clamp(input.lookPitch ?? 0, -0.7, 0.7);
+    if (yaw === 0 && pitch === 0) return;
+    this.setAll((set) => {
+      set('head.ry', (this.targets.get('head.ry') ?? 0) + yaw, 14);
+      set('head.rx', (this.targets.get('head.rx') ?? 0) + pitch, 14);
+      set('neck.ry', (this.targets.get('neck.ry') ?? 0) + yaw * 0.35, 12);
+      set('neck.rx', (this.targets.get('neck.rx') ?? 0) + pitch * 0.35, 12);
     });
   }
 

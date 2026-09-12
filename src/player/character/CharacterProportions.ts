@@ -7,8 +7,9 @@
  * Identity summary ("The Ranger", western gunslinger):
  *   height 1.83m (~7.6 heads), slim athletic build, broad-ish shoulders,
  *   long legs — proportions that read instantly from behind via the hat +
- *   duster coat + bandana silhouette and stay animation-friendly (no extreme
+ *   vest + bandana silhouette and stay animation-friendly (no extreme
  *   volumes, normal joint pivots, no crossed deformation zones).
+ *   Clothing is body-hugging only — no duster/coat/cape geometry exists.
  */
 export const CHARACTER_PROPORTIONS = {
   /** Total height to the top of the hair (hat excluded). */
@@ -45,7 +46,7 @@ export const CHARACTER_PROPORTIONS = {
   // --- Animation amplitude caps (clipping guards) ---------------------------
   /**
    * Max hip swing of the legs during locomotion (rad). Keeps the thighs
-   * inside the pelvis volume and clear of the coat/holster at full sprint.
+   * inside the pelvis volume and clear of the holster at full sprint.
    */
   maxLegSwing: 0.95,
   /** Max shoulder swing of the arms during locomotion (rad). */
@@ -54,7 +55,7 @@ export const CHARACTER_PROPORTIONS = {
 
 /** Joint names of the character rig (animator targets). */
 export type CharacterJointName =
-  | 'hips' | 'spine' | 'chest' | 'neck' | 'head' | 'coat'
+  | 'hips' | 'spine' | 'chest' | 'neck' | 'head'
   | 'shoulderL' | 'elbowL' | 'handL'
   | 'shoulderR' | 'elbowR' | 'handR'
   | 'legL' | 'kneeL' | 'footL'

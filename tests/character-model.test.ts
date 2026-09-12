@@ -72,7 +72,7 @@ test('character rig is a proper joint hierarchy', () => {
 test('character materials are natural and distinguishable', () => {
   const { model } = build();
   const mats = Object.values(model.materials);
-  assert.equal(mats.length, 16);
+  assert.equal(mats.length, 15);
   const signatures = new Set(mats.map((m) => `${m.color.getHexString()}:${m.roughness.toFixed(2)}:${m.metalness.toFixed(2)}`));
   assert.equal(signatures.size, mats.length, 'every material family must be visually distinct');
   // Realism guards: skin is matte (not plastic/metal), leather is rough, gun is metallic.
@@ -80,7 +80,7 @@ test('character materials are natural and distinguishable', () => {
   assert.ok(model.materials.boot.roughness > 0.6);
   assert.ok(model.materials.gunmetal.metalness > 0.7);
   // No neon/artificial colors: all channels below 0.85 brightness for cloth/leather.
-  for (const key of ['shirt', 'vest', 'coat', 'pants', 'boot', 'belt', 'hat'] as const) {
+  for (const key of ['shirt', 'vest', 'pants', 'boot', 'belt', 'hat'] as const) {
     const c = model.materials[key].color;
     assert.ok(c.r < 0.85 && c.g < 0.85 && c.b < 0.85, `${key} avoids artificial brightness`);
   }

@@ -3,15 +3,17 @@
  *
  * Visual identity goals (visible from far away and from behind):
  *   - wide-brim creased cowboy hat (the strongest silhouette driver)
- *   - long duster coat built as ONE flared open cone skirt (front cut away):
- *     its wall stays geometrically outside every limb sweep, so the
- *     procedural animation can never push an arm or a leg through cloth
- *   - brick-red neck bandana with a knot and a chest-front drop
+ *   - brick-red neckerchief worn as a tight band around the neck — NO knot,
+ *     NO hanging drop, NO cape/cloak/flowing cloth anywhere on the body
  *   - dark leather vest over a faded sand shirt, rolled sleeves + gloves
- *   - gun belt with brass buckle, ammo loops and a knife sheath at the small
- *     of the back; a thigh-tied holster (rigid child of the right leg) keeps
- *     the revolver clear of the swinging thigh
+ *   - gun belt with brass buckle and ammo loops; a thigh-tied holster (rigid
+ *     child of the right leg) keeps the revolver clear of the swinging thigh
  *   - tall boot shafts with cuffs, heel blocks and spurs
+ *
+ * Clothing is strictly body-hugging: head, hat, torso, shirt/vest, arms,
+ * hands, pants, boots. Every loose/hanging garment (duster skirt, bandana
+ * drop, back sheath) was removed deliberately — they read as a cape from
+ * behind and no longer exist in the rig or the animator.
  *
  * Rig: every articulated part is a THREE.Group ("joint") so animation only
  * ever rotates groups; meshes are rigid children, which guarantees no cloth/
@@ -33,7 +35,6 @@ export interface CharacterMaterials {
   hair: THREE.MeshStandardMaterial;
   shirt: THREE.MeshStandardMaterial;
   vest: THREE.MeshStandardMaterial;
-  coat: THREE.MeshStandardMaterial;
   pants: THREE.MeshStandardMaterial;
   boot: THREE.MeshStandardMaterial;
   belt: THREE.MeshStandardMaterial;
@@ -81,10 +82,6 @@ function createCharacterMaterials(): CharacterMaterials {
     hair: std(0x35261a, 0.86),
     shirt: std(0xb39a72, 0.93),
     vest: std(0x372a1e, 0.8),
-    // The coat renders from BOTH sides (open-ended cone: the inner wall is
-    // visible through the front gap and from above) — double-sided keeps the
-    // skirt solid instead of see-through.
-    coat: std(0x6b4a2e, 0.88),
     pants: std(0x4a4d55, 0.95),
     boot: std(0x322419, 0.76),
     belt: std(0x2c1f16, 0.68),
@@ -97,7 +94,6 @@ function createCharacterMaterials(): CharacterMaterials {
     brass: std(0xb08d3f, 0.42, 0.9),
     eye: std(0x241a12, 0.5),
   };
-  materials.coat.side = THREE.DoubleSide;
   return materials;
 }
 
@@ -168,9 +164,6 @@ export function createCharacterModel(): CharacterModel {
   const head = group('head', neck, 0, 0.06, 0);
   const shoulderL = group('shoulderL', chest, -P.shoulderHalfWidth, 0.19, 0);
   const shoulderR = group('shoulderR', chest, P.shoulderHalfWidth, 0.19, 0);
-  // Duster coat pivot: hangs from the upper chest so the skirt can swing
-  // (billow) as one rigid piece without ever intersecting the body.
-  const coat = group('coat', chest, 0, 0.14, 0);
   const elbowL = group('elbowL', shoulderL, 0, -P.upperArm, 0);
   const elbowR = group('elbowR', shoulderR, 0, -P.upperArm, 0);
   const handL = group('handL', elbowL, 0, -P.lowerArm, 0);
@@ -181,7 +174,7 @@ export function createCharacterModel(): CharacterModel {
   const kneeR = group('kneeR', legR, 0, -P.upperLeg, 0);
   const footL = group('footL', kneeL, 0, -P.lowerLeg, 0);
   const footR = group('footR', kneeR, 0, -P.lowerLeg, 0);
-  Object.assign(joints, { hips, spine, chest, neck, head, coat, shoulderL, elbowL, handL, shoulderR, elbowR, handR, legL, kneeL, footL, legR, kneeR, footR });
+  Object.assign(joints, { hips, spine, chest, neck, head, shoulderL, elbowL, handL, shoulderR, elbowR, handR, legL, kneeL, footL, legR, kneeR, footR });
   headJoint = head;
   neckJoint = neck;
 
@@ -190,8 +183,7 @@ export function createCharacterModel(): CharacterModel {
 
   // --- Torso ----------------------------------------------------------------
   mesh(hips, materials.pants, 0.32, 0.18, 0.21, 0, 0, 0);
-  // Gun belt + brass buckle + ammo loops + knife sheath (scabbard rides at
-  // the small of the back, tip showing below the coat hem).
+  // Gun belt + brass buckle + ammo loops. Nothing hangs off the back.
   mesh(hips, materials.belt, 0.345, 0.085, 0.225, 0, 0.105, 0);
   mesh(hips, materials.brass, 0.05, 0.052, 0.016, 0, 0.105, -0.118, true);
   mesh(hips, materials.belt, 0.1, 0.045, 0.235, -0.1, 0.105, 0, true);
@@ -199,9 +191,6 @@ export function createCharacterModel(): CharacterModel {
     const bullet = cylinder(hips, materials.brass, 0.011, 0.011, 0.05, -0.062 + i * 0.026, 0.105, -0.09, true, 6);
     bullet.rotation.x = Math.PI / 2;
   }
-  const knifeSheath = mesh(hips, materials.belt, 0.04, 0.22, 0.055, -0.09, -0.02, 0.125, true);
-  knifeSheath.rotation.z = 0.18;
-  knifeSheath.rotation.x = -0.1;
 
   // Revolver rides in a THIGH-tied holster (western tie-down): parented to
   // the right leg joint so it moves WITH the leg — a rigid child can never
@@ -222,32 +211,11 @@ export function createCharacterModel(): CharacterModel {
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.16, -0.112, true);
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.06, -0.112, true);
 
-  // Duster coat — one flared, open-ended cone skirt instead of seven boxes.
-  // The cone wall (radius 0.33 top → 0.48 hem) stays far outside the widest
-  // sweep of the thighs (0.21) and the resting arms (0.31), so NO pose of the
-  // procedural animation can push a limb through cloth any more. The front
-  // sector is cut away (open duster) to keep the classic silhouette: boots,
-  // chaps and the vest show through the gap.
-  const coatSkirt = new THREE.CylinderGeometry(
-    0.33, 0.48, 0.52, 18, 1, true, Math.PI + 0.9, Math.PI * 2 - 1.8,
-  );
-  geometries.push(coatSkirt);
-  const coatSkirtMesh = new THREE.Mesh(coatSkirt, materials.coat);
-  coatSkirtMesh.position.set(0, -0.26, 0); // top ring at the coat joint pivot
-  coatSkirtMesh.castShadow = true;
-  coat.add(coatSkirtMesh);
-  // Collar wraps the back of the neck over the bandana.
-  mesh(chest, materials.coat, 0.3, 0.075, 0.14, 0, 0.175, 0.06);
-
   // --- Neck + bandana -------------------------------------------------------
+  // The bandana is a TIGHT ring around the neck — a classic western
+  // neckerchief with nothing hanging from it (no knot, no chest drop).
   cylinder(neck, materials.skin, 0.052, 0.058, 0.09, 0, 0.02, 0, false, 8);
   cylinder(neck, materials.bandana, 0.082, 0.082, 0.06, 0, -0.025, 0, false, 10);
-  // Bandana knot at the back of the neck + the classic chest-front drop.
-  // Both sit ABOVE the coat cone's top ring (1.42m) so they stay visible and
-  // never tunnel into the collar or the skirt.
-  mesh(neck, materials.bandana, 0.05, 0.048, 0.045, 0.03, -0.03, 0.072, true).rotation.set(0.3, 0.4, 0.2);
-  const bandanaDrop = cylinder(neck, materials.bandana, 0.036, 0.007, 0.1, 0, -0.05, -0.115, true, 7);
-  bandanaDrop.rotation.x = 0.25;
 
   // --- Head, hair, face, hat ------------------------------------------------
   mesh(head, materials.skin, P.headWidth, P.headHeight, P.headDepth, 0, 0.115, 0);

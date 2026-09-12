@@ -5,8 +5,8 @@
  * (+ locomotion cycle, land impulse, turn lean, breathing), then every
  * channel is exponentially smoothed toward its target, which gives free
  * natural transitions (start/stop/turn blends) with no popping. Death runs
- * on a dedicated timeline. The rig's hats/coat/equipment are rigid children
- * of joints, so nothing can clip during animation.
+ * on a dedicated timeline. The rig's hat/equipment are rigid children of
+ * joints, so nothing can clip during animation.
  */
 import type { CharacterModel } from './CharacterModel.js';
 import { CHARACTER_PROPORTIONS } from './CharacterProportions.js';
@@ -27,7 +27,6 @@ type PoseKey =
   | 'chest.rx' | 'chest.ry' | 'chest.rz'
   | 'neck.rx' | 'neck.ry'
   | 'head.rx' | 'head.ry'
-  | 'coat.rx' | 'coat.rz'
   | 'shoulderL.rx' | 'shoulderL.rz' | 'elbowL.rx'
   | 'shoulderR.rx' | 'shoulderR.rz' | 'elbowR.rx'
   | 'legL.rx' | 'kneeL.rx' | 'footL.rx'
@@ -39,7 +38,6 @@ const POSE_KEYS: PoseKey[] = [
   'chest.rx', 'chest.ry', 'chest.rz',
   'neck.rx', 'neck.ry',
   'head.rx', 'head.ry',
-  'coat.rx', 'coat.rz',
   'shoulderL.rx', 'shoulderL.rz', 'elbowL.rx',
   'shoulderR.rx', 'shoulderR.rz', 'elbowR.rx',
   'legL.rx', 'kneeL.rx', 'footL.rx',
@@ -121,7 +119,6 @@ export class CharacterAnimator {
       set('chest.rx', 0, 10); set('chest.ry', 0, 10); set('chest.rz', 0, 10);
       set('neck.rx', 0, 10); set('neck.ry', 0, 10);
       set('head.rx', 0, 10); set('head.ry', 0, 10);
-      set('coat.rx', 0, 6); set('coat.rz', 0, 6);
       set('shoulderL.rx', 0, 10); set('shoulderL.rz', -REST_SHOULDER_Z, 10); set('elbowL.rx', 0.22, 10);
       set('shoulderR.rx', 0, 10); set('shoulderR.rz', REST_SHOULDER_Z, 10); set('elbowR.rx', 0.22, 10);
       set('legL.rx', 0, 10); set('kneeL.rx', -0.06, 10); set('footL.rx', 0, 10);
@@ -176,10 +173,6 @@ export class CharacterAnimator {
       set('spine.ry', -0.05 * sinL, 12);
       set('chest.ry', -0.14 * sinL, 12);
       set('chest.rx', lean + 0.03 * Math.sin(2 * phi), 12);
-      // Coat billow: the skirt trails the run and sways with the stride.
-      // Trailing = hem swings BACK (+Z) → negative rotation about X.
-      set('coat.rx', -(0.04 + 0.1 * Math.min(speedRatio, 1.1)) + 0.02 * Math.sin(2 * phi), 7);
-      set('coat.rz', 0.03 * sinL, 7);
     });
   }
 
@@ -230,12 +223,11 @@ export class CharacterAnimator {
       if (jump) {
         set('legL.rx', 0.65, 10); set('kneeL.rx', -1.05, 10); set('footL.rx', 0.35, 10);
         set('legR.rx', -0.28, 10); set('kneeR.rx', -0.5, 10); set('footR.rx', 0.25, 10);
-        // Arm spread capped so the flared limbs stay inside the coat wall.
+        // Arm spread capped so the flared limbs stay clear of the body.
         set('shoulderL.rz', -0.28, 10); set('shoulderR.rz', 0.28, 10);
         set('shoulderL.rx', -0.35, 10); set('shoulderR.rx', -0.35, 10);
         set('elbowL.rx', 0.55, 10); set('elbowR.rx', 0.55, 10);
         set('spine.rx', 0.08, 10); set('chest.rx', 0.06, 10);
-        set('coat.rx', -0.08, 8);
       } else {
         set('legL.rx', -0.35, 10); set('kneeL.rx', -0.45, 10); set('footL.rx', 0.2, 10);
         set('legR.rx', -0.15, 10); set('kneeR.rx', -0.75, 10); set('footR.rx', 0.3, 10);
@@ -245,7 +237,6 @@ export class CharacterAnimator {
         set('elbowL.rx', 0.4, 10); set('elbowR.rx', 0.4, 10);
         set('spine.rx', -0.06, 10); set('chest.rx', -0.04, 10);
         set('head.rx', -0.1, 10);
-        set('coat.rx', 0.06, 8);
       }
     });
   }
@@ -283,8 +274,6 @@ export class CharacterAnimator {
     this.setAll((set) => {
       set('chest.rz', lean, 8);
       set('head.ry', clamp(turnRate * 0.18, -0.4, 0.4), 8);
-      // The coat lags behind the turn (inertia) — opposite lean, slower rate.
-      set('coat.rz', clamp(turnRate * 0.05, -0.12, 0.12), 5);
     });
   }
 
@@ -339,8 +328,6 @@ export class CharacterAnimator {
       case 'neck.ry': joints.neck.rotation.y = safe; break;
       case 'head.rx': joints.head.rotation.x = safe; break;
       case 'head.ry': joints.head.rotation.y = safe; break;
-      case 'coat.rx': joints.coat.rotation.x = safe; break;
-      case 'coat.rz': joints.coat.rotation.z = safe; break;
       case 'shoulderL.rx': joints.shoulderL.rotation.x = safe; break;
       case 'shoulderL.rz': joints.shoulderL.rotation.z = safe; break;
       case 'elbowL.rx': joints.elbowL.rotation.x = safe; break;

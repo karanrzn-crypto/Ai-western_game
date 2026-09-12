@@ -2,14 +2,6 @@
  * src/index.ts
  * -----------------------------------------------------------------------------
  * Public API surface of the Ai-western_game scene management library.
- *
- * Import paths (consumers can either use this barrel or import directly
- * from individual modules):
- *
- *   import { SceneStateManager, PersistenceManager, AssetRegistry,
- *            registerPrimitiveFactories, getSceneMigrations,
- *            configure, getConfig, logger, EventBus } from '@/index';
- *
  * -----------------------------------------------------------------------------
  */
 
@@ -34,6 +26,12 @@ export type { HeadlessChangeRecord } from './engine/HeadlessRendererAdapter.js';
 
 // --- Asset layer --------------------------------------------------------
 export * from './assets/index.js';
+
+// --- World / physics foundation ---------------------------------------
+export { CollisionWorld } from './physics/CollisionWorld.js';
+export type { PlayerCollisionResult } from './physics/CollisionWorld.js';
+export { DayNightCycle } from './world/DayNightCycle.js';
+export type { DayNightCycleOptions } from './world/DayNightCycle.js';
 
 // --- Config & migrations & utils ---------------------------------------
 export { getConfig, configure, resetConfig } from './config/GameConfig.js';

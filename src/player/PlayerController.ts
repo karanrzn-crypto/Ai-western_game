@@ -64,6 +64,14 @@ export interface PlayerControllerOptions {
   bodyTurnRate?: number;
   /** Hard cap on the body's angular speed (rad/s) — turns never snap. */
   bodyMaxTurnSpeed?: number;
+  /** Turn-in-place angular speed (rad/s) while A/D are held alone (third person). */
+  turnInPlaceRate?: number;
+  /** Exponential ramp-up rate of the turn-in-place spin — fast start, never instant. */
+  turnSpinUpRate?: number;
+  /** Exponential decay rate of the spin after A/D release — smooth stop, no jerk. */
+  turnReleaseRate?: number;
+  /** Exponential rate at which the camera eases behind the body during turn-in-place. */
+  turnCameraAlignRate?: number;
   /** Hard bound (rad) of the head-look yaw offset relative to the body. */
   maxHeadYaw?: number;
   /** Exponential smoothing rate of the head yaw toward the camera. */
@@ -109,49 +117,58 @@ interface MovementIntent {
   yaw: number;
   /** W held without S: the body is allowed to chase the movement heading. */
   forwardDominant: boolean;
+  /** Turn-in-place: +1 = spin left (A alone), −1 = right (D alone), 0 = off. */
+  turn: number;
 }
 
-const NO_MOVEMENT: MovementIntent = { x: 0, z: 0, yaw: 0, forwardDominant: false };
+const NO_MOVEMENT: MovementIntent = { x: 0, z: 0, yaw: 0, forwardDominant: false, turn: 0 };
 
 /**
  * PlayerController — three separated layers: BODY, HEAD, CAMERA.
  *
  * ARCHITECTURE CONTRACT (regression-tested in tests/player-yaw-camera.test.ts):
  *
- *   bodyYaw      THE player heading — what the visible body faces. It turns
- *                smoothly (exponential + angular-speed cap) toward the
- *                movement heading, and ONLY while the movement is
- *                forward-dominant (W held, S released). Strafing (A/D) and
- *                backpedaling (S) never spin the body — they slide it.
+ *   bodyYaw      THE player heading — what the visible body faces. Two turn
+ *                sources, both continuous (no per-press steps, no snaps):
+ *                A/D held ALONE (no W/S, third person) spin the body in
+ *                place — the angular velocity ramps up fast but never
+ *                instantly, holds a constant dt-driven rate, and decays
+ *                exponentially on release; forward-dominant movement
+ *                (W held, S released) turns the body toward the movement
+ *                heading (exponential + angular-speed cap). W/S ± A/D and
+ *                S alone never spin the body — they slide it.
  *
  *   headYaw /    The look layer: clamp(normalizeAngle(cameraYaw - bodyYaw),
  *   headPitch    ±maxHeadYaw) and a clamped fraction of the camera pitch,
  *                smoothed every frame. The head/neck track the camera
  *                naturally (idle included) while the body keeps its course.
  *
- *   cameraYaw    The camera's own view heading. RMB drags rotate it in real
- *                time — it is the ONLY thing that ever rotates the camera —
- *                and it stays within ±maxOrbitOffset of the body (bounded
- *                orbit, clamped on every mouse delta). Because the movement
- *                basis is sampled from this yaw every frame, W keeps running
- *                toward where the camera looks while the body swings around
- *                it: the body realigns with the camera DURING the movement
- *                (never as a post-stop catch-up swing).
+ *   cameraYaw    The camera's own view heading. Exactly two things rotate
+ *                it: RMB drags in real time, and turn-in-place (A/D alone)
+ *                in lockstep with the body — synchronous, so the camera can
+ *                never lag behind and snap later — while easing any orbit
+ *                offset back to "exactly behind". It stays within
+ *                ±maxOrbitOffset of the body (bounded orbit, clamped on
+ *                every change). Because the movement basis is sampled from
+ *                this yaw every frame, W keeps running toward where the
+ *                camera looks while the body swings around it: the body
+ *                realigns with the camera DURING the movement (never as a
+ *                post-stop catch-up swing).
  *
  *   Movement: recomputed EVERY frame from the CURRENT camera basis —
  *   rotating the camera changes where W/A/S/D carry the player on the very
  *   next frame. Nothing is latched, cached or delayed:
  *
- *     input → camera basis (this frame) → movement direction →
- *     target body yaw (forward-dominant only) → smooth body yaw →
- *     head look (camera − body, clamped) → camera position → render.
+ *     input → camera basis (this frame) → movement direction /
+ *     turn-in-place intent → body yaw (A/D-only spin or forward-dominant
+ *     chase) → head look (camera − body, clamped) → camera position → render.
  *
  *   First person: look() drives the body directly (the body IS the camera)
  *   and movement stays view-relative every frame.
  *
- *   Nothing auto-rotates while idle: releasing the keys freezes the body,
- *   the head target and the camera, so "stop → camera suddenly swings"
- *   cannot exist.
+ *   Nothing auto-rotates while idle: once the (short, smooth) turn-release
+ *   tail has decayed, releasing the keys freezes the body, the head target
+ *   and the camera, so "stop → camera suddenly swings" cannot exist.
  */
 export class PlayerController {
   private readonly collisionWorld: CollisionWorld;
@@ -175,6 +192,10 @@ export class PlayerController {
   private readonly maxOrbitOffset: number;
   private readonly bodyTurnRate: number;
   private readonly bodyMaxTurnSpeed: number;
+  private readonly turnInPlaceRate: number;
+  private readonly turnSpinUpRate: number;
+  private readonly turnReleaseRate: number;
+  private readonly turnCameraAlignRate: number;
   private readonly maxHeadYaw: number;
   private readonly headYawRate: number;
   private readonly headPitchFactor: number;
@@ -202,6 +223,8 @@ export class PlayerController {
   private headYaw = 0;
   /** Smoothed head-look pitch offset (clamped fraction of the camera pitch). */
   private headPitch = 0;
+  /** Turn-in-place angular velocity (rad/s, +left/−right) — smoothed, never stepped. */
+  private spinVel = 0;
   private pitch: number;
   private verticalVelocity = 0;
   private grounded = true;
@@ -259,6 +282,10 @@ export class PlayerController {
     this.maxOrbitOffset = Math.max(0.3, Math.min(Math.PI, options.maxOrbitOffset ?? 1.9));
     this.bodyTurnRate = Math.max(1, options.bodyTurnRate ?? 9);
     this.bodyMaxTurnSpeed = Math.max(0.5, options.bodyMaxTurnSpeed ?? 7);
+    this.turnInPlaceRate = Math.max(0.5, options.turnInPlaceRate ?? 4.5);
+    this.turnSpinUpRate = Math.max(1, options.turnSpinUpRate ?? 16);
+    this.turnReleaseRate = Math.max(1, options.turnReleaseRate ?? 16);
+    this.turnCameraAlignRate = Math.max(0.5, options.turnCameraAlignRate ?? 3);
     this.maxHeadYaw = Math.max(0.2, Math.min(Math.PI, options.maxHeadYaw ?? 1.0));
     this.headYawRate = Math.max(0.5, options.headYawRate ?? 7);
     this.headPitchFactor = Math.max(0, Math.min(1, options.headPitchFactor ?? 0.55));
@@ -339,6 +366,7 @@ export class PlayerController {
     if (dead) {
       this.jumpQueued = false;
       this.crouching = false;
+      this.spinVel = 0;
     }
   }
 
@@ -352,6 +380,7 @@ export class PlayerController {
     this.verticalVelocity = 0;
     this.velocity.x = 0;
     this.velocity.z = 0;
+    this.spinVel = 0;
     this.grounded = false;
     this.crouching = false;
     this.dead = false;
@@ -391,6 +420,12 @@ export class PlayerController {
   setBodyYaw(yaw: number): void {
     this.bodyYaw = yaw;
     this.cameraYaw = yaw;
+    this.spinVel = 0;
+  }
+
+  /** Current turn-in-place angular velocity (rad/s, +left/−right) — 0 when not spinning. */
+  getTurnVelocity(): number {
+    return this.spinVel;
   }
 
   /**
@@ -467,6 +502,7 @@ export class PlayerController {
 
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
+    this.spinVel = 0;
     // (Re)entering a mode puts the camera exactly on the body heading: the
     // third-person rig starts behind the character and first person starts
     // looking the way the character faces.
@@ -617,18 +653,51 @@ export class PlayerController {
 
   /**
    * Body yaw logic (third person):
+   *   - A/D held ALONE (no W/S) spin the body in place: the ANGULAR
+   *     VELOCITY is what gets smoothed (never the angle per key press), so
+   *     the turn starts fast but never snaps, holds a constant dt-driven
+   *     rate while held, and decays exponentially on release — a natural
+   *     smooth stop with no jerk. The camera rotates in lockstep with the
+   *     body (it can never lag and catch up later) while any pre-existing
+   *     orbit offset eases toward "exactly behind".
    *   - forward-dominant movement (W held, S released) turns the body
    *     smoothly (exponential + angular-speed cap) toward the movement
-   *     heading. Because the camera only moves via RMB drag, the chase
-   *     target is stable while the mouse is hands-off — the body arrives at
-   *     the camera heading and the orbit offset closes DURING the run.
-   *   - strafing (A/D) and backpedaling (S) slide the body without
-   *     rotating it; idle frames rotate nothing.
+   *     heading. Because the camera only moves via RMB drag here, the
+   *     chase target is stable while the mouse is hands-off — the body
+   *     arrives at the camera heading and the orbit offset closes DURING
+   *     the run.
+   *   - W/S ± A/D and S alone slide the body without rotating it; idle
+   *     frames rotate nothing.
    * First person: look() owns the heading; nothing turns here.
    */
   private updateBodyYaw(dt: number, move: MovementIntent): void {
     if (this.dead) return;
     if (this.cameraMode === 'first_person') return;
+
+    // --- Turn-in-place (A/D alone): dt-driven continuous spin --------------
+    if (move.turn !== 0) {
+      const targetVel = move.turn * this.turnInPlaceRate;
+      this.spinVel += (targetVel - this.spinVel) * (1 - Math.exp(-this.turnSpinUpRate * dt));
+    } else if (this.spinVel !== 0) {
+      // Release: exponential decay of the spin — a smooth natural stop.
+      this.spinVel *= Math.exp(-this.turnReleaseRate * dt);
+      if (Math.abs(this.spinVel) < 0.02) this.spinVel = 0;
+    }
+    if (this.spinVel !== 0) {
+      const delta = this.spinVel * dt;
+      this.bodyYaw += delta;
+      // Camera follows synchronously: it rotates WITH the body every frame
+      // (it can never remain on the old side and snap later), while any
+      // residual orbit offset eases toward zero behind the character.
+      this.cameraYaw += delta;
+      const offset = this.cameraYaw - this.bodyYaw;
+      if (offset !== 0) {
+        this.cameraYaw = this.bodyYaw + offset * Math.exp(-this.turnCameraAlignRate * dt);
+      }
+      this.clampOrbitOffset();
+      return; // the spin owns the body this frame
+    }
+
     if (move.x === 0 && move.z === 0) return;
     if (!move.forwardDominant) return;
 
@@ -675,6 +744,13 @@ export class PlayerController {
    * latched, cached or held until a stop.
    */
   private computeMovement(): MovementIntent {
+    // A/D held ALONE (no W/S, third person): turn in place — the body
+    // pivots quickly and smoothly while the camera follows; no translation.
+    const turn = this.turnInPlaceInput();
+    if (turn !== 0) {
+      return { x: 0, z: 0, yaw: this.bodyYaw, forwardDominant: false, turn };
+    }
+
     if (this.moveKeySet() === '0000') return NO_MOVEMENT;
 
     const dir = this.cameraRelativeDirection();
@@ -685,7 +761,17 @@ export class PlayerController {
       z: dir.z,
       yaw: Math.atan2(-dir.x, -dir.z),
       forwardDominant: this.input.forward && !this.input.backward,
+      turn: 0,
     };
+  }
+
+  /** +1 = spin left (A), −1 = spin right (D) — ONLY while A/D are held
+   *  without any forward/backward key, in third person. With W/S held,
+   *  A/D stay strafe (the existing camera-relative movement is untouched). */
+  private turnInPlaceInput(): number {
+    if (this.cameraMode !== 'third_person') return 0;
+    if (this.input.forward || this.input.backward) return 0;
+    return (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
   }
 
   /** Normalized camera-relative WASD direction (0,0,0 when no keys). */

@@ -7,10 +7,13 @@
  *   2. MOVEMENT — recomputed EVERY frame from the CURRENT camera basis.
  *      Rotating the camera changes where W/A/S/D carry the player on the
  *      very next frame. Nothing is latched, cached or held until a stop.
- *   3. BODY — turns smoothly (exponential + angular-speed cap) toward the
- *      movement heading only while it is forward-dominant (W held, S
- *      released). Strafing (A/D) and backpedaling (S) slide the body
- *      without rotating it; velocity always blends (accel/brake), never
+ *   3. BODY — A/D held ALONE (no W/S) spin the body in place: dt-driven,
+ *      continuous rotation with a fast exponential ramp-up, a constant
+ *      capped rate and a smooth exponential release (no per-press step,
+ *      no snap, no jerk, no overshoot). With W/S held, A/D stay strafe:
+ *      forward-dominant movement (W) turns the body toward the movement
+ *      heading (exponential + angular-speed cap); S±A/D slide the body
+ *      without rotating it. Velocity always blends (accel/brake), never
  *      snaps — W→S passes through zero smoothly.
  *   4. FOLLOW — during pure-forward runs with the mouse hands-off the
  *      camera eases back behind the body DURING the movement. Idle frames
@@ -187,20 +190,140 @@ test('CONTRACT: forward-dominant movement turns the body smoothly toward the hea
   assert.ok(Math.abs(wrap(controller.getBodyYaw() - 0.88)) < 0.03, 'body settled on the movement heading');
 });
 
-test('CONTRACT: strafing (A/D) slides the body — no rotation while held, no spin per press', () => {
+test('CONTRACT: A/D alone spin the body in place — continuous, capped, zero translation', () => {
   const controller = thirdPerson();
 
-  // Sustained D: movement along camera-right, body heading untouched.
-  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { right: true });
-  assert.equal(wrap(controller.getBodyYaw()), 0, 'body never rotated during a held strafe');
-  assert.ok(controller.getPosition().x > 3, 'strafe moved the character along camera-right');
+  // Sign: A turns LEFT (+yaw), D turns RIGHT (−yaw) — the same "left" the
+  // old A-strafe slid toward (yaw 0 faces −Z; left = −X = +yaw).
+  controller.update(1 / 60, { left: true });
+  const firstA = controller.getBodyYaw();
+  assert.ok(firstA > 0 && firstA < 0.05, `first A frame eased into the turn (${firstA.toFixed(4)} rad — not a step)`);
+  const p0 = controller.getPosition();
+  for (let i = 0; i < 119; i += 1) controller.update(1 / 60, { left: true });
+  // bodyYaw accumulates UNWRAPPED — 2 s at 4.5 rad/s minus the ramp ≈ 8.72 rad.
+  const swept = controller.getBodyYaw();
+  assert.ok(swept > 8.4 && swept < 9.0, `2s of A swept ${swept.toFixed(2)} rad (expected ≈ 8.7)`);
+  const p1 = controller.getPosition();
+  assert.ok(Math.abs(p1.x - p0.x) < 1e-9 && Math.abs(p1.z - p0.z) < 1e-9, 'turn-in-place never translates');
 
-  // Repeated press/release cycles never accumulate any rotation.
-  for (let cycle = 0; cycle < 3; cycle += 1) {
-    for (let i = 0; i < 20; i += 1) controller.update(1 / 60, { left: true });
-    for (let i = 0; i < 20; i += 1) controller.update(1 / 60, {});
+  const clockwise = thirdPerson();
+  for (let i = 0; i < 30; i += 1) clockwise.update(1 / 60, { right: true });
+  assert.ok(clockwise.getBodyYaw() < 0, 'D turns right (−yaw)');
+});
+
+test('CONTRACT: turn-in-place is dt-driven — no fixed-degree step exists', () => {
+  const controller = thirdPerson();
+
+  // The per-frame rotation RAMPS UP (angular velocity, not key steps) and
+  // every step stays under the configured turn-rate cap.
+  const steps: number[] = [];
+  let previous = controller.getBodyYaw();
+  for (let i = 0; i < 8; i += 1) {
+    controller.update(1 / 60, { left: true });
+    steps.push(controller.getBodyYaw() - previous);
+    previous = controller.getBodyYaw();
   }
-  assert.equal(wrap(controller.getBodyYaw()), 0, 'no per-press step rotation exists');
+  assert.ok(steps[4] > steps[0] * 2, `later steps (${steps[4].toFixed(4)}) exceed early ones (${steps[0].toFixed(4)}) — velocity-driven`);
+  for (const s of steps) assert.ok(s <= 4.5 / 60 + 1e-9, `step ${s.toFixed(4)} rad exceeds the 4.5 rad/s cap`);
+
+  // Repeated press/release cycles accumulate only while held (+ short
+  // smooth tail) — never a constant per-press chunk.
+  const taps = thirdPerson();
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    for (let i = 0; i < 20; i += 1) taps.update(1 / 60, { left: true });
+    for (let i = 0; i < 20; i += 1) taps.update(1 / 60, {});
+  }
+  const held = thirdPerson();
+  for (let i = 0; i < 60; i += 1) held.update(1 / 60, { left: true });
+  // Both accumulate ≈ 4.2–4.5 rad unwrapped (well apart from the ±π cut).
+  assert.ok(
+    Math.abs(held.getBodyYaw() - taps.getBodyYaw()) < 0.5,
+    `cycled input (${taps.getBodyYaw().toFixed(2)}) ≈ continuously-held (${held.getBodyYaw().toFixed(2)}) — no per-press bonus`,
+  );
+});
+
+test('CONTRACT: releasing A/D decays the spin smoothly — no jerk, no overshoot, then exact freeze', () => {
+  const controller = thirdPerson();
+  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { left: true }); // full spin speed
+
+  const steps: number[] = [];
+  for (let i = 0; i < 60; i += 1) {
+    const before = controller.getBodyYaw();
+    controller.update(1 / 60, {});
+    steps.push(controller.getBodyYaw() - before);
+  }
+  let tail = 0;
+  for (let i = 0; i < steps.length; i += 1) {
+    if (steps[i] === 0) break; // exact freeze reached — tail is over
+    assert.ok(steps[i] > 0, 'the release tail never reverses (no overshoot)');
+    if (i > 0) assert.ok(steps[i] <= steps[i - 1] + 1e-12, `release step grew (${steps[i - 1].toFixed(5)} → ${steps[i].toFixed(5)})`);
+    tail += steps[i];
+  }
+  // The whole tail is a short, bounded glide (≈ v₀ / release-rate ≈ 0.28 rad).
+  assert.ok(tail > 0.05 && tail < 0.5, `release tail ${tail.toFixed(3)} rad — a bounded smooth stop`);
+
+  const body = controller.getBodyYaw();
+  const camera = controller.getYaw();
+  for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
+  assert.equal(controller.getBodyYaw(), body, 'body exactly frozen after the tail');
+  assert.equal(controller.getYaw(), camera, 'camera exactly frozen after the tail');
+});
+
+test('CONTRACT: the camera follows turn-in-place synchronously and ends behind the body', () => {
+  const controller = thirdPerson();
+
+  // From a behind start the offset stays exactly zero while both rotate.
+  let previousBody = controller.getBodyYaw();
+  let previousCamera = controller.getYaw();
+  for (let i = 0; i < 120; i += 1) {
+    controller.update(1 / 60, { left: true });
+    assert.ok(
+      Math.abs((controller.getBodyYaw() - previousBody) - (controller.getYaw() - previousCamera)) < 1e-9,
+      'camera rotated with the body every single frame',
+    );
+    assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 1e-9, 'camera stays exactly behind');
+    previousBody = controller.getBodyYaw();
+    previousCamera = controller.getYaw();
+  }
+  assert.ok(Math.abs(wrap(controller.getBodyYaw())) > 2, 'the body genuinely spun');
+
+  // A pre-existing orbit offset eases toward zero: the camera swings behind
+  // DURING the turn (never as a post-stop snap).
+  const orbited = thirdPerson();
+  orbited.look(-273, 0); // ≈ +0.6 rad offset
+  for (let i = 0; i < 240; i += 1) orbited.update(1 / 60, { left: true });
+  assert.ok(
+    Math.abs(orbited.getCameraOrbitOffset()) < 0.05,
+    `camera settled behind (${orbited.getCameraOrbitOffset().toFixed(3)})`,
+  );
+  assert.ok(Math.abs(orbited.getCameraOrbitOffset()) <= 1.9, 'offset never breached the bound');
+});
+
+test('CONTRACT: with W or S held, A/D stay strafe — turn-in-place never takes over', () => {
+  const controller = thirdPerson();
+
+  // W+D: camera-relative diagonal run, body chases the heading (unchanged).
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, right: true });
+  const body = wrap(controller.getBodyYaw());
+  assert.ok(Math.abs(body - (-Math.PI / 4)) < 0.03, `W+D body settled on the diagonal (${body.toFixed(3)})`);
+  const p = controller.getPosition();
+  assert.ok(Math.abs(wrap(Math.atan2(-p.x, -p.z) - (-Math.PI / 4))) < 0.05, 'W+D travelled the camera-relative diagonal');
+  assert.ok(controller.getHorizontalSpeed() > 4, 'W+D actually moves');
+
+  // S+A: slides camera-backward-left, body untouched.
+  const slider = thirdPerson();
+  for (let i = 0; i < 240; i += 1) slider.update(1 / 60, { backward: true, left: true });
+  assert.equal(wrap(slider.getBodyYaw()), 0, 'S+A never rotates the body');
+  assert.ok(slider.getPosition().x < -1 && slider.getPosition().z > 1, 'S+A slides the diagonal');
+
+  // First person keeps classic strafe on A/D (the mouse owns turning there).
+  const fp = new PlayerController(emptyWorld(), {
+    initialPosition: { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 0 },
+    yaw: 0,
+    cameraMode: 'first_person',
+  });
+  fp.update(1 / 60, { right: true });
+  assert.ok(fp.getPosition().x > 0, 'FP D still strafes along camera-right');
 });
 
 test('CONTRACT: backpedaling (S) slides the body — smooth W→S reversal through zero', () => {
@@ -240,8 +363,8 @@ test('CONTRACT: the body realigns with the camera during forward runs — idle, 
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'idle never rotates anything');
 
-  // Lateral movement: the body slides, the offset persists.
-  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { right: true });
+  // Lateral movement (S+D): the body slides, the offset persists.
+  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { backward: true, right: true });
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'strafe never closes the offset');
   assert.equal(wrap(controller.getBodyYaw()), 0, 'strafe never rotates the body');
 
@@ -276,11 +399,14 @@ test('CONTRACT: after every stop the camera and body stay frozen (no catch-up sy
   ];
   for (const input of stops) {
     for (let i = 0; i < 40; i += 1) controller.update(1 / 60, input);
+    // Absorb the (short, smooth) turn-release tail that A/D stops have —
+    // that tail is part of the stop, not a post-stop catch-up.
+    for (let i = 0; i < 90; i += 1) controller.update(1 / 60, {});
     const c = controller.getYaw();
     const b = controller.getBodyYaw();
     for (let i = 0; i < 90; i += 1) controller.update(1 / 60, {});
-    assert.equal(controller.getYaw(), c, 'camera frozen at stop');
-    assert.equal(controller.getBodyYaw(), b, 'body frozen at stop');
+    assert.equal(controller.getYaw(), c, 'camera frozen after stop+tail');
+    assert.equal(controller.getBodyYaw(), b, 'body frozen after stop+tail');
   }
 });
 
@@ -290,6 +416,9 @@ test('CONTRACT: the W A stop D stop S stop W sequence never rotates anything aft
     for (let i = 0; i < frames; i += 1) controller.update(1 / 60, input);
   };
   const assertFrozen = (label: string): void => {
+    // Absorb the smooth turn-release tail (A/D stops decay over ~0.3 s);
+    // W/S stops are already frozen and pass through unchanged.
+    for (let i = 0; i < 45; i += 1) controller.update(1 / 60, {});
     const c = controller.getYaw();
     const b = controller.getBodyYaw();
     for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});

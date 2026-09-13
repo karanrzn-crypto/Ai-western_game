@@ -1,10 +1,12 @@
 /**
  * Regression tests for the third-person camera / body-yaw architecture:
  *
- *  1. BODY — strafing (A/D) and backpedaling (S) SLIDE the character without
- *     rotating it; forward-dominant movement (W/W±A/D) turns the body
- *     smoothly toward the movement heading (angular-speed limited, never a
- *     snap) while the movement itself is camera-relative from every frame.
+ *  1. BODY — A/D held ALONE (no W/S) spin the body in place (fast smooth
+ *     ramp, constant capped rate, exponential release — never steps/snaps);
+ *     with W/S held, A/D and S SLIDE the character without rotating it;
+ *     forward-dominant movement (W/W±A/D) turns the body smoothly toward
+ *     the movement heading (angular-speed limited, never a snap) while
+ *     the movement itself is camera-relative from every frame.
  *  2. RMB ORBIT — the mouse only rotates the camera's own view yaw, kept
  *     within a bounded offset of the body; it never rotates the character.
  *  3. FOLLOW — the camera eases back behind the body during pure-forward
@@ -46,18 +48,53 @@ function thirdPerson(options: ConstructorParameters<typeof PlayerController>[1] 
 
 // --- 1. Body turn rules -----------------------------------------------------------
 
-test('REGRESSION: strafing never rotates the body — movement is camera-relative from frame one', () => {
+test('REGRESSION: strafing (with S held) never rotates the body — movement is camera-relative from frame one', () => {
   const controller = thirdPerson();
 
-  // yaw 0 looks -Z; D strafes +X. First frame must already move and NOT turn.
-  controller.update(1 / 60, { right: true });
+  // yaw 0 looks -Z; S+D slides +X/+Z. First frame must already move and NOT turn.
+  controller.update(1 / 60, { backward: true, right: true });
   assert.equal(controller.getBodyYaw(), 0, 'the first strafe frame did not rotate the body');
   assert.ok(controller.getPosition().x > 0, 'movement is camera-relative from frame one');
 
-  // Sustained input: a straight lateral line, zero body rotation.
-  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { right: true });
+  // Sustained input: a straight diagonal line, zero body rotation.
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { backward: true, right: true });
   assert.equal(wrap(controller.getBodyYaw()), 0, `body held its heading (${wrap(controller.getBodyYaw()).toFixed(3)})`);
-  assert.ok(controller.getPosition().x > 3, 'strafe kept moving along camera-right');
+  const p = controller.getPosition();
+  assert.ok(p.x > 3 && p.z > 3, 'strafe kept moving along the camera-relative diagonal');
+});
+
+test('REGRESSION: A/D alone turn the body in place — fast ramp, constant capped rate, smooth stop', () => {
+  const controller = thirdPerson();
+
+  // Ramp-up: per-frame steps grow to the cap (velocity-driven, never steps).
+  const steps: number[] = [];
+  let previous = controller.getBodyYaw();
+  for (let i = 0; i < 30; i += 1) {
+    controller.update(1 / 60, { left: true });
+    steps.push(controller.getBodyYaw() - previous);
+    previous = controller.getBodyYaw();
+  }
+  assert.ok(steps[0] > 0 && steps[0] < 0.05, 'the first frame eases into the turn (no snap)');
+  assert.ok(steps[steps.length - 1] > steps[0] * 2, 'the spin ramps up to full speed');
+  for (const s of steps) assert.ok(s <= 4.5 / 60 + 1e-9, `step ${s.toFixed(4)} exceeds the 4.5 rad/s cap`);
+
+  // Sustained hold: constant capped rate — no runaway acceleration.
+  let worstDeviation = 0;
+  previous = controller.getBodyYaw();
+  for (let i = 0; i < 120; i += 1) {
+    controller.update(1 / 60, { left: true });
+    worstDeviation = Math.max(worstDeviation, Math.abs(controller.getBodyYaw() - previous - 4.5 / 60));
+    previous = controller.getBodyYaw();
+  }
+  assert.ok(worstDeviation < 0.01, `sustained spin deviated ${worstDeviation.toFixed(4)} rad/frame from the constant rate`);
+
+  // Release: smooth decay, then an exact freeze.
+  for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
+  const body = controller.getBodyYaw();
+  const camera = controller.getYaw();
+  for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
+  assert.equal(controller.getBodyYaw(), body, 'body frozen after the release tail');
+  assert.equal(controller.getYaw(), camera, 'camera frozen after the release tail');
 });
 
 test('REGRESSION: forward-dominant turns are a continuous sweep — no frame jumps beyond the angular cap', () => {
@@ -134,7 +171,7 @@ test('REGRESSION: the orbit offset closes only when the body chases the camera (
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'idle never closes the offset');
 
   // Lateral and backward movement: the body slides without turning.
-  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { left: true });
+  for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { backward: true, left: true });
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'strafe never closes the offset');
   for (let i = 0; i < 90; i += 1) controller.update(1 / 60, { backward: true });
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'backpedal never closes the offset');
@@ -189,6 +226,9 @@ test('REGRESSION: the W A stop D stop S stop W sequence never rotates anything a
     for (let i = 0; i < frames; i += 1) controller.update(1 / 60, input);
   };
   const assertFrozen = (label: string): void => {
+    // Absorb the smooth turn-release tail (A/D stops decay over ~0.3 s);
+    // W/S stops are already frozen and pass through unchanged.
+    for (let i = 0; i < 45; i += 1) controller.update(1 / 60, {});
     const c = controller.getYaw();
     const b = controller.getBodyYaw();
     for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
@@ -203,15 +243,15 @@ test('REGRESSION: the W A stop D stop S stop W sequence never rotates anything a
   move(45, { forward: true }); assertFrozen('W again');
 });
 
-test('REGRESSION: held lateral input converges to a straight line — no perpetual spin', () => {
+test('REGRESSION: held lateral input (S+D) converges to a straight line — no perpetual spin', () => {
   const controller = thirdPerson();
-  for (let i = 0; i < 300; i += 1) controller.update(1 / 60, { right: true });
+  for (let i = 0; i < 300; i += 1) controller.update(1 / 60, { backward: true, right: true });
   let totalCameraRotation = 0;
   let totalBodyRotation = 0;
   let previousCamera = controller.getYaw();
   let previousBody = controller.getBodyYaw();
   for (let i = 0; i < 120; i += 1) {
-    controller.update(1 / 60, { right: true });
+    controller.update(1 / 60, { backward: true, right: true });
     totalCameraRotation += Math.abs(wrap(controller.getYaw() - previousCamera));
     totalBodyRotation += Math.abs(wrap(controller.getBodyYaw() - previousBody));
     previousCamera = controller.getYaw();

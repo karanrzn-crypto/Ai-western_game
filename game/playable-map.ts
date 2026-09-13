@@ -36,7 +36,15 @@ import {
   mountEnterCameraMode,
   HorsePersistence,
   HORSE_PROPORTIONS,
+  buildMountTimeline,
+  mountRootPose,
+  poseMountRider,
+  applyRiderPose,
+  mountSafeRadius,
+  MOUNT_STAND,
+  MOUNT_SEAT_QUATERNION,
 } from '../src/index.js';
+import type { MountStartState, MountTimeline } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
 
@@ -864,81 +872,50 @@ const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getColli
 });
 let rideYaw = horse.getYaw();
 let ridePitch = 0;
-// Mount animation: a staged choreography (approach → reach → GRIP the saddle
-// → climb → settle) — the rider visibly grabs the horn before sitting.
+// Mount animation: a staged, weighty choreography — approach (polar arc,
+// procedural walk) → orient → reach (the HAND leads) → grip (a real hold on
+// the seat edge) → foot (boot finds the stirrup) → push (anticipation dip) →
+// climb (hips rise, body passes over, leg swings across) → settle (a
+// controlled drop into the saddle). The whole thing lives in
+// src/horse/MountChoreography.ts — the single authority that
+// scripts/mount-solver.mjs imports to run the full-timeline swept-clearance
+// verification, so the game and the verifier can never drift apart. Every
+// mount constant derives from HORSE_PROPORTIONS, so the horse scale
+// rescales the choreography automatically; the timeline is built from the
+// rider's ACTUAL approach arc (a longer walk never stretches the fixed beats).
+//
 // The character root is attached to the saddle socket immediately (the horse
 // stands still for the whole timeline via mount lock), and the animation is
 // driven entirely in SOCKET-LOCAL space, so it stays rock-stable relative to
-// the horse no matter where the mount happens.
-//
-// Revision issue 3: the approach is a POLAR ARC around the saddle axis — the
-// rider always walks AROUND the horse to the left stirrup, never straight
-// through its body, no matter which side the mount was triggered from. The
-// grip phase rests the left hand ON the near seat edge (a real, contact-
-// checked grip), and the climb lifts the rider HIGH before the slide so the
-// folded/swinging legs pass above the barrel — all verified by the P4
-// full-frame swept clearance check (scripts/mount-solver.mjs + live probe).
-const RIDER_SEAT_QUATERNION = new THREE.Quaternion();
-const MOUNT_DURATION = 2.1; // seconds
-// Phase boundaries as FRACTIONS of the timeline:
-const MOUNT_WALK_END = 0.4;   // arrived at the left stirrup, facing the horse
-const MOUNT_REACH_END = 0.58; // hand rests ON the near seat edge
-const MOUNT_GRIP_END = 0.72;  // grip held, body coiled for the climb
-const MOUNT_CLIMB_END = 0.9;  // up and over
-// --- Mount timeline tuning (P4 full-frame swept clearance) -----------------
-// Solved OFFLINE against the horse+saddle collider set with the real rig
-// (scripts/mount-solver.mjs): every rider capsule (torso, arms, hands,
-// thighs, shins, boots) stays clear of the barrel/chest/saddle across the
-// ENTIRE timeline, and the grip hand rests ON the near seat edge. The old
-// straight-arm horn reach swept the forearm THROUGH the chest (up to 8cm)
-// and the low climb slide dragged both legs through the barrel (up to 19cm).
-const MOUNT_REACH_LEAN = -0.08;   // slight lean-in; the arm does the reaching
-const MOUNT_REACH_UP_END = 0.5;   // arm fully raised, elbow folded
-const MOUNT_REACH_RX_UP = 2.3;    // shoulder rx raised on the side diagonal
-const MOUNT_REACH_RZ_UP = -1.0;   // raise-plane toward the head side (clears the chest face)
-const MOUNT_REACH_RX = 2.1;       // rx at the grip — hand ON the seat edge
-const MOUNT_REACH_RZ_PLACE = -0.15;
-const MOUNT_REACH_ELBOW_BEND = -1.9; // folded while traversing up
-const MOUNT_REACH_ELBOW_END = 0.35;  // extended onto the seat edge
-const MOUNT_STAND_OFF = 0.3;      // step-out while reaching (elbow arc clears the chest)
-const MOUNT_LIFT_PEAK = 0.22;     // root rides ABOVE the socket at the lift peak
-const MOUNT_LIFT_RISE_END = 0.84; // rise complete (hips clear the barrel top)
-const MOUNT_LIFT_FALL_START = 0.88; // descend into the seat
-const MOUNT_SLIDE_START = 0.82;   // root x/z slide to the seat center, while lifted
-const MOUNT_SLIDE_END = 0.94;
-const MOUNT_LEG_L_FOLD_START = 0.73; // left leg folds while the root lifts
-const MOUNT_LEG_L_FOLD_END = 0.86;
-const MOUNT_SWING_START = 0.84;   // right leg swings over the cantle, hard-tucked
-const MOUNT_SWING_PEAK_AT = 0.875;
-const MOUNT_SWING_RX = 2.25;
-const MOUNT_SWING_RZ = 0.62;
-const MOUNT_SWING_KNEE = -1.7;
-const MOUNT_ARM_R_RX = 0.14;      // right arm stays close to the torso
-const MOUNT_ARM_R_RZ = -0.14;
-const MOUNT_ARM_R_ELBOW = 0.22;
-const MOUNT_STAND = new THREE.Vector3(-0.45, -HORSE_PROPORTIONS.riderFeetY, -0.02); // on the ground, left side, beside the stirrup
-const MOUNT_STAND_PHI = Math.atan2(MOUNT_STAND.x, MOUNT_STAND.z); // polar angle of the stand point
-const MOUNT_STAND_R = Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z);
-const MOUNT_FACE_HORSE = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 2, 0));
-/** Clearance radius around the saddle axis: keeps the walker outside the
- *  horse's silhouette (head to tail) plus a body margin. */
-const mountSafeRadius = (phi: number): number => {
-  const s = Math.sin(phi) / 0.58;
-  const c = Math.cos(phi) / 1.55;
-  return 1 / Math.sqrt(s * s + c * c) + 0.24;
-};
+// the horse no matter where the mount happens. The approach is a POLAR ARC
+// around the saddle axis — the rider always walks AROUND the horse to the
+// left stirrup, never straight through its body.
 let mountAnim: {
   age: number;
-  startPhi: number;
-  startR: number;
-  startY: number;
-  startQuat: THREE.Quaternion;
+  start: MountStartState;
+  timeline: MountTimeline;
 } | null = null;
 
-const smooth = (t: number): number => t * t * (3 - 2 * t);
-/** Normalized progress through [a, b] with smoothstep easing. */
-const seg = (t: number, a: number, b: number): number => smooth(Math.max(0, Math.min(1, (t - a) / (b - a))));
-const lerpNum = (a: number, b: number, k: number): number => a + (b - a) * k;
+/** Geometric length of the polar approach path (start → stand point), used
+ *  to size the walk phase (walk duration = arc / walk speed). */
+function mountApproachArc(startPhi: number, startR: number): number {
+  const standPhi = Math.atan2(MOUNT_STAND.x, MOUNT_STAND.z);
+  const standR = Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z);
+  let length = 0;
+  let px = Math.sin(startPhi) * startR;
+  let pz = Math.cos(startPhi) * startR;
+  for (let i = 1; i <= 16; i += 1) {
+    const k = i / 16;
+    const phi = startPhi + wrapAngle(standPhi - startPhi) * k;
+    const r = Math.max(mountSafeRadius(phi), startR + (standR - startR) * k);
+    const x = Math.sin(phi) * r;
+    const z = Math.cos(phi) * r;
+    length += Math.hypot(x - px, z - pz);
+    px = x;
+    pz = z;
+  }
+  return length;
+}
 
 const horseInteractableUuid = 'horse-owned-rig';
 interactions.register({
@@ -977,20 +954,22 @@ function mountHorse(): void {
   }
   playerController.freezeMotion();
   playerController.setCrouching(false);
-  horse.mount(MOUNT_DURATION + 0.25);
   riderSocket.attach(character.root);
   // Socket-local starting transform of the character (attach preserved the
   // world pose, so root.position/quaternion now ARE the socket-local values).
   // The approach is polar: remember the START angle/radius so the walk-in can
-  // arc AROUND the horse instead of cutting through it.
+  // arc AROUND the horse instead of cutting through it, and size the walk
+  // phase from the rider's actual approach arc.
   const p = character.root.position;
-  mountAnim = {
-    age: 0,
+  const start: MountStartState = {
     startPhi: Math.atan2(p.x, p.z),
-    startR: Math.max(Math.hypot(p.x, p.z), MOUNT_STAND_R),
+    startR: Math.max(Math.hypot(p.x, p.z), Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z)),
     startY: p.y,
     startQuat: character.root.quaternion.clone(),
   };
+  const timeline = buildMountTimeline(mountApproachArc(start.startPhi, start.startR));
+  horse.mount(timeline.total + 0.25);
+  mountAnim = { age: 0, start, timeline };
   rideYaw = horse.getYaw();
   ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
   ridingCamera.snap();
@@ -1028,157 +1007,21 @@ function dismountHorse(): void {
   }
 }
 
-/**
- * Static seated pose while mounted (the character animator is paused).
- * Numbers SOLVED against the rig chains (see scripts/horse-geometry-probe.mjs):
- *   pelvis bottom  = 1.05 + 0.87 - 0.09 = 1.83 = saddleTopY  (rests on the seat)
- *   knee center    = (+-0.375, 1.48) — cylinder edge tangent to the barrel (0.32)
- *   boot bottom    = 1.072 = stirrup tread top (riderFeetY + 0.0225)
- *   rein hand      = (-0.20, 1.92, -0.38) — above the withers, ahead of the horn
- * Thighs roll 37° outward so the knees/boots stay OUTSIDE the barrel; the
- * right hand rests on the right thigh; the torso keeps an upright seat.
- */
-function applyRiderPose(): void {
-  const j = character.joints;
-  j.hips.position.y = 0.675;
-  j.hips.rotation.set(-0.05, 0, 0);
-  j.spine.rotation.set(0.02, 0, 0);
-  j.chest.rotation.set(0, 0, 0);
-  j.neck.rotation.set(0, 0, 0);
-  j.head.rotation.set(-0.04, 0, 0);
-  j.legL.rotation.set(1.1, 0, -0.6435);
-  j.kneeL.rotation.set(-1.45, 0, 0);
-  j.footL.rotation.set(0.35, 0, 0);
-  j.legR.rotation.set(1.1, 0, 0.6435);
-  j.kneeR.rotation.set(-1.45, 0, 0);
-  j.footR.rotation.set(0.35, 0, 0);
-  j.shoulderL.rotation.set(0.7, 0, 0.07);
-  j.elbowL.rotation.set(0.3, 0, 0);
-  j.shoulderR.rotation.set(0.06, 0, -0.03);
-  j.elbowR.rotation.set(0.15, 0, 0);
-}
-
-/**
- * Mount choreography pose (per frame, while mountAnim is active). Phases:
- *   approach [0, walk)   polar arc around the horse to the left stirrup
- *   reach    [walk, reach) step out, raise the arm along the head-side and
- *                        rest the hand ON the near seat edge (a real grip)
- *   grip     [reach, grip) hold, body coils for the climb
- *   climb    [grip, climb) root rises HIGH (hips clear the barrel), then
- *                        slides to the seat center while the left leg folds
- *                        and the right leg swings over, hard-tucked
- *   settle   [climb, 1]    ease into the seat, sit-dip, final riding pose
- * All joint targets end exactly on applyRiderPose's values (no pop at handover).
- * Trajectory solved against the horse/saddle colliders — see the MOUNT_*
- * constants above and scripts/mount-solver.mjs.
- */
-function poseMountRider(t: number): void {
-  const j = character.joints;
-  const lerp = (a: number, b: number, k: number): number => a + (b - a) * k;
-  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
-  const easeOutPow3 = (k: number): number => 1 - Math.pow(1 - clamp01(k), 3);
-  const kUpRaw = seg(t, MOUNT_WALK_END * 0.75, MOUNT_REACH_UP_END);
-  const kUp = easeOutPow3(kUpRaw);
-  const kPlace = seg(t, MOUNT_REACH_UP_END, MOUNT_REACH_END);
-  const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
-  const kSettle = seg(t, MOUNT_CLIMB_END, 1);
-  const kHold = Math.max(kClimb, kSettle);
-  const seated = kHold;
-  // Torso: upright walk → slight lean-in → straighten on the climb → seated.
-  const lean = lerp(0, MOUNT_REACH_LEAN, kUpRaw) * (1 - kSettle) + -0.05 * seated;
-  j.hips.rotation.x = lean;
-  j.spine.rotation.x = lerp(lean * 0.5, 0.02, kSettle);
-  j.chest.rotation.set(0, 0, 0);
-  j.head.rotation.set(lerp(-0.1, -0.04, kSettle), 0, 0);
-  j.neck.rotation.set(0, 0, 0);
-  // Stand TALL through approach/reach/grip, then sink to the seated hip
-  // height over the climb + settle.
-  j.hips.position.y = lerpNum(CHARACTER_PROPORTIONS.hipY, 0.675, seated);
-  // LEFT arm — rises along the rider's LEFT side (head-side diagonal, clear
-  // of the chest face) with a folded elbow, then the hand arcs over the chest
-  // top and rests ON the near seat edge; releases along the climb into the
-  // low rein hand.
-  const rxUp = lerp(0.1, MOUNT_REACH_RX_UP, kUp);
-  const rzUp = lerp(-0.06, MOUNT_REACH_RZ_UP, kUp);
-  const rxPlace = lerp(MOUNT_REACH_RX_UP, MOUNT_REACH_RX, kPlace);
-  const rzPlace = lerp(MOUNT_REACH_RZ_UP, MOUNT_REACH_RZ_PLACE, kPlace);
-  const elbowUp = lerp(-0.08, MOUNT_REACH_ELBOW_BEND, kUp);
-  j.shoulderL.rotation.set(lerp(lerp(rxUp, rxPlace, kPlace), 0.7, kHold), 0, lerp(lerp(rzUp, rzPlace, kPlace), 0.07, kHold));
-  j.elbowL.rotation.set(lerp(lerp(elbowUp, MOUNT_REACH_ELBOW_END, kPlace), 0.3, kHold), 0, 0);
-  // RIGHT arm — stays close to the body for balance during the climb, then
-  // rests on the right thigh.
-  j.shoulderR.rotation.set(lerp(0.12, MOUNT_ARM_R_RX, kClimb) * (1 - kSettle) + 0.06 * kSettle, 0, lerp(lerp(-0.05, MOUNT_ARM_R_RZ, kClimb), -0.03, kSettle));
-  j.elbowR.rotation.set(lerp(-0.08, MOUNT_ARM_R_ELBOW, kClimb) * (1 - kSettle) + 0.15 * kSettle, 0, 0);
-  // LEFT leg — folds to the seat pose while the root LIFTS (the foot rises
-  // outside the flank; folding at low root height dragged it through the
-  // barrel — solved in the P4 sweep).
-  const kFold = seg(t, MOUNT_LEG_L_FOLD_START, MOUNT_LEG_L_FOLD_END);
-  j.legL.rotation.set(lerp(0.05, 1.1, kFold), 0, lerp(-0.06, -0.6435, kFold));
-  j.kneeL.rotation.set(lerp(-0.12, -1.45, kFold), 0, 0);
-  j.footL.rotation.set(lerp(0, 0.35, kFold), 0, 0);
-  // RIGHT leg — swings up and WIDE over the cantle with a hard tuck (shin and
-  // boot stay above the barrel top while crossing), then folds down into the
-  // seated stirrup pose.
-  const kSwing = easeOutPow3(seg(t, MOUNT_SWING_START, MOUNT_SWING_PEAK_AT));
-  j.legR.rotation.set(lerp(lerp(0.05, MOUNT_SWING_RX, kSwing), 1.1, kSettle), 0, lerp(lerp(0.02, MOUNT_SWING_RZ, kSwing), 0.6435, kSettle));
-  j.kneeR.rotation.set(lerp(lerp(-0.12, MOUNT_SWING_KNEE, kSwing), -1.45, kSettle), 0, 0);
-  j.footR.rotation.set(lerp(0, 0.35, kSettle), 0, 0);
-}
-
-/** Per-frame mount animation driver: root transform + rider pose. */
+/** Per-frame mount animation driver: root transform + rider pose. The whole
+ *  choreography (root path, joint keyframes, timeline easing) lives in
+ *  MountChoreography — this is a thin clock + handover. At t = 1 the root
+ *  lands exactly on the socket origin and the solved seat pose. */
 function updateMountAnim(delta: number): void {
   if (!mountAnim) return;
   mountAnim.age += delta;
-  const t = Math.min(1, mountAnim.age / MOUNT_DURATION);
-  const kIn = seg(t, 0, MOUNT_WALK_END);
-  if (t < MOUNT_WALK_END) {
-    // POLAR APPROACH: arc around the saddle axis to the left stirrup — the
-    // radius never dips inside the horse's silhouette (mountSafeRadius), so
-    // the rider walks AROUND the body from any starting side.
-    const phi = mountAnim.startPhi + wrapAngle(MOUNT_STAND_PHI - mountAnim.startPhi) * kIn;
-    const safe = mountSafeRadius(phi);
-    const r = Math.max(safe, lerpNum(mountAnim.startR, MOUNT_STAND_R, kIn));
-    character.root.position.set(Math.sin(phi) * r, lerpNum(mountAnim.startY, MOUNT_STAND.y, kIn), Math.cos(phi) * r);
-    // Face the travel direction (sample the path just ahead), with a walk bob.
-    const phi2 = mountAnim.startPhi + wrapAngle(MOUNT_STAND_PHI - mountAnim.startPhi) * Math.min(1, kIn + 0.06);
-    const safe2 = mountSafeRadius(phi2);
-    const r2 = Math.max(safe2, lerpNum(mountAnim.startR, MOUNT_STAND_R, Math.min(1, kIn + 0.06)));
-    const dx = Math.sin(phi2) * r2 - character.root.position.x;
-    const dz = Math.cos(phi2) * r2 - character.root.position.z;
-    if (Math.hypot(dx, dz) > 1e-4) {
-      const faceYaw = Math.atan2(-dx, -dz);
-      character.root.quaternion.setFromEuler(new THREE.Euler(0, faceYaw, 0));
-    }
-    character.root.position.y += Math.abs(Math.sin(kIn * Math.PI * 4)) * 0.035 * (1 - kIn);
-  } else {
-    // At the stirrup: stand facing the horse, then CLIMB — the root rises
-    // HIGH first (hips clear the barrel top with the legs folded/tucked),
-    // THEN slides to the seat center while lifted, and finally descends into
-    // the seat over the settle. The old low slide dragged both legs through
-    // the barrel (P4 sweep: up to 19cm) — solved by lift-before-slide.
-    const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
-    const kSettle = seg(t, MOUNT_CLIMB_END, 1);
-    const kRise = seg(t, MOUNT_GRIP_END, MOUNT_LIFT_RISE_END);
-    const kFall = seg(t, MOUNT_LIFT_FALL_START, 1);
-    const kSlide = seg(t, MOUNT_SLIDE_START, MOUNT_SLIDE_END);
-    const standOff = MOUNT_STAND_OFF * seg(t, 0.3, 0.42) * (1 - seg(t, 0.72, 0.8));
-    const standX = MOUNT_STAND.x - standOff;
-    const y = lerpNum(MOUNT_STAND.y, MOUNT_LIFT_PEAK, kRise)
-      + lerpNum(0, -MOUNT_LIFT_PEAK, kFall * kFall * (3 - 2 * kFall));
-    character.root.position.set(lerpNum(standX, 0, kSlide), y, lerpNum(MOUNT_STAND.z, 0, kSlide));
-    // Face the horse through the climb; the rotation completes by the settle
-    // (a half-blend here left the seat-pose feet swung 45° off into the chest).
-    const quatBlend = Math.min(1, kClimb + kSettle);
-    character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, quatBlend);
-    const sitDip = Math.sin(kSettle * Math.PI) * -0.01;
-    character.root.position.y += sitDip;
-  }
-  poseMountRider(t);
+  const t = Math.min(1, mountAnim.age / mountAnim.timeline.total);
+  mountRootPose(character.root, mountAnim.start, t, mountAnim.timeline);
+  poseMountRider(character.joints, t, mountAnim.timeline);
   if (t >= 1) {
     mountAnim = null;
     character.root.position.set(0, 0, 0);
-    character.root.quaternion.copy(RIDER_SEAT_QUATERNION);
-    applyRiderPose();
+    character.root.quaternion.copy(MOUNT_SEAT_QUATERNION);
+    applyRiderPose(character.joints);
   }
 }
 
@@ -1322,7 +1165,10 @@ function animate(): void {
       if (!dead && input.consumePressed('jump')) playerController.requestJump();
       if (!dead && input.consumePressed('crouch')) playerController.toggleCrouch();
       if (!dead && input.consumePressed('interact') && interactions.tryInteract()) interactHold = 0.5;
-      if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      // The mount forces THIRD PERSON (mountEnterCameraMode) — a V press in
+      // the SAME frame as the E-mount must not flip it back (edge consumed
+      // after the interact). Drop it when a mount just started.
+      if (input.consumePressed('cameraToggle') && !mountAnim) { playerController.toggleCameraMode(); updateEditorHud(); }
       if (!dead && input.consumePressed('debugDamage')) health.damage(30);
       if (!dead && input.consumePressed('debugHeal')) health.heal(35);
       if (dead && input.consumePressed('respawn')) respawnCountdown = 0;

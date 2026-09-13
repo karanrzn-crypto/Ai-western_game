@@ -10,6 +10,7 @@ import {
   HorsePersistence,
   HORSE_PROPORTIONS,
   GAIT_PHASES,
+  HORSE_GAITS,
   validateHorseSave,
 } from '../src/index.js';
 
@@ -40,7 +41,10 @@ test('HORSE ANIMATOR: leg cycle advances with REAL speed (phase ∝ speed/stride
   const model = createHorseModel();
   const animator = new HorseAnimator(model);
   animator.update({ deltaSeconds: 0.5, speed: HORSE_PROPORTIONS ? 4.2 : 4.2, gait: 'trot' });
-  const expected = 2 * Math.PI * (4.2 / 2.8) * 0.5;
+  // Stride comes from the gait table (already scaled by HORSE_SCALE — §6):
+  // a smaller animal covers less ground per footfall, so the cycle rate is
+  // speed / (actual stride), not speed / reference-stride.
+  const expected = 2 * Math.PI * (4.2 / HORSE_GAITS.trot.stride) * 0.5;
   assert.ok(Math.abs(animator.getPhase() - expected) < 1e-6, `phase ${animator.getPhase()} vs ${expected}`);
   // Legs actually swing while moving.
   assert.ok(Math.abs(model.joints.legFL.rotation.x) > 0.05);
@@ -118,6 +122,60 @@ test('HORSE ANIMATOR: canter drives the front legs with visibly different angles
     maxSync = Math.max(maxSync, Math.abs(model.joints.legFL.rotation.x - model.joints.legFR.rotation.x));
   }
   assert.ok(maxSync > 0.15, `front legs must diverge in canter (max |Δrx| ${maxSync.toFixed(3)})`);
+});
+
+test('HORSE GAITS: each leg plays a FOOTFALL waveform (contact → support → lift → swing → plant)', () => {
+  // The leg cycle is not a sine: driving the rig at a fixed speed, each leg
+  // must show (a) a planted SUPPORT window where the hip sweeps back at
+  // ~ground speed (monotonic, near-linear), (b) a folded knee mid-SWING far
+  // deeper than any stance flexion, and (c) the swing ending protracted
+  // (plant) — for every gait, on every leg.
+  for (const gait of ['walk', 'trot', 'canter', 'gallop'] as const) {
+    const spec = HORSE_GAITS[gait];
+    const model = createHorseModel();
+    const animator = new HorseAnimator(model);
+    // Advance into the gait so smoothing settles.
+    for (let i = 0; i < 60; i += 1) animator.update({ deltaSeconds: 1 / 120, speed: spec.speed, gait });
+    const legs = ['legFL', 'legFR', 'legBL', 'legBR'] as const;
+    const knees = ['kneeFL', 'kneeFR', 'kneeBL', 'kneeBR'] as const;
+    const N = 480;
+    const hip: number[][] = [[], [], [], []];
+    const knee: number[][] = [[], [], [], []];
+    for (let i = 0; i < N; i += 1) {
+      animator.update({ deltaSeconds: 1 / 120, speed: spec.speed, gait });
+      for (let l = 0; l < 4; l += 1) {
+        hip[l].push(model.joints[legs[l]].rotation.x);
+        knee[l].push(model.joints[knees[l]].rotation.x);
+      }
+    }
+    for (let l = 0; l < 4; l += 1) {
+      const minKnee = Math.min(...knee[l]);
+      // (b) mid-swing fold: the deepest knee flexion clearly exceeds the
+      // stance absorption dip, scaling with the gait's swing amplitude (the
+      // pose smoothing damps the peak ~20% at these cycle rates — the bar
+      // accounts for that).
+      assert.ok(minKnee < -(0.16 + spec.swing * 0.45), `${gait} leg ${l}: swing fold too shallow (${minKnee.toFixed(3)})`);
+      // (c) plant: the hip reaches its most protracted angle at some point
+      // and its most retracted angle half a stance away (a real sweep).
+      const maxHip = Math.max(...hip[l]);
+      const minHip = Math.min(...hip[l]);
+      assert.ok(maxHip - minHip > spec.swing * 0.6, `${gait} leg ${l}: hip sweep too small (${(maxHip - minHip).toFixed(3)})`);
+      // (a) support: somewhere in the cycle the hip moves monotonically back
+      // over a contiguous stretch (the planted sweep), not oscillating. The
+      // expected run length = duty × cycle time × sample rate (×0.7 slack).
+      let bestRun = 0;
+      let run = 0;
+      for (let i = 1; i < N; i += 1) {
+        if (hip[l][i] < hip[l][i - 1] - 1e-4) run += 1;
+        else run = 0;
+        bestRun = Math.max(bestRun, run);
+      }
+      const duty = [0.62, 0.52, 0.28, 0.22][['walk', 'trot', 'canter', 'gallop'].indexOf(gait)];
+      const cycleSeconds = spec.stride / spec.speed;
+      const expectedRun = duty * cycleSeconds * 120;
+      assert.ok(bestRun > expectedRun * 0.7, `${gait} leg ${l}: no planted back-sweep (run ${bestRun}, expected ~${expectedRun.toFixed(0)})`);
+    }
+  }
 });
 
 test('HORSE ANIMATOR: graze/headLow never render while the horse is moving', () => {

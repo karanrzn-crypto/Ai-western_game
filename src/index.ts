@@ -125,6 +125,11 @@ export { HorseController, mountEnterCameraMode } from './horse/HorseController.j
 export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent } from './horse/HorseController.js';
 export { HorsePersistence, validateHorseSave, HORSE_SAVE_KEY } from './horse/HorsePersistence.js';
 export type { HorseSaveData, HorsePersistenceOptions } from './horse/HorsePersistence.js';
+export {
+  buildMountTimeline, mountRootPose, poseMountRider, applyRiderPose,
+  mountSafeRadius, MOUNT_STAND, MOUNT_SEAT_QUATERNION,
+} from './horse/MountChoreography.js';
+export type { MountTimeline, MountStartState, MountJoints, SeatPose } from './horse/MountChoreography.js';
 
 // --- Config & migrations & utils ---------------------------------------
 export { getConfig, configure, resetConfig } from './config/GameConfig.js';

@@ -7,69 +7,86 @@
  * is on +X.
  *
  * Identity: a slim western riding quarter-horse, bay coat with a dark
- * blaze, black mane/tail, leather saddle with brass fittings. ~2.5m to the
- * ear tips, ~2.4m nose-to-tail — big enough to read as a horse next to the
- * 1.83m Ranger without dwarfing him, and deliberately LEAN: a narrow neck,
- * a shallow chest and a slim barrel (a riding horse, not a draft animal).
+ * blaze, black mane/tail, leather saddle with brass fittings — big enough
+ * to read as a horse next to the 1.83m Ranger without dwarfing him, and
+ * deliberately LEAN: a narrow neck, a shallow chest and a slim barrel (a
+ * riding horse, not a draft animal).
+ *
+ * SCALE SYSTEM (strict revision §6): HORSE_SCALE is the ONE authoritative
+ * size multiplier for the whole animal. Every length metric below is
+ * expressed as (reference value × HORSE_SCALE), and every dependent system
+ * derives from these constants — the model build (HorseModel), the saddle
+ * stack, the rider socket height, the physics capsule, the mount
+ * choreography and the riding camera. NOTHING may scale horse.root after
+ * the fact (that breaks sockets/collision/mount solving). The gait STRIDE
+ * lengths scale too (a smaller animal covers less ground per footfall), so
+ * the leg-cycle rate = speed / stride stays physically consistent; gait
+ * SPEEDS are gameplay tuning and stay unchanged.
  */
+export const HORSE_SCALE = 0.84;
+
+/** Reference dimensions at scale 1 → all multiplied by HORSE_SCALE. */
 export const HORSE_PROPORTIONS = {
-  /** Total height to the ear tips. */
-  totalHeight: 2.5,
-  /** Nose-to-tail body length (torso only, head/tail extra). */
-  bodyLength: 1.55,
+  scale: HORSE_SCALE,
+  /** Total height to the ear tips: 2.5 × 0.84 = 2.10m. */
+  totalHeight: 2.5 * HORSE_SCALE,
+  /** Nose-to-tail body length (torso only, head/tail extra): 1.30m. */
+  bodyLength: 1.55 * HORSE_SCALE,
   /** Slim riding-horse barrel — visually distinct from a draft horse. */
-  bodyWidth: 0.64,
-  bodyHeight: 0.78,
-  /** Torso center height above the ground (feet at y=0). */
-  bodyCenterY: 1.32,
+  bodyWidth: 0.64 * HORSE_SCALE,
+  bodyHeight: 0.78 * HORSE_SCALE,
+  /** Torso center height above the ground (feet at y=0): 1.11m. */
+  bodyCenterY: 1.32 * HORSE_SCALE,
   // --- Legs (front pair slightly longer than the hind pair) ----------------
-  frontLegY: 1.26,
-  hindLegY: 1.3,
-  upperLeg: 0.62,
-  lowerLeg: 0.52,
-  hoofHeight: 0.14,
+  frontLegY: 1.26 * HORSE_SCALE,
+  hindLegY: 1.3 * HORSE_SCALE,
+  upperLeg: 0.62 * HORSE_SCALE,
+  lowerLeg: 0.52 * HORSE_SCALE,
+  hoofHeight: 0.14 * HORSE_SCALE,
   /** Half distance between left/right legs (tucked under the slim barrel). */
-  legHalfWidth: 0.23,
+  legHalfWidth: 0.23 * HORSE_SCALE,
   /** Front legs at -Z, hind legs at +Z (relative to the torso center). */
-  frontLegZ: -0.52,
-  hindLegZ: 0.55,
+  frontLegZ: -0.52 * HORSE_SCALE,
+  hindLegZ: 0.55 * HORSE_SCALE,
   // --- Neck & head ----------------------------------------------------------
   /** Neck base on the torso front-top. */
-  neckBaseY: 1.62,
-  neckBaseZ: -0.72,
-  neckLength: 0.62,
-  headY: 2.12,
-  headLength: 0.62,
-  headWidth: 0.26,
-  earHeight: 0.16,
+  neckBaseY: 1.62 * HORSE_SCALE,
+  neckBaseZ: -0.72 * HORSE_SCALE,
+  neckLength: 0.62 * HORSE_SCALE,
+  headY: 2.12 * HORSE_SCALE,
+  headLength: 0.62 * HORSE_SCALE,
+  headWidth: 0.26 * HORSE_SCALE,
+  earHeight: 0.16 * HORSE_SCALE,
   // --- Tail -----------------------------------------------------------------
-  tailBaseY: 1.5,
-  tailBaseZ: 0.82,
-  tailLength: 0.85,
+  tailBaseY: 1.5 * HORSE_SCALE,
+  tailBaseZ: 0.82 * HORSE_SCALE,
+  tailLength: 0.85 * HORSE_SCALE,
   // --- Rider socket ----------------------------------------------------------
   /**
-   * Saddle seat top surface (rider sits on this). Must sit ABOVE the barrel
-   * top (bodyCenterY + bodyHeight/2 = 1.71) — the whole saddle stack (blanket
-   * → skirt → seat) lives between 1.695 and this line, so nothing sinks into
-   * the horse (revision issue 2).
+   * Saddle seat top surface (rider sits on this): 1.54m — the barrel top is
+   * bodyCenterY + bodyHeight/2 = 1.44m, and the whole saddle stack (blanket
+   * → skirt → seat) lives between that line and here, so nothing sinks into
+   * the horse. The seated 1.83m Ranger's back now reads at his chest/waist
+   * height, like a real riding horse.
    */
-  saddleTopY: 1.83,
+  saddleTopY: 1.83 * HORSE_SCALE,
   /**
-   * Stirrup-tread reference height (tread top = boot bottom). Solved against
-   * the seated leg chain: pelvis on the seat (hips 1.92) + thigh 63° forward,
-   * knee 83° flexed, 37° outward splay drops the boot bottoms exactly here,
-   * so the boots rest in the stirrups with the knees just outside the barrel
-   * (revision issue 4 — verified by live joint probes in the browser).
+   * Stirrup-tread reference height (tread top = boot bottom): 1.046m.
+   * Derived from the SOLVED seated leg chain against this scaled geometry —
+   * see MountChoreography.applyRiderPose and scripts/mount-solver.mjs (the
+   * solver verifies pelvis-on-seat / boots-on-treads / knees-outside for
+   * every shipped constant).
    */
-  riderFeetY: 1.245,
+  riderFeetY: 1.245 * HORSE_SCALE,
   /** Rider root sits slightly behind the torso center, on the saddle. */
-  riderZ: 0.08,
+  riderZ: 0.08 * HORSE_SCALE,
   // --- Physics capsule --------------------------------------------------------
   /** Collision capsule radius (body half-width + mane margin). */
-  collisionRadius: 0.55,
+  collisionRadius: 0.55 * HORSE_SCALE,
   /** Collision capsule height above the feet. */
-  collisionHeight: 1.9,
-  /** Step-up limit (matches the player's 0.35 + a small hoof margin). */
+  collisionHeight: 1.9 * HORSE_SCALE,
+  /** Step-up limit (matches the player's 0.35 + a small hoof margin).
+   *  Gameplay ability — deliberately NOT scaled. */
   stepHeight: 0.4,
 } as const;
 
@@ -77,24 +94,25 @@ export const HORSE_PROPORTIONS = {
 export type HorseGait = 'idle' | 'walk' | 'trot' | 'canter' | 'gallop';
 
 export interface GaitSpec {
-  /** Steady-state speed (m/s). */
+  /** Steady-state speed (m/s) — gameplay tuning, NOT scaled. */
   speed: number;
-  /** Acceleration toward this gait's speed (m/s²). */
+  /** Acceleration toward this gait's speed (m/s²) — not scaled. */
   acceleration: number;
-  /** Ground stride length (m) — drives the leg-cycle rate = speed / stride. */
+  /** Ground stride length (m) — scales with the animal (drives the
+   *  leg-cycle rate = speed / stride). */
   stride: number;
-  /** Leg swing amplitude (rad). */
+  /** Leg swing amplitude (rad) — angular, scale-invariant. */
   swing: number;
-  /** Body bob amplitude (m). */
+  /** Body bob amplitude (m) — scales with the animal. */
   bob: number;
 }
 
 export const HORSE_GAITS: Record<HorseGait, GaitSpec> = {
   idle: { speed: 0, acceleration: 0, stride: 1, swing: 0, bob: 0 },
-  walk: { speed: 1.7, acceleration: 2.6, stride: 1.7, swing: 0.4, bob: 0.018 },
-  trot: { speed: 4.2, acceleration: 3.1, stride: 2.8, swing: 0.56, bob: 0.042 },
-  canter: { speed: 7.0, acceleration: 3.6, stride: 3.8, swing: 0.72, bob: 0.05 },
-  gallop: { speed: 11.5, acceleration: 4.2, stride: 4.9, swing: 0.95, bob: 0.085 },
+  walk: { speed: 1.7, acceleration: 2.6, stride: 1.7 * HORSE_SCALE, swing: 0.4, bob: 0.018 * HORSE_SCALE },
+  trot: { speed: 4.2, acceleration: 3.1, stride: 2.8 * HORSE_SCALE, swing: 0.56, bob: 0.042 * HORSE_SCALE },
+  canter: { speed: 7.0, acceleration: 3.6, stride: 3.8 * HORSE_SCALE, swing: 0.72, bob: 0.05 * HORSE_SCALE },
+  gallop: { speed: 11.5, acceleration: 4.2, stride: 4.9 * HORSE_SCALE, swing: 0.95, bob: 0.085 * HORSE_SCALE },
 };
 
 /** Reverse crawl — far slower than any forward gait (spec §4). */
@@ -134,7 +152,8 @@ export const HORSE_STAMINA = {
 
 /** AI tuning (distances in meters, timers in seconds).
  *  COMMAND MODEL note: there are NO follow distances — the horse never
- *  autonomously follows the player (controls revision §1). */
+ *  autonomously follows the player (controls revision §1). AI distances are
+ *  PLAYER-space gameplay radii — deliberately NOT scaled. */
 export const HORSE_AI = {
   /** Summon arrives at this distance. */
   summonArrive: 3.0,

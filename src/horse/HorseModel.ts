@@ -12,12 +12,20 @@
  *
  * Face convention: -Z is forward (head), +Z is the tail — identical to the
  * character and the player controller.
+ *
+ * SCALE SYSTEM (strict revision §6): every hand-coded length in this file is
+ * expressed as (reference length × HORSE_SCALE) via the local `L()`
+ * multiplier — proportions NEVER drift from HorseProportions, and the
+ * rider/saddle/socket/collision systems all read the same scaled metrics.
  */
 import * as THREE from 'three';
 import { HORSE_PROPORTIONS as P } from './HorseProportions.js';
 
 /** Distance (m) beyond which micro-detail meshes are hidden (LOD switch). */
 export const HORSE_DETAIL_DISTANCE = 22;
+
+/** Local length multiplier — the ONE gate every model dimension flows through. */
+const L = (v: number): number => v * P.scale;
 
 export interface HorseMaterials {
   coat: THREE.MeshStandardMaterial;
@@ -98,12 +106,14 @@ export function createHorseModel(): HorseModel {
     w: number, h: number, d: number,
     x = 0, y = 0, z = 0,
     detail = false,
+    name = '',
   ): THREE.Mesh => {
     const geometry = new THREE.BoxGeometry(w, h, d);
     geometries.push(geometry);
     const m = new THREE.Mesh(geometry, material);
     m.position.set(x, y, z);
     m.castShadow = true;
+    if (name) m.name = name;
     parent.add(m);
     if (detail) detailParts.push(m);
     return m;
@@ -115,12 +125,14 @@ export function createHorseModel(): HorseModel {
     x = 0, y = 0, z = 0,
     detail = false,
     segments = 9,
+    name = '',
   ): THREE.Mesh => {
     const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments);
     geometries.push(geometry);
     const m = new THREE.Mesh(geometry, material);
     m.position.set(x, y, z);
     m.castShadow = true;
+    if (name) m.name = name;
     parent.add(m);
     if (detail) detailParts.push(m);
     return m;
@@ -130,9 +142,9 @@ export function createHorseModel(): HorseModel {
   // `body` is the whole-torso joint (bob / pitch / roll of the barrel).
   const body = group('body', root, 0, P.bodyCenterY, 0);
   const neck = group('neck', root, 0, P.neckBaseY, P.neckBaseZ);
-  const head = group('head', neck, 0, P.neckLength, -0.12);
-  const earL = group('earL', head, -0.09, 0.14, 0.02);
-  const earR = group('earR', head, 0.09, 0.14, 0.02);
+  const head = group('head', neck, 0, L(0.62), L(-0.12));
+  const earL = group('earL', head, L(-0.09), L(0.14), L(0.02));
+  const earR = group('earR', head, L(0.09), L(0.14), L(0.02));
   const tail = group('tail', root, 0, P.tailBaseY, P.tailBaseZ);
   const legFL = group('legFL', root, -P.legHalfWidth, P.frontLegY, P.frontLegZ);
   const legFR = group('legFR', root, P.legHalfWidth, P.frontLegY, P.frontLegZ);
@@ -148,88 +160,88 @@ export function createHorseModel(): HorseModel {
   // A tapered chest → rounded hindquarters read, built from 3 boxes. The
   // overlay masses stay BARELY wider than the barrel (a lean riding horse,
   // not a draft animal) — the slim silhouette lives in these multipliers.
-  mesh(body, materials.coat, P.bodyWidth, P.bodyHeight * 0.94, 0.7, 0, 0.02, -0.42);   // chest
-  mesh(body, materials.coat, P.bodyWidth, P.bodyHeight, 0.62, 0, 0, 0.12);             // barrel
-  mesh(body, materials.coat, P.bodyWidth * 0.96, P.bodyHeight * 0.92, 0.5, 0, 0.03, 0.58); // hindquarters
+  mesh(body, materials.coat, P.bodyWidth, P.bodyHeight * 0.94, L(0.7), 0, L(0.02), L(-0.42), false, 'chest');   // chest
+  mesh(body, materials.coat, P.bodyWidth, P.bodyHeight, L(0.62), 0, 0, L(0.12), false, 'barrel');             // barrel
+  mesh(body, materials.coat, P.bodyWidth * 0.96, P.bodyHeight * 0.92, L(0.5), 0, L(0.03), L(0.58), false, 'hindquarters'); // hindquarters
   // Belly shading + shoulder/haunch muscle masses.
-  mesh(body, materials.coatDark, P.bodyWidth * 1.0, 0.16, 1.2, 0, -P.bodyHeight * 0.44, 0.05);
-  mesh(body, materials.coat, P.bodyWidth * 1.03, 0.3, 0.32, 0, 0.1, -0.5);
-  mesh(body, materials.coat, P.bodyWidth * 1.02, 0.32, 0.34, 0, 0.12, 0.62);
+  mesh(body, materials.coatDark, P.bodyWidth * 1.0, L(0.16), L(1.2), 0, -P.bodyHeight * 0.44, L(0.05), false, 'belly-shade');
+  mesh(body, materials.coat, P.bodyWidth * 1.03, L(0.3), L(0.32), 0, L(0.1), L(-0.5), false, 'shoulder-mass');
+  mesh(body, materials.coat, P.bodyWidth * 1.02, L(0.32), L(0.34), 0, L(0.12), L(0.62), false, 'haunch-mass');
 
   // --- Western saddle (rigid — never animated) ---------------------------------
-  // Revision issue 2: the saddle must sit ON TOP of the back, never inside it.
-  // The barrel top is at bodyCenterY + bodyHeight/2 = 1.71; the stack is
-  // layered upward from there — every layer's underside either touches the
-  // layer below or is hidden inside the barrel top edge (intentional contact):
+  // The saddle must sit ON TOP of the back, never inside it. The barrel top
+  // is at bodyCenterY + bodyHeight/2; the stack is layered upward from there
+  // — every layer's underside either touches the layer below or is hidden
+  // inside the barrel top edge (intentional contact):
   //
-  //   blanket  1.695..1.735  (drapes 3cm past the barrel sides, rear flaps)
-  //   skirt    1.735..1.785  (leather base slab, slightly narrower)
-  //   seat     1.780..1.830  (top face IS saddleTopY — the rider sits here)
-  //   pommel   1.830..1.940  + horn to ~2.00 (western signature, front rise)
-  //   cantle   1.830..1.960  + brass rim (rear rise, taller than the pommel)
+  //   blanket  barrelTop-0.015 .. +0.025   (drapes past the barrel sides)
+  //   skirt    blanketTop .. +0.075        (leather base slab)
+  //   seat     skirtTop .. saddleTopY      (top face IS saddleTopY)
+  //   pommel   seat .. +0.11  + horn → +0.17 (western signature, front rise)
+  //   cantle   seat .. +0.13  + brass rim  (rear rise, taller than the pommel)
   //
-  // Fenders hang OUTSIDE the barrel silhouette (x ±0.42..0.33 vs barrel 0.32)
-  // and the stirrup tread top lands exactly at the seated boot bottoms
-  // (riderFeetY + 0.0225), so the boots rest in the stirrups (issue 4).
-  const saddleY = P.saddleTopY - P.bodyCenterY; // 0.51 — seat top, body-local
+  // Fenders hang OUTSIDE the barrel silhouette and the stirrup tread top
+  // lands exactly at the seated boot bottoms (riderFeetY + 0.0225·scale).
+  const saddleY = P.saddleTopY - P.bodyCenterY; // seat top, body-local
   // 1) Saddle blanket: slab over the back + short rear side flaps (the flaps
   //    stop well behind the rider's knee zone so nothing can clip the leg).
-  mesh(body, materials.blanket, 0.70, 0.04, 0.70, 0, saddleY - 0.115, 0.05);
-  mesh(body, materials.blanketStripe, 0.70, 0.014, 0.12, 0, saddleY - 0.118, 0.05, true);
-  mesh(body, materials.blanket, 0.02, 0.24, 0.28, -0.335, saddleY - 0.26, 0.24);
-  mesh(body, materials.blanket, 0.02, 0.24, 0.28, 0.335, saddleY - 0.26, 0.24);
+  mesh(body, materials.blanket, L(0.70), L(0.04), L(0.70), 0, saddleY - L(0.115), L(0.05), false, 'blanket');
+  mesh(body, materials.blanketStripe, L(0.70), L(0.014), L(0.12), 0, saddleY - L(0.118), L(0.05), true, 'blanket-stripe');
+  mesh(body, materials.blanket, L(0.02), L(0.24), L(0.28), -L(0.335), saddleY - L(0.26), L(0.24), false, 'blanket-flap-l');
+  mesh(body, materials.blanket, L(0.02), L(0.24), L(0.28), L(0.335), saddleY - L(0.26), L(0.24), false, 'blanket-flap-r');
   // 2) Leather skirt — the wide base slab that carries the whole saddle.
-  mesh(body, materials.leatherDark, 0.69, 0.05, 0.62, 0, saddleY - 0.09, 0.05);
+  mesh(body, materials.leatherDark, L(0.69), L(0.05), L(0.62), 0, saddleY - L(0.09), L(0.05), false, 'skirt');
   // 3) Cinch strap under the belly (reads as a wrapped girth; ends emerge
   //    just past the barrel sides so it visibly wraps, not hides).
-  mesh(body, materials.leatherDark, 0.68, 0.05, 0.09, 0, -P.bodyHeight / 2 - 0.02, 0.06);
+  mesh(body, materials.leatherDark, L(0.68), L(0.05), L(0.09), 0, -P.bodyHeight / 2 - L(0.02), L(0.06), false, 'cinch');
   // 4) Seat pad — top face IS saddleTopY (rider sits here).
-  mesh(body, materials.leather, 0.60, 0.05, 0.52, 0, saddleY - 0.025, 0.06);
+  mesh(body, materials.leather, L(0.60), L(0.05), L(0.52), 0, saddleY - L(0.025), L(0.06), false, 'seat');
   // 5) Pommel fork (front rise) + horn — the western signature.
-  mesh(body, materials.leatherDark, 0.34, 0.11, 0.13, 0, saddleY + 0.055, -0.165);
-  const horn = cylinder(body, materials.leatherDark, 0.028, 0.05, 0.12, 0, saddleY + 0.165, -0.165, false, 8);
+  mesh(body, materials.leatherDark, L(0.34), L(0.11), L(0.13), 0, saddleY + L(0.055), L(-0.165), false, 'pommel');
+  const horn = cylinder(body, materials.leatherDark, L(0.028), L(0.05), L(0.12), 0, saddleY + L(0.165), L(-0.165), false, 8, 'horn');
   horn.rotation.x = -0.22;
-  cylinder(body, materials.brass, 0.032, 0.032, 0.03, 0, saddleY + 0.215, -0.172, true, 8); // horn cap
+  cylinder(body, materials.brass, L(0.032), L(0.032), L(0.03), 0, saddleY + L(0.215), L(-0.172), true, 8, 'horn-cap'); // horn cap
   // 6) Cantle (rear rise) — taller than the pommel, with a brass rim.
-  mesh(body, materials.leatherDark, 0.40, 0.13, 0.11, 0, saddleY + 0.065, 0.30);
-  mesh(body, materials.brass, 0.40, 0.03, 0.115, 0, saddleY + 0.13, 0.30, true);
+  mesh(body, materials.leatherDark, L(0.40), L(0.13), L(0.11), 0, saddleY + L(0.065), L(0.30), false, 'cantle');
+  mesh(body, materials.brass, L(0.40), L(0.03), L(0.115), 0, saddleY + L(0.13), L(0.30), true, 'cantle-rim');
   // 7) Fenders hang from the skirt's outer edge straight down (clear of the
-  //    barrel: x 0.33..0.42 vs barrel 0.32; behind the rider's ankle: z
-  //    0.12..0.17 vs the seated boot's z ≤ 0.115). Each stirrup = two side
-  //    straps straddling the boot (outside both boot faces at ±0.485/±0.30
-  //    vs boot faces ±0.4575/±0.3425) + the tread bar whose TOP face is
-  //    exactly the seated boot bottoms (riderFeetY + 0.0225).
-  mesh(body, materials.leatherDark, 0.09, 0.41, 0.05, -0.375, saddleY - 0.30, 0.145);
-  mesh(body, materials.leatherDark, 0.09, 0.41, 0.05, 0.375, saddleY - 0.30, 0.145);
-  const treadTop = P.riderFeetY + 0.0225 - P.bodyCenterY; // body-local y of the boot bottoms
+  //    barrel; behind the rider's ankle). Each stirrup = two side straps
+  //    straddling the boot + the tread bar whose TOP face is exactly the
+  //    seated boot bottoms (riderFeetY + 0.0225·scale).
+  mesh(body, materials.leatherDark, L(0.09), L(0.41), L(0.05), -L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-l');
+  mesh(body, materials.leatherDark, L(0.09), L(0.41), L(0.05), L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-r');
+  const treadTop = P.riderFeetY + 0.0225 * P.scale - P.bodyCenterY; // body-local y of the boot bottoms
   const stirrupBuild = (side: -1 | 1): void => {
     for (const lx of [0.485, 0.3]) {
-      mesh(body, materials.leatherDark, 0.03, 0.06, 0.05, side * lx, treadTop + 0.0225, 0.10, side === -1);
+      mesh(body, materials.leatherDark, L(0.03), L(0.06), L(0.05), side * L(lx), treadTop + L(0.0225), L(0.10), side === -1, side === -1 ? 'stirrup-strap-l' : 'stirrup-strap-r');
     }
-    const tread = mesh(body, materials.leather, 0.21, 0.045, 0.17, side * 0.395, treadTop - 0.0225, 0.02);
+    const tread = mesh(body, materials.leather, L(0.21), L(0.045), L(0.17), side * L(0.395), treadTop - L(0.0225), L(0.02), false, side === -1 ? 'stirrup-l' : 'stirrup-r');
     tread.name = side === -1 ? 'stirrup-l' : 'stirrup-r';
   };
   stirrupBuild(-1);
   stirrupBuild(1);
-  // 8) Skirt tie strings (detail flavor) at the skirt's side edges.
-  mesh(body, materials.leather, 0.03, 0.12, 0.02, -0.36, saddleY - 0.13, -0.18, true);
-  mesh(body, materials.leather, 0.03, 0.12, 0.02, 0.36, saddleY - 0.13, -0.18, true);
+  // 8) Skirt tie strings (detail flavor) at the skirt's REAR side edges —
+  //    behind the seated thigh's path (the thigh spans z 0..-0.33 body-local).
+  //    Named for the clearance sweep: the folding shin brushes them (loose
+  //    leather, designed contact class).
+  mesh(body, materials.leather, L(0.03), L(0.12), L(0.02), -L(0.36), saddleY - L(0.17), L(-0.3), true, 'skirt-tie-l');
+  mesh(body, materials.leather, L(0.03), L(0.12), L(0.02), L(0.36), saddleY - L(0.17), L(-0.3), true, 'skirt-tie-r');
 
   // Rider socket: the character root attaches here while mounted. Local
   // offset = stirrup-level feet, centered on the seat.
   const riderSocket = group('rider-socket', root, 0, P.riderFeetY, P.riderZ);
 
   // --- Neck, mane, head --------------------------------------------------------
-  // The neck is NOT a single cylinder (revision issue 1): it is a chain of
-  // overlapping elliptical sections along an arched centerline — wide where it
-  // leaves the shoulders/chest, tapering through the middle, narrow at the
-  // poll, with the crest (top line) convex and the throat line concave. The
+  // The neck is NOT a single cylinder: it is a chain of overlapping
+  // elliptical sections along an arched centerline — wide where it leaves
+  // the shoulders/chest, tapering through the middle, narrow at the poll,
+  // with the crest (top line) convex and the throat line concave. The
   // sections overlap so the union reads as ONE continuous form, and every
   // section is a rigid child of the `neck` joint, so all existing neck/head
-  // animation (look, graze, head-low, steering carriage, fear, flinch, death)
-  // keeps working unchanged.
+  // animation (look, graze, head-low, steering carriage, fear, flinch,
+  // death) keeps working unchanged.
   //
-  // Centerline (neck-local; the head joint sits at (0, 0.62, -0.12)):
+  // Centerline (neck-local, scaled; the head joint sits at (0, neckLength, -0.12)):
   //   P0 (-0.06, 0.16)  base — buried inside the withers/chest mass
   //   P1 ( 0.28,-0.02)  mid-lower — climbing forward
   //   P2 ( 0.52,-0.14)  mid-upper
@@ -239,15 +251,15 @@ export function createHorseModel(): HorseModel {
   // horse neck is deeper than it is wide.
   const NECK_X_RATIO = 0.62;
   const neckPath: Array<{ y: number; z: number; zr: number }> = [
-    { y: -0.06, z: 0.16, zr: 0.235 },
-    { y: 0.28, z: -0.02, zr: 0.205 },
-    { y: 0.52, z: -0.14, zr: 0.16 },
-    { y: 0.72, z: -0.15, zr: 0.115 },
+    { y: L(-0.06), z: L(0.16), zr: L(0.235) },
+    { y: L(0.28), z: L(-0.02), zr: L(0.205) },
+    { y: L(0.52), z: L(-0.14), zr: L(0.16) },
+    { y: L(0.72), z: L(-0.15), zr: L(0.115) },
   ];
   const NECK_SEGMENTS: Array<{ from: number; to: number; rFrom: number; rTo: number; detail?: boolean }> = [
-    { from: 0, to: 1, rFrom: 0.235, rTo: 0.19 },
-    { from: 1, to: 2, rFrom: 0.205, rTo: 0.15 },
-    { from: 2, to: 3, rFrom: 0.16, rTo: 0.115 },
+    { from: 0, to: 1, rFrom: L(0.235), rTo: L(0.19) },
+    { from: 1, to: 2, rFrom: L(0.205), rTo: L(0.15) },
+    { from: 2, to: 3, rFrom: L(0.16), rTo: L(0.115) },
   ];
   const up = new THREE.Vector3(0, 1, 0);
   const dir = new THREE.Vector3();
@@ -258,11 +270,11 @@ export function createHorseModel(): HorseModel {
     const length = dir.length();
     dir.normalize();
     // Extend both ends so consecutive sections overlap into a continuous form.
-    const ext = 0.055;
+    const ext = L(0.055);
     const midY = (a.y + b.y) / 2 - dir.y * 0; // midpoint of the chord
     const midZ = (a.z + b.z) / 2;
     const geoLen = length + ext * 2;
-    const cyl = cylinder(neck, materials.coat, seg.rTo, seg.rFrom, geoLen, 0, midY, midZ, seg.detail === true, 11);
+    const cyl = cylinder(neck, materials.coat, seg.rTo, seg.rFrom, geoLen, 0, midY, midZ, seg.detail === true, 11, `neck-${seg.from}`);
     cyl.quaternion.setFromUnitVectors(up, dir);
     cyl.scale.x = NECK_X_RATIO;
     // Recenter the mesh on the true segment midpoint (cylinder() positioned at
@@ -271,7 +283,7 @@ export function createHorseModel(): HorseModel {
   }
   // Chest blend wedge: a flattened section that spreads the base into the
   // shoulders so the widest part of the neck melts into the torso silhouette.
-  const baseBlend = cylinder(neck, materials.coat, 0.19, 0.235, 0.34, 0, -0.115, 0.205, false, 11);
+  const baseBlend = cylinder(neck, materials.coat, L(0.19), L(0.235), L(0.34), 0, L(-0.115), L(0.205), false, 11);
   baseBlend.quaternion.setFromUnitVectors(up, new THREE.Vector3(0, 0.94, 0.34).normalize());
   baseBlend.scale.set(NECK_X_RATIO * 1.12, 1, 1.06);
   // Mane: thin boxes riding the CREST (back-top edge) of the arch, oriented
@@ -290,56 +302,56 @@ export function createHorseModel(): HorseModel {
     const zr = a.zr + (b.zr - a.zr) * local;
     const tuft = mesh(
       neck, materials.mane,
-      0.075, 0.16 + 0.05 * Math.sin(t * Math.PI), 0.1,
-      0, py + dir.y * 0.02 + zr * 0.32, pz + dir.z * 0.02 + zr * 0.88,
+      L(0.075), L(0.16 + 0.05 * Math.sin(t * Math.PI)), L(0.1),
+      0, py + dir.y * L(0.02) + zr * 0.32, pz + dir.z * L(0.02) + zr * 0.88,
       i % 2 === 0,
     );
     tuft.rotation.x = Math.atan2(dir.z, dir.y); // lean along the crest toward the poll
   }
   // Head: skull box + tapered muzzle + jaw.
-  mesh(head, materials.coat, P.headWidth, 0.3, 0.42, 0, 0.04, -0.08);
-  mesh(head, materials.coat, P.headWidth * 0.78, 0.2, 0.3, 0, -0.06, -0.32);
-  mesh(head, materials.muzzle, P.headWidth * 0.6, 0.16, 0.14, 0, -0.09, -0.46);
-  mesh(head, materials.coatDark, 0.18, 0.2, 0.12, 0, -0.08, 0.12); // jaw
+  mesh(head, materials.coat, P.headWidth, L(0.3), L(0.42), 0, L(0.04), L(-0.08));
+  mesh(head, materials.coat, P.headWidth * 0.78, L(0.2), L(0.3), 0, L(-0.06), L(-0.32));
+  mesh(head, materials.muzzle, P.headWidth * 0.6, L(0.16), L(0.14), 0, L(-0.09), L(-0.46));
+  mesh(head, materials.coatDark, L(0.18), L(0.2), L(0.12), 0, L(-0.08), L(0.12)); // jaw
   // Blaze (detail) + eyes + forelock + ears.
-  mesh(head, materials.muzzle, 0.06, 0.26, 0.3, 0, 0.06, -0.29, true);
-  const eyeL = mesh(head, materials.eye, 0.05, 0.05, 0.05, -P.headWidth / 2, 0.08, -0.1, true);
-  const eyeR = mesh(head, materials.eye, 0.05, 0.05, 0.05, P.headWidth / 2, 0.08, -0.1, true);
+  mesh(head, materials.muzzle, L(0.06), L(0.26), L(0.3), 0, L(0.06), L(-0.29), true);
+  const eyeL = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), -P.headWidth / 2, L(0.08), L(-0.1), true);
+  const eyeR = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), P.headWidth / 2, L(0.08), L(-0.1), true);
   eyeL.name = 'eye-l';
   eyeR.name = 'eye-r';
-  mesh(head, materials.mane, 0.16, 0.1, 0.08, 0, 0.19, -0.02, true); // forelock
+  mesh(head, materials.mane, L(0.16), L(0.1), L(0.08), 0, L(0.19), L(-0.02), true); // forelock
   const earBuild = (ear: THREE.Group): void => {
-    const cone = new THREE.CylinderGeometry(0.008, 0.055, P.earHeight, 6);
+    const cone = new THREE.CylinderGeometry(L(0.008), L(0.055), P.earHeight, 6);
     geometries.push(cone);
     const m = new THREE.Mesh(cone, materials.coat);
     m.position.y = P.earHeight / 2;
     m.castShadow = true;
     ear.add(m);
-    const inner = new THREE.CylinderGeometry(0.004, 0.03, P.earHeight * 0.7, 6);
+    const inner = new THREE.CylinderGeometry(L(0.004), L(0.03), P.earHeight * 0.7, 6);
     geometries.push(inner);
     const innerMesh = new THREE.Mesh(inner, materials.muzzle);
-    innerMesh.position.set(0, P.earHeight / 2, 0.03);
+    innerMesh.position.set(0, P.earHeight / 2, L(0.03));
     ear.add(innerMesh);
     detailParts.push(innerMesh);
   };
   earBuild(earL);
   earBuild(earR);
   // Bridle (detail): noseband + cheek strap + rein stubs toward the saddle.
-  mesh(head, materials.leatherDark, P.headWidth * 0.8, 0.05, 0.05, 0, -0.04, -0.4, true);
-  mesh(head, materials.leatherDark, 0.04, 0.3, 0.05, -P.headWidth / 2, 0.0, -0.18, true);
-  mesh(head, materials.leatherDark, 0.04, 0.3, 0.05, P.headWidth / 2, 0.0, -0.18, true);
+  mesh(head, materials.leatherDark, P.headWidth * 0.8, L(0.05), L(0.05), 0, L(-0.04), L(-0.4), true);
+  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), -P.headWidth / 2, L(0.0), L(-0.18), true);
+  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), P.headWidth / 2, L(0.0), L(-0.18), true);
 
   // --- Tail ----------------------------------------------------------------------
-  cylinder(tail, materials.mane, 0.05, 0.09, P.tailLength, 0, -P.tailLength / 2 + 0.05, 0, false, 7);
-  mesh(tail, materials.mane, 0.14, 0.3, 0.08, 0, -0.14, 0.02); // tail root tuft
+  cylinder(tail, materials.mane, L(0.05), L(0.09), P.tailLength, 0, -P.tailLength / 2 + L(0.05), 0, false, 7);
+  mesh(tail, materials.mane, L(0.14), L(0.3), L(0.08), 0, L(-0.14), L(0.02)); // tail root tuft
 
   // --- Legs: upper + lower + hoof --------------------------------------------------
   const buildLeg = (upper: THREE.Group, knee: THREE.Group, dark: boolean): void => {
-    cylinder(upper, dark ? materials.coatDark : materials.coat, 0.095, 0.08, P.upperLeg, 0, -P.upperLeg / 2, 0, false, 8);
+    cylinder(upper, dark ? materials.coatDark : materials.coat, L(0.095), L(0.08), P.upperLeg, 0, -P.upperLeg / 2, 0, false, 8);
     // Chestnut + joint bulge (detail).
-    cylinder(upper, materials.coatDark, 0.1, 0.1, 0.08, 0, -0.04, 0, true, 8);
-    cylinder(knee, dark ? materials.coatDark : materials.coat, 0.072, 0.06, P.lowerLeg, 0, -P.lowerLeg / 2, 0, false, 8);
-    mesh(knee, materials.hoof, 0.12, P.hoofHeight, 0.15, 0, -P.lowerLeg - P.hoofHeight / 2 + 0.02, -0.01);
+    cylinder(upper, materials.coatDark, L(0.1), L(0.1), L(0.08), 0, L(-0.04), 0, true, 8);
+    cylinder(knee, dark ? materials.coatDark : materials.coat, L(0.072), L(0.06), P.lowerLeg, 0, -P.lowerLeg / 2, 0, false, 8);
+    mesh(knee, materials.hoof, L(0.12), P.hoofHeight, L(0.15), 0, -P.lowerLeg - P.hoofHeight / 2 + L(0.02), L(-0.01));
   };
   buildLeg(legFL, kneeFL, true);
   buildLeg(legFR, kneeFR, true);

@@ -72,13 +72,14 @@ const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.m
 const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
 
 /**
- * Leg phase offsets per gait (radians of the shared cycle phase).
+ * Leg phase offsets per gait (radians of the shared cycle phase) — the
+ * FOOTFALL SEQUENCE: offset = when the leg makes CONTACT within the cycle.
  *
- * CONTROLS REVISION §5: the two front legs are NEVER exactly synchronized and
- * every leg owns a DISTINCT offset in every gait — real horses always show a
- * small dissociation inside a footfall pair (~20–40 ms), so a tiny 0.12 rad
- * lag (≈13 ms at trot/canter cycle rates) keeps the gait believable while
- * guaranteeing no two legs ever share a phase.
+ * The offsets are unchanged by this revision (they already encode real
+ * footfall patterns); what changed is the WAVEFORM each leg plays — see
+ * legCycle() below, which renders an explicit
+ * contact → support → lift → swing → plant sequence with a per-gait duty
+ * factor instead of a uniform sine.
  *   walk   — 4-beat lateral sequence: LH, LF, RH, RF (evenly quartered).
  *   trot   — 2-beat diagonal pairs (LF+RH, RF+LH) with a small hind-lag.
  *   canter — 3-beat transverse: RH, LH+RF (diagonal pair, small dissociation),
@@ -91,6 +92,21 @@ export const GAIT_PHASES: Record<Exclude<HorseGait, 'idle'>, { fl: number; fr: n
   trot: { fl: 0, fr: Math.PI, bl: Math.PI + 0.12, br: 0.12 },
   canter: { fl: Math.PI * 4 / 3, fr: Math.PI * 2 / 3 + 0.12, bl: Math.PI * 2 / 3, br: 0 },
   gallop: { fl: Math.PI + 0.45, fr: Math.PI, bl: 0.45, br: 0 },
+};
+
+/**
+ * Duty factor per gait — the FRACTION of the leg cycle the hoof stays on the
+ * ground (the support phase). This is what makes the gaits read differently
+ * beyond their footfall order: a walk spends MOST of the cycle planted
+ * (weight-bearing, long support), a trot splits it evenly between the
+ * diagonal pairs, and canter/gallop are mostly AIR with brief, powerful
+ * contacts and a visible suspension phase where no hoof touches down.
+ */
+const GAIT_DUTY: Record<Exclude<HorseGait, 'idle'>, number> = {
+  walk: 0.62,
+  trot: 0.52,
+  canter: 0.28,
+  gallop: 0.22,
 };
 
 export class HorseAnimator {
@@ -220,6 +236,50 @@ export class HorseAnimator {
     this.flush(dt);
   }
 
+  /**
+   * Leg cycle for the current gait — a FOOTFALL waveform, not a sine.
+   *
+   * Each leg maps its (phase + offset) into a normalized cycle position
+   * u ∈ [0, 1) where u = 0 is the moment of CONTACT. The cycle then runs an
+   * explicit sequence, with the stance share set by the gait's duty factor:
+   *
+   *   contact  u = 0        hoof meets the ground, leg fully protracted
+   *   support  u ∈ [0, D)   hoof PLANTED — the hip sweeps back LINEARLY
+   *                         (a planted hoof moves back at ground speed, so
+   *                         a straight line is the physically correct path;
+   *                         the knee dips to absorb the load then extends)
+   *   lift     u = D        hoof leaves the ground behind the body
+   *   swing    u ∈ (D, 1)   leg protracts with an eased fold-then-extend knee
+   *                         (flexion peaks mid-swing, the leg reaches for
+   *                         the ground as it straightens)
+   *   plant    u → 1        leg extended forward, about to contact
+   *
+   * The hip path is C0-continuous at both transitions (−re at lift-off, +pro
+   * at contact), and the pose smoothing absorbs the residual kinks.
+   */
+  private legCycle(gait: Exclude<HorseGait, 'idle'>, swing: number, offset: number): { hip: number; knee: number } {
+    const u = ((this.phase / (Math.PI * 2) + offset / (Math.PI * 2)) % 1 + 1) % 1;
+    const duty = GAIT_DUTY[gait];
+    const pro = swing * 0.55;   // forward reach at contact
+    const re = swing * 0.45;    // retraction at lift-off
+    if (u < duty) {
+      // SUPPORT: planted hoof sweeps back at ground speed.
+      const k = u / duty;
+      const hip = pro - (pro + re) * k;
+      // Load absorption: a flexion dip right after contact, extending as
+      // the body passes over the planted leg.
+      const absorb = Math.sin(Math.PI * Math.min(1, k * 1.7)) * (1 - k * 0.55);
+      const knee = -0.06 - swing * 0.28 * absorb;
+      return { hip, knee };
+    }
+    // SWING: eased protraction with a fold-then-extend knee.
+    const k = (u - duty) / (1 - duty);
+    const hip = -re + (pro + re) * (k * k * (3 - 2 * k));
+    const fold = Math.sin(Math.PI * Math.min(1, k / 0.62));
+    const knee = -0.06 - swing * (1 + (swing > 0.6 ? 0.3 : 0)) * fold;
+    return { hip, knee };
+  }
+
   /** Leg cycle for the current gait — amplitudes scale with the gait spec. */
   private applyGaitPose(input: HorseAnimatorInput, _speed: number): void {
     const gait: Exclude<HorseGait, 'idle'> = input.gait === 'idle' || input.gait === 'dead' ? 'walk' : input.gait;
@@ -227,25 +287,21 @@ export class HorseAnimator {
     const phases = GAIT_PHASES[gait];
     const phi = this.phase;
     const swing = spec.swing;
-    // Knee flexion follows each leg's swing with a lag (hooves tuck mid-swing).
-    const leg = (offset: number): { hip: number; knee: number } => {
-      const s = Math.sin(phi + offset);
-      const lift = Math.max(0, Math.sin(phi + offset + 2.2));
-      return { hip: swing * s, knee: -(0.08 + swing * 0.85 * lift) };
-    };
-    const fl = leg(phases.fl);
-    const fr = leg(phases.fr);
-    const bl = leg(phases.bl);
-    const br = leg(phases.br);
+    const fl = this.legCycle(gait, swing, phases.fl);
+    const fr = this.legCycle(gait, swing, phases.fr);
+    const bl = this.legCycle(gait, swing, phases.bl);
+    const br = this.legCycle(gait, swing, phases.br);
     const bobPhase = gait === 'trot' ? 2 * phi : phi * 2;
     const bob = spec.bob * (0.5 - 0.5 * Math.cos(bobPhase));
     const gallopPitch = gait === 'gallop' ? 0.1 * Math.sin(phi - 0.6) : gait === 'canter' ? 0.05 * Math.sin(phi) : 0;
     const gallopRoll = gait === 'gallop' ? 0.05 * Math.sin(phi) : 0;
     this.setAll((set) => {
-      set('legFL.rx', fl.hip, 16); set('kneeFL.rx', fl.knee, 16);
-      set('legFR.rx', fr.hip, 16); set('kneeFR.rx', fr.knee, 16);
-      set('legBL.rx', bl.hip, 16); set('kneeBL.rx', bl.knee, 16);
-      set('legBR.rx', br.hip, 16); set('kneeBR.rx', br.knee, 16);
+      // Legs track fast (20/s): the footfall waveform's contact/lift edges
+      // must stay crisp even at the gallop's ~0.36s cycle.
+      set('legFL.rx', fl.hip, 20); set('kneeFL.rx', fl.knee, 20);
+      set('legFR.rx', fr.hip, 20); set('kneeFR.rx', fr.knee, 20);
+      set('legBL.rx', bl.hip, 20); set('kneeBL.rx', bl.knee, 20);
+      set('legBR.rx', br.hip, 20); set('kneeBR.rx', br.knee, 20);
       set('body.posY', HORSE_PROPORTIONS.bodyCenterY - bob, 16);
       set('body.rx', gallopPitch, 12);
       set('body.rz', gallopRoll, 12);

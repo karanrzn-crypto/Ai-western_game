@@ -14,3 +14,8 @@ export { HorseController, mountEnterCameraMode } from './HorseController.js';
 export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent } from './HorseController.js';
 export { HorsePersistence, validateHorseSave, HORSE_SAVE_KEY } from './HorsePersistence.js';
 export type { HorseSaveData, HorsePersistenceOptions } from './HorsePersistence.js';
+export {
+  buildMountTimeline, mountRootPose, poseMountRider, applyRiderPose,
+  mountSafeRadius, MOUNT_STAND, MOUNT_SEAT_QUATERNION,
+} from './MountChoreography.js';
+export type { MountTimeline, MountStartState, MountJoints, SeatPose } from './MountChoreography.js';

@@ -30,7 +30,7 @@ function horseAt(world: CollisionWorld, x = 0, z = 0, yaw = 0): HorseController 
 
 const DT = 1 / 60;
 
-function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false) {
+function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false, vel: { x?: number; z?: number } = {}) {
   return {
     deltaSeconds: DT,
     playerX: playerFeet.x,
@@ -38,6 +38,8 @@ function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false) {
     playerZ: playerFeet.z,
     playerMoving,
     playerSpeed: playerMoving ? 3.4 : 0,
+    playerVelX: vel.x ?? 0,
+    playerVelZ: vel.z ?? 0,
   };
 }
 
@@ -285,7 +287,7 @@ test('HORSE CONTROLLER: follow keeps its distance, never teleports, never bumps'
   let minDistance = Infinity;
   let maxStep = 0;
   for (let i = 0; i < 60 * 12; i += 1) {
-    horse.update(ctx({ x: 0, y: 1.7, z: playerZ }, true));
+    horse.update(ctx({ x: 0, y: 1.7, z: playerZ }, true, { x: 0, z: 3.4 }));
     const p = horse.getPosition();
     minDistance = Math.min(minDistance, Math.hypot(p.x, p.z - playerZ));
     maxStep = Math.max(maxStep, Math.abs(horse.getSpeed()) * DT);
@@ -335,4 +337,66 @@ test('HORSE CONTROLLER: serialize/restore round-trips position, vitals and death
   deadRestored.restore(deadData);
   assert.equal(deadRestored.isDead(), true);
   assert.equal(deadRestored.canMount({ x: 0, y: 1.7, z: 0 }), false);
+});
+
+// --- Revision issue 9: no passive health loss in any non-damage state -------
+
+test('HORSE CONTROLLER: STAY for 10s — health never changes (issue 9)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 0, 0, 0);
+  assert.equal(horse.stay(), true);
+  const start = horse.getSnapshot().health;
+  for (let i = 0; i < 600; i += 1) {
+    // The player drifts far away mid-stay; the horse must neither follow nor
+    // lose health for standing.
+    horse.update(ctx({ x: 0.01 * i, y: 1.7, z: 0 }));
+  }
+  assert.equal(horse.getSnapshot().health, start, 'STAY must not drain health');
+  assert.equal(horse.getAiState(), 'stay');
+});
+
+test('HORSE CONTROLLER: IDLE for 10s — health never changes (issue 9)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 0, 0, 0);
+  const start = horse.getSnapshot().health;
+  for (let i = 0; i < 600; i += 1) horse.update(ctx({ x: 0, y: 1.7, z: 0 }));
+  assert.equal(horse.getSnapshot().health, start, 'IDLE must not drain health');
+});
+
+test('HORSE CONTROLLER: FOLLOW for 10s — health unchanged without collisions (issue 9)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 0, 0, 0);
+  const start = horse.getSnapshot().health;
+  // The player walks away at 3.4 m/s from 0 → the follow engages and keeps its
+  // distance band; an empty world means no collision damage is possible.
+  for (let i = 0; i < 600; i += 1) {
+    const px = 8 + i * 3.4 * DT;
+    horse.update(ctx({ x: Math.min(px, 40), y: 1.7, z: 0 }, true, { x: 3.4, z: 0 }));
+  }
+  assert.equal(horse.getSnapshot().health, start, 'FOLLOW must not drain health without damage events');
+  assert.ok(['follow', 'idle', 'moving'].includes(horse.getAiState()), `AI state sane (${horse.getAiState()})`);
+});
+
+test('HORSE CONTROLLER: only explicit damage lowers health — heal/debug paths intact', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 0, 0, 0);
+  const applied = horse.damage(25, 1, 1);
+  assert.equal(applied, 25);
+  assert.equal(horse.getSnapshot().health, 75);
+  assert.equal(horse.heal(10), 10);
+  assert.equal(horse.getSnapshot().health, 85);
+});
+
+// --- Revision issue 11: the follow condition is direction-aware --------------
+
+test('HORSE CONTROLLER: player approaching the horse never triggers follow (issue 11)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 20, 0, 0);
+  // The player starts 10m away on +X and walks TOWARD the horse (velocity −X,
+  // distance shrinking) — follow must never engage and the horse never moves.
+  for (let i = 0; i < 120; i += 1) {
+    horse.update(ctx({ x: 30 - i * 3.4 * DT, y: 1.7, z: 0 }, true, { x: -3.4, z: 0 }));
+  }
+  assert.ok(horse.getAiState() !== 'follow', `approach must not follow (${horse.getAiState()})`);
+  assert.equal(horse.getPosition().x, 20); // the horse never moved
 });

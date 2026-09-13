@@ -274,11 +274,13 @@ export class HorseAnimator {
     });
 
     if (action === 'graze') {
-      // Neck reaches down, head nibbles at the grass.
+      // Neck reaches DOWN-forward (negative rx swings the neck's top toward
+      // the head side — verified by muzzle-height probes), head nibbles at the
+      // grass. Muzzle lands ≈0.83m — low grazing reach of this rig's chain.
       const reach = easeOut(clamp(actionT / 0.9, 0, 1));
       this.setAll((set) => {
-        set('neck.rx', -0.18 + 1.35 * reach + 0.03 * Math.sin(t * 3.1) * reach, 6);
-        set('head.rx', 0.06 + 0.22 * reach + 0.1 * Math.sin(t * 3.4) * reach, 7);
+        set('neck.rx', -0.18 - 1.72 * reach + 0.03 * Math.sin(t * 3.1) * reach, 6);
+        set('head.rx', 0.06 + 0.34 * reach + 0.1 * Math.sin(t * 3.4) * reach, 7);
         set('head.ry', 0.1 * Math.sin(t * 1.9), 7);
         set('tail.ry', 0.25 * Math.sin(t * 2.2), 8);
         set('tail.rz', 0.1 * reach, 8);
@@ -287,7 +289,7 @@ export class HorseAnimator {
       // Relaxed head droop — resting, not eating (distinct from graze).
       const reach = easeOut(clamp(actionT / 0.8, 0, 1));
       this.setAll((set) => {
-        set('neck.rx', -0.18 + 0.58 * reach + 0.025 * Math.sin(t * 1.1) * reach, 5);
+        set('neck.rx', -0.18 - 0.58 * reach + 0.025 * Math.sin(t * 1.1) * reach, 5);
         set('head.rx', 0.06 + 0.3 * reach + 0.03 * Math.sin(t * 0.8) * reach, 6);
         set('head.ry', 0.09 * Math.sin(t * 0.55 + 1), 6);
         set('earL.rz', -0.1 - 0.18 * reach, 6);
@@ -368,7 +370,7 @@ export class HorseAnimator {
   private applyInjured(input: HorseAnimatorInput): void {
     if (!input.injured) return;
     this.setAll((set) => {
-      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) + 0.4, 5);
+      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) - 0.4, 5);
       set('head.rx', (this.targets.get('head.rx') ?? 0.06) + 0.2, 5);
       set('earL.rz', -0.45, 5);
       set('earR.rz', 0.45, 5);
@@ -385,7 +387,7 @@ export class HorseAnimator {
       set('earL.rz', (this.targets.get('earL.rz') ?? -0.1) - 0.7 * fear, 9);
       set('earR.rz', (this.targets.get('earR.rz') ?? 0.1) + 0.7 * fear, 9);
       set('tail.rx', (this.targets.get('tail.rx') ?? 0.12) - 0.5 * fear, 9);
-      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) - 0.25 * fear, 9);
+      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) + 0.25 * fear, 9);
       set('body.posY', (this.targets.get('body.posY') ?? HORSE_PROPORTIONS.bodyCenterY) + 0.004 * Math.sin(t * 31) * fear, 20);
     });
   }
@@ -396,8 +398,8 @@ export class HorseAnimator {
     const t = clamp(this.flinchTime / FLINCH_DURATION, 0, 1);
     const pulse = Math.sin(t * Math.PI);
     this.setAll((set) => {
-      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) - 0.5 * pulse, 16);
-      set('head.rx', (this.targets.get('head.rx') ?? 0.06) - 0.35 * pulse, 16);
+      set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) + 0.5 * pulse, 16);
+      set('head.rx', (this.targets.get('head.rx') ?? 0.06) + 0.35 * pulse, 16);
       set('body.posY', (this.targets.get('body.posY') ?? HORSE_PROPORTIONS.bodyCenterY) - 0.05 * pulse, 16);
       set('tail.rx', (this.targets.get('tail.rx') ?? 0.12) - 0.3 * pulse, 14);
       set('earL.rz', (this.targets.get('earL.rz') ?? -0.1) - 0.4 * pulse, 14);

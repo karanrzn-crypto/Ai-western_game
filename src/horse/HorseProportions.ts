@@ -47,10 +47,21 @@ export const HORSE_PROPORTIONS = {
   tailBaseZ: 0.82,
   tailLength: 0.85,
   // --- Rider socket ----------------------------------------------------------
-  /** Saddle top surface height (rider sits on this). */
-  saddleTopY: 1.62,
-  /** Rider root (feet) height while mounted — feet hang at stirrup level. */
-  riderFeetY: 1.02,
+  /**
+   * Saddle seat top surface (rider sits on this). Must sit ABOVE the barrel
+   * top (bodyCenterY + bodyHeight/2 = 1.71) — the whole saddle stack (blanket
+   * → skirt → seat) lives between 1.695 and this line, so nothing sinks into
+   * the horse (revision issue 2).
+   */
+  saddleTopY: 1.83,
+  /**
+   * Stirrup-tread reference height (tread top = boot bottom). Solved against
+   * the seated leg chain: pelvis on the seat (hips 1.92) + thigh 63° forward,
+   * knee 83° flexed, 37° outward splay drops the boot bottoms exactly here,
+   * so the boots rest in the stirrups with the knees just outside the barrel
+   * (revision issue 4 — verified by live joint probes in the browser).
+   */
+  riderFeetY: 1.245,
   /** Rider root sits slightly behind the torso center, on the saddle. */
   riderZ: 0.08,
   // --- Physics capsule --------------------------------------------------------

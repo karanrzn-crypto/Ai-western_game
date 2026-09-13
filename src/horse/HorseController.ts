@@ -55,6 +55,10 @@ export interface HorseWorldContext {
   playerMoving: boolean;
   /** Player horizontal speed (m/s) — the follow condition needs it. */
   playerSpeed: number;
+  /** Player horizontal velocity (m/s) — follow requires MOVING AWAY from the
+   *  horse (dot of this with the horse→player direction), revision §11. */
+  playerVelX: number;
+  playerVelZ: number;
 }
 
 export type HorseEvent = 'death' | 'damage' | 'revived' | 'fatigued';
@@ -434,6 +438,8 @@ export class HorseController {
       mounted: false,
       playerMoving: context.playerMoving,
       playerSpeed: context.playerSpeed,
+      playerVelX: context.playerVelX,
+      playerVelZ: context.playerVelZ,
       horseX: this.position.x,
       horseZ: this.position.z,
       playerX: context.playerX,

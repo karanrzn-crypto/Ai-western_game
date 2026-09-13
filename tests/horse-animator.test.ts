@@ -62,14 +62,17 @@ test('HORSE ANIMATOR: graze/headLow never render while the horse is moving', () 
     animator.update({ deltaSeconds: 1 / 60, speed: 0, gait: 'idle', idleAction: 'graze', idleActionTime: i / 60 });
   }
   const grazeNeck = model.joints.neck.rotation.x;
-  assert.ok(grazeNeck > 0.5, 'grazing neck reaches down while standing');
+  // Down-forward convention (negative rx swings the neck's top toward the
+  // head side — the muzzle approaches the ground; positive rx pointed the
+  // muzzle at the sky, which is what the old broken sign produced).
+  assert.ok(grazeNeck < -1.2, `grazing neck reaches down-forward (${grazeNeck.toFixed(2)})`);
   // Moving with the (stale) graze action still active: the neck must stay up —
   // the gait pose owns the neck, the idle action is suppressed entirely.
   for (let i = 0; i < 30; i += 1) {
     animator.update({ deltaSeconds: 1 / 60, speed: 4.2, gait: 'walk', idleAction: 'graze', idleActionTime: 2 });
   }
   assert.ok(model.joints.neck.rotation.x < 0.3, `neck stays up while moving (${model.joints.neck.rotation.x.toFixed(2)})`);
-  assert.ok(model.joints.neck.rotation.x < grazeNeck - 0.3, 'moving neck is nothing like the graze pose');
+  assert.ok(model.joints.neck.rotation.x > grazeNeck + 0.3, 'moving neck is nothing like the graze pose');
   // Same guarantee for headLow.
   for (let i = 0; i < 30; i += 1) {
     animator.update({ deltaSeconds: 1 / 60, speed: 4.2, gait: 'walk', idleAction: 'headLow', idleActionTime: 2 });
@@ -84,7 +87,8 @@ test('HORSE ANIMATOR: damage flinch Jerks the neck, then it settles', () => {
   const restNeck = model.joints.neck.rotation.x;
   animator.notifyDamage();
   animator.update({ deltaSeconds: 0.12, speed: 0, gait: 'idle' });
-  assert.ok(model.joints.neck.rotation.x < restNeck - 0.05, 'flinch must dip/jerk the neck');
+  // The flinch JERKS the head UP-back (positive rx) — the corrected sign.
+  assert.ok(model.joints.neck.rotation.x > restNeck + 0.05, 'flinch must jerk the head up-back');
   for (let i = 0; i < 60; i += 1) animator.update({ deltaSeconds: 1 / 60, speed: 0, gait: 'idle' });
   assert.ok(Math.abs(model.joints.neck.rotation.x - restNeck) < 0.03, 'flinch settles back');
 });

@@ -80,17 +80,44 @@ test('HORSE BRAIN: follow starts far only when the player moves away, stops at t
   // 8m away but the player is STANDING STILL: no auto-follow (§8).
   const still = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 8, playerZ: 0 });
   assert.equal(still.state, 'idle');
-  // The player walks further away (speed > 0.5, distance growing): follow.
-  const far = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 9, playerZ: 0, playerMoving: true, playerSpeed: 3 });
+  // The player walks further away (speed > 0.5, velocity ALONG the horse→player
+  // direction, distance growing): follow (§11).
+  const far = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 9, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
   assert.equal(far.state, 'follow');
   assert.ok(far.targetX !== null && far.targetX < 9); // aims short of the player
   // While following, the player may pause — the horse keeps closing in.
   const pause = brain.update({ ...baseCtx(), horseX: 5, horseZ: 0, playerX: 9, playerZ: 0 });
   assert.equal(pause.state, 'follow');
   // Close: within the keep-distance band the horse settles (idle/waiting).
-  const near = brain.update({ ...baseCtx(), horseX: 2.8, horseZ: 0, playerX: 5.5, playerZ: 0, playerMoving: true, playerSpeed: 3 });
+  const near = brain.update({ ...baseCtx(), horseX: 2.8, horseZ: 0, playerX: 5.5, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
   assert.equal(near.state, 'idle');
   assert.equal(near.targetX, null);
+});
+
+test('HORSE BRAIN: follow direction matrix — away yes, toward/strafe/still never (§11)', () => {
+  const newBrain = () => {
+    const b = new HorseBrain();
+    b.notePosition(0, 0);
+    return b;
+  };
+  // Player walks AWAY (velocity along +X, player at +X): FOLLOW.
+  const away = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
+  assert.equal(away.state, 'follow');
+  // Player walks TOWARD the horse (velocity −X while at +X): NO follow.
+  const toward = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: -3, playerVelZ: 0 });
+  assert.equal(toward.state, 'idle');
+  // Player STRAFES sideways (velocity along Z while far on X): NO follow.
+  const strafe = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 0, playerVelZ: 3 });
+  assert.equal(strafe.state, 'idle');
+  // Player stands still (speed 0): NO follow.
+  const still = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0 });
+  assert.equal(still.state, 'idle');
+  // Diagonal: mostly-away velocity (dot ≈ 0.71 > 0.35): FOLLOW.
+  const diagonalAway = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 2.4, playerVelZ: 1.8 });
+  assert.equal(diagonalAway.state, 'follow');
+  // Diagonal mostly-sideways (dot ≈ 0.17 < 0.35): NO follow.
+  const diagonalSide = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 0.6, playerVelZ: 2.9 });
+  assert.equal(diagonalSide.state, 'idle');
 });
 
 test('HORSE BRAIN: a horse that fled away never auto-returns to a stationary player', () => {
@@ -138,7 +165,9 @@ test('HORSE BRAIN: STAY parks the horse — no follow, no come, idle life in pla
   // Second press releases the stay.
   assert.equal(brain.commandStay(), true);
   assert.equal(brain.isStaying, false);
-  const released = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true, playerSpeed: 4 });
+  // Normal rules resume: the player 25m away WALKING AWAY → follow (§11 gate
+  // needs the away-velocity, which this context now provides).
+  const released = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true, playerSpeed: 4, playerVelX: 4, playerVelZ: 0 });
   assert.equal(released.state, 'follow'); // normal follow logic applies again
 });
 
@@ -219,6 +248,8 @@ function baseCtx() {
     mounted: false,
     playerMoving: false,
     playerSpeed: 0,
+    playerVelX: 0,
+    playerVelZ: 0,
     horseX: 0,
     horseZ: 0,
     playerX: 2,

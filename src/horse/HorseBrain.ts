@@ -50,6 +50,9 @@ export interface HorseBrainContext {
   playerMoving: boolean;
   /** Player horizontal speed (m/s) — the follow condition needs "moving away". */
   playerSpeed: number;
+  /** Player horizontal velocity (m/s) — follow requires MOVING AWAY (§11). */
+  playerVelX: number;
+  playerVelZ: number;
   /** World positions (feet level). */
   horseX: number; horseZ: number;
   playerX: number; playerZ: number;
@@ -273,18 +276,27 @@ export class HorseBrain {
   private decide(context: HorseBrainContext, distToPlayer: number): void {
     if (this.state === 'flee' || this.state === 'come' || this.state === 'ridden' || this.state === 'dead') return;
 
-    // FOLLOW arbitration (§8/§10): only the game's intended follow condition
-    // engages it — the PLAYER is walking away from the horse and the gap is
-    // beyond followStart. A horse that drifted/fled away by itself stays put
-    // (a stationary player never triggers follow; a shrinking gap neither).
+    // FOLLOW arbitration (§8/§10/§11): only the game's intended follow condition
+    // engages it — the PLAYER is walking AWAY from the horse (their velocity
+    // has a positive component along the horse→player direction) and the gap
+    // is beyond followStart. A horse that drifted/fled away by itself stays
+    // put; a stationary, approaching, or side-strafing player never triggers
+    // follow; a shrinking gap neither.
     if (this.state !== 'stay' && this.state !== 'follow'
       && distToPlayer > this.followStart
       && context.playerSpeed > 0.5
       && (this.lastPlayerDistance === null || distToPlayer >= this.lastPlayerDistance - 0.05)) {
-      this.state = 'follow';
-      this.idleAction = 'none';
-      this.stepTarget = null;
-      return;
+      const awayX = (context.playerX - context.horseX) / Math.max(distToPlayer, 1e-4);
+      const awayZ = (context.playerZ - context.horseZ) / Math.max(distToPlayer, 1e-4);
+      const velLen = Math.hypot(context.playerVelX, context.playerVelZ);
+      const movingAway = velLen > 0.25
+        && (context.playerVelX * awayX + context.playerVelZ * awayZ) / velLen > 0.35;
+      if (movingAway) {
+        this.state = 'follow';
+        this.idleAction = 'none';
+        this.stepTarget = null;
+        return;
+      }
     }
     if (this.state === 'follow' && distToPlayer <= this.followStop) {
       this.state = 'idle';

@@ -774,6 +774,9 @@ function setHud(): void {
 
 const clock = new THREE.Clock();
 let previousBodyYaw = playerController.getBodyYaw();
+/** Player velocity tracking for the follow direction test (revision §11). */
+let lastPlayerX = playerController.getPosition().x;
+let lastPlayerZ = playerController.getPosition().z;
 
 /** Shortest signed angular distance of `angle` into (-π, π]. */
 function wrapAngle(angle: number): number {
@@ -813,22 +816,43 @@ const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getColli
 let rideYaw = horse.getYaw();
 let ridePitch = 0;
 // Mount animation: a staged choreography (approach → reach → GRIP the saddle
-// → climb → settle) — the rider visibly grabs the saddle before sitting.
+// → climb → settle) — the rider visibly grabs the horn before sitting.
 // The character root is attached to the saddle socket immediately (the horse
 // stands still for the whole timeline via mount lock), and the animation is
 // driven entirely in SOCKET-LOCAL space, so it stays rock-stable relative to
 // the horse no matter where the mount happens.
+//
+// Revision issue 3: the approach is a POLAR ARC around the saddle axis — the
+// rider always walks AROUND the horse to the left stirrup, never straight
+// through its body, no matter which side the mount was triggered from. The
+// grip phase pins the left hand to the horn (verified by live hand-joint
+// probes), and the climb lifts the rider over the seat with the right leg
+// swinging wide of the cantle.
 const RIDER_SEAT_QUATERNION = new THREE.Quaternion();
-const MOUNT_DURATION = 1.68; // seconds
-// Phase boundaries as FRACTIONS of the timeline (kept normalized so every
-// seg() below compares like with like — seconds: 0.46·1.68≈0.77s reach end,
-// 0.60·1.68≈1.0s grip end, 0.81·1.68≈1.36s climb end).
-const MOUNT_REACH_END = 0.46;   // hand lands on the saddle
-const MOUNT_GRIP_END = 0.6;     // grip held, foot finds the stirrup
-const MOUNT_CLIMB_END = 0.81;   // up and over
-const MOUNT_STAND = new THREE.Vector3(-0.52, -HORSE_PROPORTIONS.riderFeetY, -0.02); // on the ground, left side, beside the seat
+const MOUNT_DURATION = 2.1; // seconds
+// Phase boundaries as FRACTIONS of the timeline:
+const MOUNT_WALK_END = 0.4;   // arrived at the left stirrup, facing the horse
+const MOUNT_REACH_END = 0.58; // left hand lands on the horn
+const MOUNT_GRIP_END = 0.72;  // grip held, left foot finds the stirrup
+const MOUNT_CLIMB_END = 0.9;  // up and over
+const MOUNT_STAND = new THREE.Vector3(-0.45, -HORSE_PROPORTIONS.riderFeetY, -0.02); // on the ground, left side, beside the stirrup
+const MOUNT_STAND_PHI = Math.atan2(MOUNT_STAND.x, MOUNT_STAND.z); // polar angle of the stand point
+const MOUNT_STAND_R = Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z);
 const MOUNT_FACE_HORSE = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 2, 0));
-let mountAnim: { age: number; startPos: THREE.Vector3; startQuat: THREE.Quaternion } | null = null;
+/** Clearance radius around the saddle axis: keeps the walker outside the
+ *  horse's silhouette (head to tail) plus a body margin. */
+const mountSafeRadius = (phi: number): number => {
+  const s = Math.sin(phi) / 0.58;
+  const c = Math.cos(phi) / 1.55;
+  return 1 / Math.sqrt(s * s + c * c) + 0.24;
+};
+let mountAnim: {
+  age: number;
+  startPhi: number;
+  startR: number;
+  startY: number;
+  startQuat: THREE.Quaternion;
+} | null = null;
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 /** Normalized progress through [a, b] with smoothstep easing. */
@@ -868,7 +892,16 @@ function mountHorse(): void {
   riderSocket.attach(character.root);
   // Socket-local starting transform of the character (attach preserved the
   // world pose, so root.position/quaternion now ARE the socket-local values).
-  mountAnim = { age: 0, startPos: character.root.position.clone(), startQuat: character.root.quaternion.clone() };
+  // The approach is polar: remember the START angle/radius so the walk-in can
+  // arc AROUND the horse instead of cutting through it.
+  const p = character.root.position;
+  mountAnim = {
+    age: 0,
+    startPhi: Math.atan2(p.x, p.z),
+    startR: Math.max(Math.hypot(p.x, p.z), MOUNT_STAND_R),
+    startY: p.y,
+    startQuat: character.root.quaternion.clone(),
+  };
   rideYaw = horse.getYaw();
   ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
   ridingCamera.snap();
@@ -906,72 +939,89 @@ function dismountHorse(): void {
   }
 }
 
-/** Static seated pose while mounted (the character animator is paused).
- *  Upright western seat: torso vertical, thighs rolled forward, boots home
- *  in the stirrups, rein hand low and forward, free hand resting on the thigh. */
+/**
+ * Static seated pose while mounted (the character animator is paused).
+ * Numbers SOLVED against the rig chains (see scripts/horse-geometry-probe.mjs):
+ *   pelvis bottom  = 1.05 + 0.87 - 0.09 = 1.83 = saddleTopY  (rests on the seat)
+ *   knee center    = (+-0.375, 1.48) — cylinder edge tangent to the barrel (0.32)
+ *   boot bottom    = 1.072 = stirrup tread top (riderFeetY + 0.0225)
+ *   rein hand      = (-0.20, 1.92, -0.38) — above the withers, ahead of the horn
+ * Thighs roll 37° outward so the knees/boots stay OUTSIDE the barrel; the
+ * right hand rests on the right thigh; the torso keeps an upright seat.
+ */
 function applyRiderPose(): void {
   const j = character.joints;
-  j.hips.position.y = 0.62;
+  j.hips.position.y = 0.675;
   j.hips.rotation.set(-0.05, 0, 0);
   j.spine.rotation.set(0.02, 0, 0);
   j.chest.rotation.set(0, 0, 0);
   j.neck.rotation.set(0, 0, 0);
   j.head.rotation.set(-0.04, 0, 0);
-  j.legL.rotation.set(1.15, 0, -0.32);
-  j.kneeL.rotation.set(-1.35, 0, 0);
+  j.legL.rotation.set(1.1, 0, -0.6435);
+  j.kneeL.rotation.set(-1.45, 0, 0);
   j.footL.rotation.set(0.35, 0, 0);
-  j.legR.rotation.set(1.15, 0, 0.32);
-  j.kneeR.rotation.set(-1.35, 0, 0);
+  j.legR.rotation.set(1.1, 0, 0.6435);
+  j.kneeR.rotation.set(-1.45, 0, 0);
   j.footR.rotation.set(0.35, 0, 0);
-  j.shoulderL.rotation.set(-0.35, 0, -0.2);
-  j.elbowL.rotation.set(-0.35, 0, 0);
-  j.shoulderR.rotation.set(0.55, 0, 0.18);
-  j.elbowR.rotation.set(0.5, 0, 0);
+  j.shoulderL.rotation.set(0.7, 0, 0.07);
+  j.elbowL.rotation.set(0.3, 0, 0);
+  j.shoulderR.rotation.set(0.06, 0, -0.03);
+  j.elbowR.rotation.set(0.15, 0, 0);
 }
 
 /**
  * Mount choreography pose (per frame, while mountAnim is active). Phases:
- *   approach [0, reach)  step in beside the stirrup, face the horse
- *   reach    [0, gripE)  torso leans in, RIGHT arm extends toward the horn
- *   grip     [.., climb) hand visibly holds the saddle, left foot finds the stirrup
- *   climb    [.., settle) root arcs up over the seat, right leg swings over
- *   settle   [.., 1]     ease into the seat, sit-dip, final riding pose
- * All joint targets lerp toward the seated pose so the end of the timeline
- * lands exactly on applyRiderPose's values (no pop at handover).
+ *   approach [0, walk)   polar arc around the horse to the left stirrup
+ *   reach    [walk, reach) stand tall, LEFT arm extends up to the horn
+ *   grip     [reach, grip) hand visibly holds the horn, left foot finds the stirrup
+ *   climb    [grip, climb) root arcs up over the seat, right leg swings over wide
+ *   settle   [climb, 1]    ease into the seat, sit-dip, final riding pose
+ * All joint targets end exactly on applyRiderPose's values (no pop at handover).
  */
 function poseMountRider(t: number): void {
   const j = character.joints;
   const lerp = (a: number, b: number, k: number): number => a + (b - a) * k;
-  const kReach = seg(t, 0.3, MOUNT_REACH_END);
+  const kReach = seg(t, MOUNT_WALK_END * 0.75, MOUNT_REACH_END);
   const kGrip = seg(t, MOUNT_REACH_END, MOUNT_GRIP_END);
   const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
-  const kSettle = seg(t, MOUNT_CLIMB_END, MOUNT_DURATION);
-  // Torso: upright → lean in → straighten on the climb → seated.
-  const lean = lerp(lerp(0, -0.24, kReach), -0.06, Math.max(kClimb, kSettle));
+  const kSettle = seg(t, MOUNT_CLIMB_END, 1);
+  const seated = Math.max(kClimb, kSettle);
+  // Torso: upright walk → lean in toward the horse → straighten on the climb → seated.
+  const lean = lerp(0, -0.26, kReach) * (1 - kSettle) + -0.05 * seated;
   j.hips.rotation.x = lean;
   j.spine.rotation.x = lerp(lean * 0.5, 0.02, kSettle);
   j.chest.rotation.set(0, 0, 0);
-  j.head.rotation.set(lerp(-0.12, -0.04, kSettle), 0, 0);
+  j.head.rotation.set(lerp(-0.1, -0.04, kSettle), 0, 0);
   j.neck.rotation.set(0, 0, 0);
-  // Stand TALL through the approach/reach/grip (hand must reach the seat),
-  // then sink to the seated hip height over the climb + settle.
-  j.hips.position.y = lerpNum(CHARACTER_PROPORTIONS.hipY, 0.62, Math.max(kClimb * 0.4, kSettle));
-  // RIGHT arm — the saddle grip: reaches UP-forward onto the seat/horn during
-  // the reach, visibly holds through the grip/climb, settles into the rein hand.
-  j.shoulderR.rotation.set(lerp(lerp(0.1, 2.0, kReach), 0.55, kSettle), 0, lerp(lerp(0.06, 0.05, kReach), 0.18, kSettle));
-  j.elbowR.rotation.set(lerp(lerp(-0.08, 0.15, kReach), 0.5, kSettle), 0, 0);
-  // LEFT arm — swings up to the pommel for the climb, then rests on the thigh.
-  j.shoulderL.rotation.set(lerp(lerp(0.1, 0.32, kReach), lerp(0.95, -0.35, kClimb), kSettle), 0, lerp(lerp(-0.06, -0.2, kReach), -0.2, kSettle));
-  j.elbowL.rotation.set(lerp(lerp(-0.08, 0.18, kReach), lerp(0.55, -0.35, kClimb), kSettle), 0, 0);
+  // Stand TALL through approach/reach/grip (hand must reach the horn), then
+  // sink to the seated hip height over the climb + settle.
+  j.hips.position.y = lerpNum(CHARACTER_PROPORTIONS.hipY, 0.675, seated);
+  // LEFT arm — the horn grip: raises UP-forward onto the horn during the reach
+  // (the horn sits ~0.5m above the standing shoulder), visibly holds through
+  // the grip, releases along the climb as the body passes the horn, then
+  // settles into the low rein hand.
+  j.shoulderL.rotation.set(
+    lerp(lerp(0.1, 2.9, kReach), 0.7, Math.max(kClimb, kSettle)),
+    0,
+    lerp(lerp(-0.06, 0.05, kReach), 0.07, Math.max(kClimb, kSettle)),
+  );
+  j.elbowL.rotation.set(lerp(lerp(-0.08, 0.25, kReach), 0.3, Math.max(kClimb, kSettle)), 0, 0);
+  // RIGHT arm — swings across the body for balance during the climb, then
+  // rests on the right thigh.
+  j.shoulderR.rotation.set(lerp(0.12, 0.35, kClimb) * (1 - kSettle) + 0.06 * kSettle, 0, lerp(lerp(-0.05, -0.3, kClimb), -0.03, kSettle));
+  j.elbowR.rotation.set(lerp(-0.08, 0.45, kClimb) * (1 - kSettle) + 0.15 * kSettle, 0, 0);
   // LEFT leg — planted until the grip, then the foot finds the stirrup.
-  j.legL.rotation.set(lerp(lerp(0.05, 0.05, kGrip), 1.15, Math.max(kClimb, kSettle)), 0, lerp(-0.06, -0.32, Math.max(kClimb, kSettle)));
-  j.kneeL.rotation.set(lerp(-0.12, -1.35, Math.max(kClimb, kSettle)), 0, 0);
-  j.footL.rotation.set(lerp(0, 0.35, Math.max(kClimb, kSettle)), 0, 0);
-  // RIGHT leg — swings up and over during the climb (high knee, then settles).
-  const swing = Math.max(kClimb, kSettle);
-  j.legR.rotation.set(lerp(lerp(0.05, 1.55, kClimb), 1.15, kSettle), 0, lerp(0.02, 0.32, swing));
-  j.kneeR.rotation.set(lerp(lerp(-0.12, -1.15, kClimb), -1.35, kSettle), 0, 0);
-  j.footR.rotation.set(lerp(0, 0.35, swing), 0, 0);
+  j.legL.rotation.set(lerp(0.05, 1.1, Math.max(kGrip, seated)), 0, lerp(-0.06, -0.6435, Math.max(kGrip, seated)));
+  j.kneeL.rotation.set(lerp(-0.12, -1.45, Math.max(kGrip, seated)), 0, 0);
+  j.footL.rotation.set(lerp(0, 0.35, Math.max(kGrip, seated)), 0, 0);
+  // RIGHT leg — swings up and WIDE over the cantle: the swing peaks early
+  // (by ~75% of the climb) with a strong outward roll so the shin/boot pass
+  // OUTSIDE the hindquarters and cantle (clearance sweep-verified ≥ 7cm),
+  // then folds down into the seated stirrup pose.
+  const kSwing = seg(t, MOUNT_GRIP_END, MOUNT_GRIP_END + 0.75 * (MOUNT_CLIMB_END - MOUNT_GRIP_END));
+  j.legR.rotation.set(lerp(lerp(0.05, 2.04, kSwing), 1.1, kSettle), 0, lerp(lerp(0.02, 0.3, kSwing), 0.6435, kSettle));
+  j.kneeR.rotation.set(lerp(lerp(-0.12, -1.08, kSwing), -1.45, kSettle), 0, 0);
+  j.footR.rotation.set(lerp(0, 0.35, kSettle), 0, 0);
 }
 
 /** Per-frame mount animation driver: root transform + rider pose. */
@@ -979,21 +1029,45 @@ function updateMountAnim(delta: number): void {
   if (!mountAnim) return;
   mountAnim.age += delta;
   const t = Math.min(1, mountAnim.age / MOUNT_DURATION);
-  // Root: walk-in → arc up over the seat → settle with a small sit-dip.
-  const kIn = seg(t, 0, MOUNT_REACH_END * 0.95);
+  const kIn = seg(t, 0, MOUNT_WALK_END);
   const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
-  const kSettle = seg(t, MOUNT_CLIMB_END, MOUNT_DURATION);
-  const climbLift = Math.sin(Math.min(1, Math.max(0, (t - MOUNT_GRIP_END) / (MOUNT_CLIMB_END - MOUNT_GRIP_END))) * Math.PI) * 0.16;
-  const sitDip = Math.sin(kSettle * Math.PI) * -0.03;
-  character.root.position.lerpVectors(mountAnim.startPos, MOUNT_STAND, kIn);
-  if (kClimb > 0) {
-    character.root.position.x = lerpNum(MOUNT_STAND.x, 0, kClimb);
-    character.root.position.z = lerpNum(MOUNT_STAND.z, 0, kClimb);
-    character.root.position.y = lerpNum(MOUNT_STAND.y, 0, kClimb) + climbLift * (1 - kSettle);
+  const kSettle = seg(t, MOUNT_CLIMB_END, 1);
+  if (t < MOUNT_WALK_END) {
+    // POLAR APPROACH: arc around the saddle axis to the left stirrup — the
+    // radius never dips inside the horse's silhouette (mountSafeRadius), so
+    // the rider walks AROUND the body from any starting side.
+    const phi = mountAnim.startPhi + wrapAngle(MOUNT_STAND_PHI - mountAnim.startPhi) * kIn;
+    const safe = mountSafeRadius(phi);
+    const r = Math.max(safe, lerpNum(mountAnim.startR, MOUNT_STAND_R, kIn));
+    character.root.position.set(Math.sin(phi) * r, lerpNum(mountAnim.startY, MOUNT_STAND.y, kIn), Math.cos(phi) * r);
+    // Face the travel direction (sample the path just ahead), with a walk bob.
+    const phi2 = mountAnim.startPhi + wrapAngle(MOUNT_STAND_PHI - mountAnim.startPhi) * Math.min(1, kIn + 0.06);
+    const safe2 = mountSafeRadius(phi2);
+    const r2 = Math.max(safe2, lerpNum(mountAnim.startR, MOUNT_STAND_R, Math.min(1, kIn + 0.06)));
+    const dx = Math.sin(phi2) * r2 - character.root.position.x;
+    const dz = Math.cos(phi2) * r2 - character.root.position.z;
+    if (Math.hypot(dx, dz) > 1e-4) {
+      const faceYaw = Math.atan2(-dx, -dz);
+      character.root.quaternion.setFromEuler(new THREE.Euler(0, faceYaw, 0));
+    }
+    character.root.position.y += Math.abs(Math.sin(kIn * Math.PI * 4)) * 0.035 * (1 - kIn);
+  } else {
+    // At the stirrup: stand facing the horse, then arc up OVER the seat —
+    // the root slides horizontally to the seat center while it lifts, so the
+    // rider finishes centered on the saddle (no end snap). The lift peaks at
+    // 62% of the climb (deliberately before the leg-swing peak) so the swinging
+    // right thigh clears the barrel's top edge while the root is still low.
+    const kSlide = kClimb;
+    const liftPhase = Math.min(1, Math.max(0, (t - MOUNT_GRIP_END) / (MOUNT_CLIMB_END - MOUNT_GRIP_END)));
+    character.root.position.set(
+      lerpNum(MOUNT_STAND.x, 0, kSlide),
+      lerpNum(MOUNT_STAND.y, 0, kClimb) + Math.sin(liftPhase * Math.PI * 0.62 + 0.18) * 0.34 * (1 - kSettle),
+      lerpNum(MOUNT_STAND.z, 0, kSlide),
+    );
+    character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, kClimb + (kSettle - kClimb) * 0.5);
+    const sitDip = Math.sin(kSettle * Math.PI) * -0.03;
+    character.root.position.y += sitDip;
   }
-  character.root.position.y += sitDip;
-  character.root.quaternion.slerpQuaternions(mountAnim.startQuat, MOUNT_FACE_HORSE, kIn);
-  if (kClimb > 0) character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, kClimb + (kSettle - kClimb) * 0.5);
   poseMountRider(t);
   if (t >= 1) {
     mountAnim = null;
@@ -1165,6 +1239,13 @@ function animate(): void {
   if (!editor.isEditMode() && !creativeActive) {
     const riding = isRiding() && horse.isMounted() ? buildRidingInput() : undefined;
     const playerPos = playerController.getPosition();
+    // Player velocity for the follow condition (revision §11): finite-diff the
+    // position (robust to every controller mode — walking, landing, push-out).
+    const dt = Math.max(delta, 1e-4);
+    const velX = (playerPos.x - lastPlayerX) / dt;
+    const velZ = (playerPos.z - lastPlayerZ) / dt;
+    lastPlayerX = playerPos.x;
+    lastPlayerZ = playerPos.z;
     horse.update({
       deltaSeconds: delta,
       playerX: playerPos.x,
@@ -1172,6 +1253,8 @@ function animate(): void {
       playerZ: playerPos.z,
       playerMoving: !isRiding() && playerController.getHorizontalSpeed() > 0.5,
       playerSpeed: playerController.getHorizontalSpeed(),
+      playerVelX: Number.isFinite(velX) ? velX : 0,
+      playerVelZ: Number.isFinite(velZ) ? velZ : 0,
     }, riding);
     const separation = horse.takePlayerSeparation();
     if (separation && !isRiding()) {

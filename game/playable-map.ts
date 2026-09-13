@@ -30,6 +30,11 @@ import {
   MouseLookController,
   CreativeFlightController,
   findSafeSpawnPosition,
+  createHorseModel,
+  HorseAnimator,
+  HorseController,
+  HorsePersistence,
+  HORSE_PROPORTIONS,
 } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
@@ -310,7 +315,9 @@ function updateEditorHud(): void {
       ? 'EDIT CAMERA'
       : creativeActive
         ? 'CREATIVE FLIGHT'
-        : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
+        : isRiding()
+          ? (playerController.getCameraMode() === 'third_person' ? 'RIDE · THIRD PERSON' : 'RIDE · FIRST PERSON')
+          : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
   }
 }
 
@@ -321,7 +328,11 @@ function updateControlHint(): void {
     hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
-  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · F creative fly · H/J damage/heal (debug) · R respawn · TAB edit';
+  if (isRiding()) {
+    hint.textContent = 'tap W/S = gait up/down · hold W ride · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
+    return;
+  }
+  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · T whistle horse · V camera · F creative fly · H/J damage/heal + B/N horse (debug) · R respawn · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -468,7 +479,9 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
 
     if (!editor.isEditMode()) {
-      // Entering Edit Mode (from Play OR Creative).
+      // Entering Edit Mode (from Play OR Creative). The rider dismounts
+      // first — the editor owns the world, nobody rides during editing.
+      if (isRiding()) dismountHorse();
       // From Creative: stop the flight/input ownership but do NOT reconnect
       // or snap the gameplay camera — Edit Mode inherits the camera exactly
       // where the fly camera left it (same position AND rotation), so the
@@ -499,6 +512,20 @@ window.addEventListener('keydown', (event) => {
   // They are edge actions of InputBindings consumed once per frame in
   // animate() — handling them here as well toggled/applied every action
   // TWICE (the camera toggle cancelled itself out and never switched).
+
+  // Horse whistle + debug vitals — play mode only (in Edit Mode the editor
+  // keeps T for its rotate shortcut, and the world is paused anyway).
+  if (!editor.isEditMode() && !creativeActive) {
+    if (event.code === 'KeyT' && !horse.isMounted()) {
+      if (horse.summon()) showStatusMessage('You whistle — your horse is on its way.');
+      else showStatusMessage(`Whistle ready in ${horse.summonCooldown.toFixed(1)}s`);
+    }
+    if (event.code === 'KeyB') {
+      const p = playerController.getPosition();
+      horse.damage(25, p.x, p.z);
+    }
+    if (event.code === 'KeyN') horse.heal(35);
+  }
 
   if (!editor.isEditMode()) return;
 
@@ -591,7 +618,8 @@ window.addEventListener('pointerup', () => {
 function updatePlayer(delta: number): void {
   // Creative mode: the player is frozen in place — no update means no
   // movement, no gravity and no collision. The fly camera owns the frame.
-  if (editor.isEditMode() || creativeActive) return;
+  // Riding: the player is attached to the saddle — the horse owns the frame.
+  if (editor.isEditMode() || creativeActive || isRiding()) return;
   playerController.update(delta, input.getMoveInput());
 }
 
@@ -609,6 +637,7 @@ function respawn(): void {
 }
 health.on((event) => {
   if (event !== 'died') return;
+  if (isRiding()) dismountHorse(); // never die in the saddle
   playerController.setDead(true);
   characterStates.force('dead');
   respawnCountdown = 2.6;
@@ -678,7 +707,14 @@ function setHud(): void {
   const managed = document.getElementById('stat-count');
   const rendered = document.getElementById('stat-render');
   const time = document.getElementById('time-of-day');
-  if (position) position.textContent = `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
+  const riding = isRiding() || horse.isMounted();
+  if (position) {
+    // While riding the HUD tracks the horse — the rider has no independent
+    // position until dismounting.
+    position.textContent = riding
+      ? `${horse.getPosition().x.toFixed(1)}, ${horse.getPosition().y.toFixed(1)}, ${horse.getPosition().z.toFixed(1)} · riding`
+      : `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
+  }
   if (managed) managed.textContent = String(manager.getObjectCount());
   if (rendered) rendered.textContent = String(adapter.getActiveObjectCount());
   if (time) {
@@ -700,11 +736,265 @@ function setHud(): void {
   }
   if (healthNum) healthNum.textContent = String(Math.ceil(health.current));
   if (staminaNum) staminaNum.textContent = String(Math.ceil(stamina.current));
-  if (stateLabel) stateLabel.textContent = characterStates.current.toUpperCase();
+  if (stateLabel) stateLabel.textContent = riding ? 'RIDING' : characterStates.current.toUpperCase();
+  // Horse panel (Part 3): the player↔horse relationship at a glance.
+  const snap = horse.getSnapshot();
+  const rel = horse.getRelationship();
+  const horseHealthFill = document.getElementById('horse-health-fill') as HTMLDivElement | null;
+  const horseStaminaFill = document.getElementById('horse-stamina-fill') as HTMLDivElement | null;
+  const horseHealthNum = document.getElementById('horse-health-num');
+  const horseStaminaNum = document.getElementById('horse-stamina-num');
+  const horseState = document.getElementById('horse-state');
+  const horseGait = document.getElementById('horse-gait');
+  const horseDist = document.getElementById('horse-dist');
+  if (horseHealthFill) horseHealthFill.style.width = `${(snap.healthRatio * 100).toFixed(0)}%`;
+  if (horseStaminaFill) {
+    horseStaminaFill.style.width = `${(snap.staminaRatio * 100).toFixed(0)}%`;
+    horseStaminaFill.classList.toggle('locked', snap.fatigued);
+  }
+  if (horseHealthNum) horseHealthNum.textContent = String(Math.ceil(snap.health));
+  if (horseStaminaNum) horseStaminaNum.textContent = String(Math.ceil(snap.stamina));
+  if (horseState) horseState.textContent = (rel.player === 'riding' ? 'RIDING' : rel.horse).toUpperCase();
+  if (horseGait) {
+    horseGait.textContent = (rel.player === 'riding' ? snap.targetGait : snap.gait).toUpperCase()
+      + (snap.reversing ? ' · REV' : '')
+      + (snap.fatigued ? ' · TIRED' : '');
+  }
+  if (horseDist) {
+    horseDist.textContent = rel.player === 'riding'
+      ? '0.0m'
+      : `${Math.hypot(snap.position.x - player.x, snap.position.z - player.z).toFixed(1)}m`;
+  }
 }
 
 const clock = new THREE.Clock();
 let previousBodyYaw = playerController.getBodyYaw();
+
+/** Shortest signed angular distance of `angle` into (-π, π]. */
+function wrapAngle(angle: number): number {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+// --- Horse system (Part 3) ------------------------------------------------
+// The player's owned horse: independent movement/AI/vitals, mount & ride,
+// whistle summon, follow behavior, world collision and persistence. The
+// horse is NOT a managed scene object (never selectable/editable/saved by
+// the editor) — it lives beside the scene with its own save slot.
+const horseModel = createHorseModel();
+scene.add(horseModel.root);
+const horseAnimator = new HorseAnimator(horseModel);
+const horsePersistence = new HorsePersistence();
+const horse = new HorseController(collisionWorld, {
+  position: { x: -5, y: 0, z: 9 },
+  yaw: 0.6,
+});
+const riderSocket = horseModel.riderSocket;
+
+// Restore the persisted horse (position/vitals/alive) — before the first
+// sync so a dead horse boots straight into its death pose.
+const savedHorse = horsePersistence.load();
+if (savedHorse) horse.restore(savedHorse);
+
+// Riding camera: the same collision-aware orbit rig, tuned for the higher
+// rider vantage. Only ONE rig drives the camera per frame — the on-foot rig
+// while on foot, this one while mounted.
+const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getCollisionBounds(), {
+  targetHeight: 2.1,
+  crouchTargetHeight: 2.1,
+  defaultDistance: 6.2,
+  minDistance: 1.4,
+  shoulderOffset: 0.55,
+});
+let rideYaw = horse.getYaw();
+let ridePitch = 0;
+// Mount transition: the character root is attached to the saddle socket and
+// eased from its preserved world transform into the seat (0.45s).
+const RIDER_SEAT_QUATERNION = new THREE.Quaternion();
+let mountAnim: { age: number; fromPos: THREE.Vector3; fromQuat: THREE.Quaternion } | null = null;
+
+const horseInteractableUuid = 'horse-owned-rig';
+interactions.register({
+  uuid: horseInteractableUuid,
+  label: 'Mount horse',
+  range: 2.6,
+  getPosition: () => horse.getPosition(),
+  canInteract: () => horse.isAlive() && !horse.isMounted() && horse.getAiState() !== 'flee' && !playerController.isDead(),
+  onInteract: () => mountHorse(),
+});
+
+function isRiding(): boolean {
+  return character.root.parent === riderSocket;
+}
+
+function saveHorseState(force = false): void {
+  if (!force && !horseDirty) return;
+  horsePersistence.save(horse.serialize());
+  horseDirty = false;
+}
+let horseDirty = true;
+let horseSaveTimer = 0;
+let lastHorseSave: ReturnType<HorseController['serialize']> | null = null;
+
+function mountHorse(): void {
+  if (isRiding() || !horse.isAlive() || playerController.isDead()) return;
+  const feet = playerController.getFeetPosition();
+  if (!horse.canMount(feet)) return;
+  playerController.freezeMotion();
+  playerController.setCrouching(false);
+  horse.mount();
+  riderSocket.attach(character.root);
+  mountAnim = { age: 0, fromPos: character.root.position.clone(), fromQuat: character.root.quaternion.clone() };
+  rideYaw = horse.getYaw();
+  ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
+  ridingCamera.snap();
+  updateEditorHud();
+  updateControlHint();
+  saveHorseState(true);
+  showStatusMessage('Riding: tap W/S gait · hold W ride · hold S brake · A/D steer · E dismount');
+}
+
+function dismountHorse(): void {
+  if (isRiding()) {
+    const feet = horse.computeDismountFeet();
+    scene.attach(character.root); // keep the world transform for a beat
+    horse.dismount();
+    // Place the player at the validated spot (left side first). respawnAt
+    // resets motion state and hands the camera back to the gameplay rig.
+    playerController.respawnAt({ x: feet.x, y: feet.y + CHARACTER_PROPORTIONS.eyeHeight, z: feet.z });
+    characterAnimator.notifyLanding(4);
+    mountAnim = null;
+    characterAnimator.reset();
+    characterStates.force('idle');
+    if (playerController.getCameraMode() === 'third_person') thirdPersonCamera.snap();
+    updateEditorHud();
+    updateControlHint();
+    saveHorseState(true);
+    showStatusMessage('Dismounted.');
+  } else {
+    horse.dismount();
+  }
+}
+
+/** Static seated pose while mounted (the character animator is paused). */
+function applyRiderPose(): void {
+  const j = character.joints;
+  j.hips.position.y = 0.62;
+  j.hips.rotation.set(0.5, 0, 0);
+  j.spine.rotation.set(0.1, 0, 0);
+  j.chest.rotation.set(0.05, 0, 0);
+  j.neck.rotation.set(0, 0, 0);
+  j.head.rotation.set(0, 0, 0);
+  j.legL.rotation.set(1.15, 0, -0.32);
+  j.kneeL.rotation.set(-1.35, 0, 0);
+  j.footL.rotation.set(0.35, 0, 0);
+  j.legR.rotation.set(1.15, 0, 0.32);
+  j.kneeR.rotation.set(-1.35, 0, 0);
+  j.footR.rotation.set(0.35, 0, 0);
+  j.shoulderL.rotation.set(-0.5, 0, -0.16);
+  j.elbowL.rotation.set(0.65, 0, 0);
+  j.shoulderR.rotation.set(-0.5, 0, 0.16);
+  j.elbowR.rotation.set(0.65, 0, 0);
+}
+
+function updateRideLook(deltaX: number, deltaY: number): void {
+  const sensitivity = 0.0018;
+  ridePitch = Math.max(-1.25, Math.min(1.25, ridePitch - deltaY * sensitivity));
+  rideYaw -= deltaX * sensitivity;
+}
+
+/** Riding input map (spec §19) — W/S tap = gait ladder, hold = throttle/brake. */
+function buildRidingInput() {
+  return {
+    throttle: input.isDown('forward'),
+    brake: input.isDown('backward'),
+    steer: (input.isDown('left') ? 1 : 0) - (input.isDown('right') ? 1 : 0),
+    tapGaitUp: input.consumePressed('forward'),
+    tapGaitDown: input.consumePressed('backward'),
+  };
+}
+
+function syncRider(delta: number): void {
+  const snap = horse.getSnapshot();
+  if (mountAnim) {
+    mountAnim.age += delta;
+    const t = Math.min(1, mountAnim.age / 0.45);
+    const k = t * t * (3 - 2 * t);
+    character.root.position.lerpVectors(mountAnim.fromPos, new THREE.Vector3(0, 0, 0), k);
+    character.root.quaternion.slerpQuaternions(mountAnim.fromQuat, RIDER_SEAT_QUATERNION, k);
+    if (t >= 1) {
+      mountAnim = null;
+      character.root.position.set(0, 0, 0);
+      character.root.quaternion.set(0, 0, 0, 1);
+      applyRiderPose();
+    }
+  }
+  if (playerController.getCameraMode() === 'third_person') {
+    // Chase-cam: while rolling and not dragging, the camera eases back behind
+    // the horse; RMB can still orbit freely within a wide clamp.
+    if (!mouseLook.isDragging && Math.abs(snap.speed) > 0.5) {
+      rideYaw += wrapAngle(snap.yaw - rideYaw) * Math.min(1, 2.2 * delta);
+    }
+    const offset = wrapAngle(rideYaw - snap.yaw);
+    if (offset > 2.8) rideYaw = snap.yaw + 2.8;
+    else if (offset < -2.8) rideYaw = snap.yaw - 2.8;
+    ridingCamera.update({
+      targetPosition: { x: snap.position.x, y: snap.position.y + 0.55, z: snap.position.z },
+      yaw: rideYaw,
+      pitch: ridePitch,
+      deltaSeconds: delta,
+    });
+  } else {
+    // First person: the eye rides at the rider's head, view = ride yaw/pitch.
+    camera.position.set(
+      snap.position.x + Math.sin(snap.yaw) * HORSE_PROPORTIONS.riderZ,
+      snap.position.y + HORSE_PROPORTIONS.riderFeetY + CHARACTER_PROPORTIONS.eyeHeight,
+      snap.position.z + Math.cos(snap.yaw) * HORSE_PROPORTIONS.riderZ,
+    );
+    camera.rotation.set(ridePitch, rideYaw, 0);
+  }
+  character.setFirstPerson(playerController.getCameraMode() === 'first_person');
+  character.updateLOD(camera.position);
+  const prompt = document.getElementById('interact-prompt');
+  if (prompt) prompt.textContent = '[E] Dismount';
+}
+
+function syncHorse(delta: number): void {
+  const snap = horse.getSnapshot();
+  horseModel.root.position.set(snap.position.x, snap.position.y, snap.position.z);
+  horseModel.root.rotation.y = snap.yaw;
+  horseModel.root.rotation.x = snap.pitch;
+  horseModel.root.rotation.z = snap.roll;
+  horseAnimator.update({
+    deltaSeconds: delta,
+    speed: Math.abs(snap.speed),
+    gait: snap.alive ? snap.gait : 'dead',
+    turnRate: snap.turnRate,
+    fear: snap.fear,
+    injured: snap.injured,
+    mounted: snap.mounted,
+    idleAction: snap.idleAction,
+  });
+  horseModel.updateLOD(camera.position);
+}
+
+// Horse events → animation flinch, rider safety, persistence.
+horse.on((event) => {
+  if (event === 'damage') {
+    horseAnimator.notifyDamage();
+    return;
+  }
+  if (event === 'death') {
+    if (isRiding()) dismountHorse(); // the saddle collapsed under the rider
+    saveHorseState(true);
+    showStatusMessage('Your horse has fallen.');
+  }
+  if (event === 'revived') {
+    saveHorseState(true);
+    showStatusMessage('Your horse is back on its feet.');
+  }
+});
+window.addEventListener('pagehide', () => saveHorseState(true));
+
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   // Right-drag look FIRST: the accumulated pixel delta becomes yaw/pitch
@@ -712,11 +1002,15 @@ function animate(): void {
   const lookDelta = mouseLook.consumeLookDelta();
   if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
     if (creativeActive) creativeFlight.look(lookDelta.x, lookDelta.y);
+    else if (isRiding()) updateRideLook(lookDelta.x, lookDelta.y);
     else playerController.look(lookDelta.x, lookDelta.y);
   }
   updatePlayer(delta);
   // F toggles the Development fly camera (edge action, consumed once).
-  if (input.consumePressed('creativeToggle')) setCreativeMode(!creativeActive);
+  if (input.consumePressed('creativeToggle')) {
+    if (isRiding()) showStatusMessage('Dismount first (E).');
+    else setCreativeMode(!creativeActive);
+  }
   // Edge-triggered play actions (death gates everything but respawn).
   if (creativeActive) {
     // Creative owns the movement keys: discard the play edges so nothing
@@ -728,15 +1022,32 @@ function animate(): void {
     input.consumePressed('debugDamage');
     input.consumePressed('debugHeal');
     input.consumePressed('respawn');
+    input.consumePressed('forward');
+    input.consumePressed('backward');
   } else if (!editor.isEditMode()) {
-    const dead = playerController.isDead();
-    if (!dead && input.consumePressed('jump')) playerController.requestJump();
-    if (!dead && input.consumePressed('crouch')) playerController.toggleCrouch();
-    if (!dead && input.consumePressed('interact') && interactions.tryInteract()) interactHold = 0.5;
-    if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
-    if (!dead && input.consumePressed('debugDamage')) health.damage(30);
-    if (!dead && input.consumePressed('debugHeal')) health.heal(35);
-    if (dead && input.consumePressed('respawn')) respawnCountdown = 0;
+    if (isRiding() && horse.isMounted()) {
+      // Riding: movement keys ARE the horse's reins; the rest is consumed
+      // so nothing leaks into the (paused) player controller.
+      input.consumePressed('jump');
+      input.consumePressed('crouch');
+      input.consumePressed('respawn');
+      if (input.consumePressed('interact')) dismountHorse();
+      if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      if (input.consumePressed('debugDamage')) health.damage(30);
+      if (input.consumePressed('debugHeal')) health.heal(35);
+    } else {
+      const dead = playerController.isDead();
+      // On foot the movement keys are hold-states: drain their edges.
+      input.consumePressed('forward');
+      input.consumePressed('backward');
+      if (!dead && input.consumePressed('jump')) playerController.requestJump();
+      if (!dead && input.consumePressed('crouch')) playerController.toggleCrouch();
+      if (!dead && input.consumePressed('interact') && interactions.tryInteract()) interactHold = 0.5;
+      if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      if (!dead && input.consumePressed('debugDamage')) health.damage(30);
+      if (!dead && input.consumePressed('debugHeal')) health.heal(35);
+      if (dead && input.consumePressed('respawn')) respawnCountdown = 0;
+    }
   }
   if (respawnCountdown > 0) {
     respawnCountdown -= delta;
@@ -748,6 +1059,40 @@ function animate(): void {
     if (statusMessageTimer <= 0) {
       const element = document.getElementById('status-message');
       if (element) element.textContent = '';
+    }
+  }
+  // Horse world update: AI decisions, gaits, collision. The horse must run
+  // BEFORE the HUD but AFTER the player moved, so its player-overlap push-out
+  // uses this frame's position (spec §14: no hard player↔horse overlap).
+  if (!editor.isEditMode() && !creativeActive) {
+    const riding = isRiding() && horse.isMounted() ? buildRidingInput() : undefined;
+    const playerPos = playerController.getPosition();
+    horse.update({
+      deltaSeconds: delta,
+      playerX: playerPos.x,
+      playerY: playerPos.y,
+      playerZ: playerPos.z,
+      playerMoving: !isRiding() && playerController.getHorizontalSpeed() > 0.5,
+    }, riding);
+    const separation = horse.takePlayerSeparation();
+    if (separation && !isRiding()) {
+      playerController.setPosition({ x: separation.x, y: playerController.getPosition().y, z: separation.z });
+    }
+    // Periodic persistence: save when the horse actually changed (spec §17).
+    horseSaveTimer += delta;
+    if (horseSaveTimer >= 5) {
+      horseSaveTimer = 0;
+      const snap = horse.serialize();
+      const last = lastHorseSave;
+      if (!last
+        || Math.abs(last.position.x - snap.position.x) > 0.5
+        || Math.abs(last.position.z - snap.position.z) > 0.5
+        || Math.ceil(last.health) !== Math.ceil(snap.health)
+        || Math.ceil(last.stamina) !== Math.ceil(snap.stamina)
+        || last.alive !== snap.alive) {
+        lastHorseSave = snap;
+        saveHorseState(true);
+      }
     }
   }
   // Fly the creative camera AFTER the (skipped) player update: Space/Ctrl
@@ -764,9 +1109,16 @@ function animate(): void {
       fast: move.sprint,
     }, camera);
   }
-  syncCharacter(delta, previousBodyYaw);
-  previousBodyYaw = playerController.getBodyYaw();
-  if (!editor.isEditMode()) interactions.update(
+  // Rider and horse sync: while mounted the character root is a child of the
+  // saddle socket (bit-stable relative to the horse) and the riding camera
+  // rig owns the frame; otherwise the normal on-foot sync runs.
+  if (isRiding()) syncRider(delta);
+  else {
+    syncCharacter(delta, previousBodyYaw);
+    previousBodyYaw = playerController.getBodyYaw();
+  }
+  syncHorse(delta);
+  if (!editor.isEditMode() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
   );

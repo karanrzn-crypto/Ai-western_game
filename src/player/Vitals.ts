@@ -86,13 +86,33 @@ export class HealthSystem {
     return this.damage((impactSpeed - this.fallDamageThreshold) * this.fallDamageScale);
   }
 
-  /** Full restore used by the respawn flow. */
-  reset(): void {
-    this.currentHealth = this.maxHealth;
-    const wasDead = this.dead;
-    this.dead = false;
-    this.deathReported = false;
-    if (wasDead) this.emit('respawned', this.currentHealth);
+  /**
+   * Full restore used by the respawn flow. An explicit `value` (save-restore
+   * flows, e.g. the horse's persisted health) clamps into [0, max]; a value
+   * of 0 restores the DEAD state without emitting death events again.
+   */
+  reset(value?: number): void {
+    if (value === undefined) {
+      this.currentHealth = this.maxHealth;
+      const wasDead = this.dead;
+      this.dead = false;
+      this.deathReported = false;
+      if (wasDead) this.emit('respawned', this.currentHealth);
+      return;
+    }
+    this.currentHealth = Math.min(this.maxHealth, Math.max(0, value));
+    this.dead = this.currentHealth <= 0;
+    this.deathReported = this.dead;
+  }
+
+  /**
+   * Restore a persisted DEAD state exactly (no events, no heal): used by
+   * save/load so a dead horse comes back dead after a reload.
+   */
+  restoreDead(): void {
+    this.currentHealth = 0;
+    this.dead = true;
+    this.deathReported = true;
   }
 
   private emit(event: HealthEvent, value: number): void {

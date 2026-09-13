@@ -332,7 +332,7 @@ function updateControlHint(): void {
     hint.textContent = 'tap W/S = gait up/down · hold W ride · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
     return;
   }
-  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · T whistle horse · V camera · F creative fly · H/J damage/heal + B/N horse (debug) · R respawn · TAB edit';
+  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · T come · G stay · V camera · F creative fly · H/J damage/heal + B/N horse (debug) · R respawn · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -513,12 +513,17 @@ window.addEventListener('keydown', (event) => {
   // animate() — handling them here as well toggled/applied every action
   // TWICE (the camera toggle cancelled itself out and never switched).
 
-  // Horse whistle + debug vitals — play mode only (in Edit Mode the editor
-  // keeps T for its rotate shortcut, and the world is paused anyway).
+  // Horse commands (COME / STAY) + debug vitals — play mode only (in Edit
+  // Mode the editor keeps T/G for its rotate shortcuts, and the world is
+  // paused anyway).
   if (!editor.isEditMode() && !creativeActive) {
     if (event.code === 'KeyT' && !horse.isMounted()) {
-      if (horse.summon()) showStatusMessage('You whistle — your horse is on its way.');
+      if (horse.summon()) showStatusMessage('COME — your horse makes its way to you.');
       else showStatusMessage(`Whistle ready in ${horse.summonCooldown.toFixed(1)}s`);
+    }
+    if (event.code === 'KeyG' && !horse.isMounted()) {
+      if (horse.stay()) showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Stay released.');
+      else showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Your horse cannot stay right now.');
     }
     if (event.code === 'KeyB') {
       const p = playerController.getPosition();
@@ -807,10 +812,28 @@ const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getColli
 });
 let rideYaw = horse.getYaw();
 let ridePitch = 0;
-// Mount transition: the character root is attached to the saddle socket and
-// eased from its preserved world transform into the seat (0.45s).
+// Mount animation: a staged choreography (approach → reach → GRIP the saddle
+// → climb → settle) — the rider visibly grabs the saddle before sitting.
+// The character root is attached to the saddle socket immediately (the horse
+// stands still for the whole timeline via mount lock), and the animation is
+// driven entirely in SOCKET-LOCAL space, so it stays rock-stable relative to
+// the horse no matter where the mount happens.
 const RIDER_SEAT_QUATERNION = new THREE.Quaternion();
-let mountAnim: { age: number; fromPos: THREE.Vector3; fromQuat: THREE.Quaternion } | null = null;
+const MOUNT_DURATION = 1.68; // seconds
+// Phase boundaries as FRACTIONS of the timeline (kept normalized so every
+// seg() below compares like with like — seconds: 0.46·1.68≈0.77s reach end,
+// 0.60·1.68≈1.0s grip end, 0.81·1.68≈1.36s climb end).
+const MOUNT_REACH_END = 0.46;   // hand lands on the saddle
+const MOUNT_GRIP_END = 0.6;     // grip held, foot finds the stirrup
+const MOUNT_CLIMB_END = 0.81;   // up and over
+const MOUNT_STAND = new THREE.Vector3(-0.52, -HORSE_PROPORTIONS.riderFeetY, -0.02); // on the ground, left side, beside the seat
+const MOUNT_FACE_HORSE = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 2, 0));
+let mountAnim: { age: number; startPos: THREE.Vector3; startQuat: THREE.Quaternion } | null = null;
+
+const smooth = (t: number): number => t * t * (3 - 2 * t);
+/** Normalized progress through [a, b] with smoothstep easing. */
+const seg = (t: number, a: number, b: number): number => smooth(Math.max(0, Math.min(1, (t - a) / (b - a))));
+const lerpNum = (a: number, b: number, k: number): number => a + (b - a) * k;
 
 const horseInteractableUuid = 'horse-owned-rig';
 interactions.register({
@@ -841,9 +864,11 @@ function mountHorse(): void {
   if (!horse.canMount(feet)) return;
   playerController.freezeMotion();
   playerController.setCrouching(false);
-  horse.mount();
+  horse.mount(MOUNT_DURATION + 0.25);
   riderSocket.attach(character.root);
-  mountAnim = { age: 0, fromPos: character.root.position.clone(), fromQuat: character.root.quaternion.clone() };
+  // Socket-local starting transform of the character (attach preserved the
+  // world pose, so root.position/quaternion now ARE the socket-local values).
+  mountAnim = { age: 0, startPos: character.root.position.clone(), startQuat: character.root.quaternion.clone() };
   rideYaw = horse.getYaw();
   ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
   ridingCamera.snap();
@@ -854,6 +879,7 @@ function mountHorse(): void {
 }
 
 function dismountHorse(): void {
+  if (mountAnim) return; // never yank the rider out of the mount choreography
   if (isRiding()) {
     const feet = horse.computeDismountFeet();
     scene.attach(character.root); // keep the world transform for a beat
@@ -870,30 +896,111 @@ function dismountHorse(): void {
     updateControlHint();
     saveHorseState(true);
     showStatusMessage('Dismounted.');
+    // The interaction system only re-fires its prompt when the TARGET
+    // changes — and the horse was already the target before mounting. Rewrite
+    // the prompt here so "[E] Dismount" can't stick after landing.
+    const prompt = document.getElementById('interact-prompt');
+    if (prompt) prompt.textContent = horse.canMount(playerController.getFeetPosition()) ? '[E] Mount horse' : '';
   } else {
     horse.dismount();
   }
 }
 
-/** Static seated pose while mounted (the character animator is paused). */
+/** Static seated pose while mounted (the character animator is paused).
+ *  Upright western seat: torso vertical, thighs rolled forward, boots home
+ *  in the stirrups, rein hand low and forward, free hand resting on the thigh. */
 function applyRiderPose(): void {
   const j = character.joints;
   j.hips.position.y = 0.62;
-  j.hips.rotation.set(0.5, 0, 0);
-  j.spine.rotation.set(0.1, 0, 0);
-  j.chest.rotation.set(0.05, 0, 0);
+  j.hips.rotation.set(-0.05, 0, 0);
+  j.spine.rotation.set(0.02, 0, 0);
+  j.chest.rotation.set(0, 0, 0);
   j.neck.rotation.set(0, 0, 0);
-  j.head.rotation.set(0, 0, 0);
+  j.head.rotation.set(-0.04, 0, 0);
   j.legL.rotation.set(1.15, 0, -0.32);
   j.kneeL.rotation.set(-1.35, 0, 0);
   j.footL.rotation.set(0.35, 0, 0);
   j.legR.rotation.set(1.15, 0, 0.32);
   j.kneeR.rotation.set(-1.35, 0, 0);
   j.footR.rotation.set(0.35, 0, 0);
-  j.shoulderL.rotation.set(-0.5, 0, -0.16);
-  j.elbowL.rotation.set(0.65, 0, 0);
-  j.shoulderR.rotation.set(-0.5, 0, 0.16);
-  j.elbowR.rotation.set(0.65, 0, 0);
+  j.shoulderL.rotation.set(-0.35, 0, -0.2);
+  j.elbowL.rotation.set(-0.35, 0, 0);
+  j.shoulderR.rotation.set(0.55, 0, 0.18);
+  j.elbowR.rotation.set(0.5, 0, 0);
+}
+
+/**
+ * Mount choreography pose (per frame, while mountAnim is active). Phases:
+ *   approach [0, reach)  step in beside the stirrup, face the horse
+ *   reach    [0, gripE)  torso leans in, RIGHT arm extends toward the horn
+ *   grip     [.., climb) hand visibly holds the saddle, left foot finds the stirrup
+ *   climb    [.., settle) root arcs up over the seat, right leg swings over
+ *   settle   [.., 1]     ease into the seat, sit-dip, final riding pose
+ * All joint targets lerp toward the seated pose so the end of the timeline
+ * lands exactly on applyRiderPose's values (no pop at handover).
+ */
+function poseMountRider(t: number): void {
+  const j = character.joints;
+  const lerp = (a: number, b: number, k: number): number => a + (b - a) * k;
+  const kReach = seg(t, 0.3, MOUNT_REACH_END);
+  const kGrip = seg(t, MOUNT_REACH_END, MOUNT_GRIP_END);
+  const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
+  const kSettle = seg(t, MOUNT_CLIMB_END, MOUNT_DURATION);
+  // Torso: upright → lean in → straighten on the climb → seated.
+  const lean = lerp(lerp(0, -0.24, kReach), -0.06, Math.max(kClimb, kSettle));
+  j.hips.rotation.x = lean;
+  j.spine.rotation.x = lerp(lean * 0.5, 0.02, kSettle);
+  j.chest.rotation.set(0, 0, 0);
+  j.head.rotation.set(lerp(-0.12, -0.04, kSettle), 0, 0);
+  j.neck.rotation.set(0, 0, 0);
+  // Stand TALL through the approach/reach/grip (hand must reach the seat),
+  // then sink to the seated hip height over the climb + settle.
+  j.hips.position.y = lerpNum(CHARACTER_PROPORTIONS.hipY, 0.62, Math.max(kClimb * 0.4, kSettle));
+  // RIGHT arm — the saddle grip: reaches UP-forward onto the seat/horn during
+  // the reach, visibly holds through the grip/climb, settles into the rein hand.
+  j.shoulderR.rotation.set(lerp(lerp(0.1, 2.0, kReach), 0.55, kSettle), 0, lerp(lerp(0.06, 0.05, kReach), 0.18, kSettle));
+  j.elbowR.rotation.set(lerp(lerp(-0.08, 0.15, kReach), 0.5, kSettle), 0, 0);
+  // LEFT arm — swings up to the pommel for the climb, then rests on the thigh.
+  j.shoulderL.rotation.set(lerp(lerp(0.1, 0.32, kReach), lerp(0.95, -0.35, kClimb), kSettle), 0, lerp(lerp(-0.06, -0.2, kReach), -0.2, kSettle));
+  j.elbowL.rotation.set(lerp(lerp(-0.08, 0.18, kReach), lerp(0.55, -0.35, kClimb), kSettle), 0, 0);
+  // LEFT leg — planted until the grip, then the foot finds the stirrup.
+  j.legL.rotation.set(lerp(lerp(0.05, 0.05, kGrip), 1.15, Math.max(kClimb, kSettle)), 0, lerp(-0.06, -0.32, Math.max(kClimb, kSettle)));
+  j.kneeL.rotation.set(lerp(-0.12, -1.35, Math.max(kClimb, kSettle)), 0, 0);
+  j.footL.rotation.set(lerp(0, 0.35, Math.max(kClimb, kSettle)), 0, 0);
+  // RIGHT leg — swings up and over during the climb (high knee, then settles).
+  const swing = Math.max(kClimb, kSettle);
+  j.legR.rotation.set(lerp(lerp(0.05, 1.55, kClimb), 1.15, kSettle), 0, lerp(0.02, 0.32, swing));
+  j.kneeR.rotation.set(lerp(lerp(-0.12, -1.15, kClimb), -1.35, kSettle), 0, 0);
+  j.footR.rotation.set(lerp(0, 0.35, swing), 0, 0);
+}
+
+/** Per-frame mount animation driver: root transform + rider pose. */
+function updateMountAnim(delta: number): void {
+  if (!mountAnim) return;
+  mountAnim.age += delta;
+  const t = Math.min(1, mountAnim.age / MOUNT_DURATION);
+  // Root: walk-in → arc up over the seat → settle with a small sit-dip.
+  const kIn = seg(t, 0, MOUNT_REACH_END * 0.95);
+  const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
+  const kSettle = seg(t, MOUNT_CLIMB_END, MOUNT_DURATION);
+  const climbLift = Math.sin(Math.min(1, Math.max(0, (t - MOUNT_GRIP_END) / (MOUNT_CLIMB_END - MOUNT_GRIP_END))) * Math.PI) * 0.16;
+  const sitDip = Math.sin(kSettle * Math.PI) * -0.03;
+  character.root.position.lerpVectors(mountAnim.startPos, MOUNT_STAND, kIn);
+  if (kClimb > 0) {
+    character.root.position.x = lerpNum(MOUNT_STAND.x, 0, kClimb);
+    character.root.position.z = lerpNum(MOUNT_STAND.z, 0, kClimb);
+    character.root.position.y = lerpNum(MOUNT_STAND.y, 0, kClimb) + climbLift * (1 - kSettle);
+  }
+  character.root.position.y += sitDip;
+  character.root.quaternion.slerpQuaternions(mountAnim.startQuat, MOUNT_FACE_HORSE, kIn);
+  if (kClimb > 0) character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, kClimb + (kSettle - kClimb) * 0.5);
+  poseMountRider(t);
+  if (t >= 1) {
+    mountAnim = null;
+    character.root.position.set(0, 0, 0);
+    character.root.quaternion.copy(RIDER_SEAT_QUATERNION);
+    applyRiderPose();
+  }
 }
 
 function updateRideLook(deltaX: number, deltaY: number): void {
@@ -915,19 +1022,7 @@ function buildRidingInput() {
 
 function syncRider(delta: number): void {
   const snap = horse.getSnapshot();
-  if (mountAnim) {
-    mountAnim.age += delta;
-    const t = Math.min(1, mountAnim.age / 0.45);
-    const k = t * t * (3 - 2 * t);
-    character.root.position.lerpVectors(mountAnim.fromPos, new THREE.Vector3(0, 0, 0), k);
-    character.root.quaternion.slerpQuaternions(mountAnim.fromQuat, RIDER_SEAT_QUATERNION, k);
-    if (t >= 1) {
-      mountAnim = null;
-      character.root.position.set(0, 0, 0);
-      character.root.quaternion.set(0, 0, 0, 1);
-      applyRiderPose();
-    }
-  }
+  updateMountAnim(delta);
   if (playerController.getCameraMode() === 'third_person') {
     // Chase-cam: while rolling and not dragging, the camera eases back behind
     // the horse; RMB can still orbit freely within a wide clamp.
@@ -984,7 +1079,10 @@ horse.on((event) => {
     return;
   }
   if (event === 'death') {
-    if (isRiding()) dismountHorse(); // the saddle collapsed under the rider
+    if (isRiding() || mountAnim) {
+      mountAnim = null; // the saddle collapsed mid-mount — emergency dismount
+      dismountHorse();
+    }
     saveHorseState(true);
     showStatusMessage('Your horse has fallen.');
   }
@@ -1073,6 +1171,7 @@ function animate(): void {
       playerY: playerPos.y,
       playerZ: playerPos.z,
       playerMoving: !isRiding() && playerController.getHorizontalSpeed() > 0.5,
+      playerSpeed: playerController.getHorizontalSpeed(),
     }, riding);
     const separation = horse.takePlayerSeparation();
     if (separation && !isRiding()) {

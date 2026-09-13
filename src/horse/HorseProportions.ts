@@ -6,18 +6,20 @@
  * PlayerController's forward), so the head points to -Z and the left flank
  * is on +X.
  *
- * Identity: a sturdy western quarter-horse, bay coat with a dark blaze,
- * black mane/tail, leather saddle with brass fittings. ~2.5m to the ear
- * tips, ~2.4m nose-to-tail — big enough to read as a horse next to the
- * 1.83m Ranger without dwarfing him.
+ * Identity: a slim western riding quarter-horse, bay coat with a dark
+ * blaze, black mane/tail, leather saddle with brass fittings. ~2.5m to the
+ * ear tips, ~2.4m nose-to-tail — big enough to read as a horse next to the
+ * 1.83m Ranger without dwarfing him, and deliberately LEAN: a narrow neck,
+ * a shallow chest and a slim barrel (a riding horse, not a draft animal).
  */
 export const HORSE_PROPORTIONS = {
   /** Total height to the ear tips. */
   totalHeight: 2.5,
   /** Nose-to-tail body length (torso only, head/tail extra). */
   bodyLength: 1.55,
-  bodyWidth: 0.78,
-  bodyHeight: 0.82,
+  /** Slim riding-horse barrel — visually distinct from a draft horse. */
+  bodyWidth: 0.64,
+  bodyHeight: 0.78,
   /** Torso center height above the ground (feet at y=0). */
   bodyCenterY: 1.32,
   // --- Legs (front pair slightly longer than the hind pair) ----------------
@@ -26,8 +28,8 @@ export const HORSE_PROPORTIONS = {
   upperLeg: 0.62,
   lowerLeg: 0.52,
   hoofHeight: 0.14,
-  /** Half distance between left/right legs. */
-  legHalfWidth: 0.26,
+  /** Half distance between left/right legs (tucked under the slim barrel). */
+  legHalfWidth: 0.23,
   /** Front legs at -Z, hind legs at +Z (relative to the torso center). */
   frontLegZ: -0.52,
   hindLegZ: 0.55,

@@ -37,6 +37,7 @@ function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false) {
     playerY: playerFeet.y,
     playerZ: playerFeet.z,
     playerMoving,
+    playerSpeed: playerMoving ? 3.4 : 0,
   };
 }
 
@@ -108,6 +109,45 @@ test('HORSE CONTROLLER: braking stops faster than natural deceleration', () => {
   const brakeTime = run(true);
   const naturalTime = run(false);
   assert.ok(brakeTime < naturalTime, `brake ${brakeTime.toFixed(2)}s should beat natural ${naturalTime.toFixed(2)}s`);
+});
+
+test('HORSE CONTROLLER: releasing W coasts to a smooth full stop at every gait (no snap, no cruise)', () => {
+  for (const taps of [0, 1, 2, 3]) { // walk, trot, canter, gallop
+    const { world } = buildWorld();
+    const horse = horseAt(world);
+    horse.mount();
+    for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    for (let i = 0; i < taps; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+    // Ride until the selected gait's steady-state speed is reached.
+    const gait = (['walk', 'trot', 'canter', 'gallop'] as const)[taps];
+    for (let i = 0; i < 900 && horse.getSpeed() < HORSE_GAITS[gait].speed - 0.05; i += 1) {
+      horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    }
+    assert.ok(horse.getSpeed() > 1.5, `gait ${gait} should be moving`);
+    // Release W — the very next frame must NOT be an instant stop.
+    horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    assert.ok(horse.getSpeed() > 1.2, 'release keeps momentum (continues briefly)');
+    // Coast: speed decays gradually and monotonically toward exactly zero.
+    let previous = horse.getSpeed();
+    let frames = 0;
+    while (horse.getSpeed() > 0 && frames < 1200) {
+      horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+      assert.ok(horse.getSpeed() <= previous + 1e-9, 'deceleration is monotonic');
+      previous = horse.getSpeed();
+      frames += 1;
+    }
+    assert.equal(horse.getSpeed(), 0);
+    assert.ok(frames > 30, `coast takes time (gait ${gait}: ${frames} frames)`);
+    assert.ok(frames * DT < 8, 'coast does not drag forever');
+    // After stopping: no artificial movement, speed stays exactly zero.
+    const stopped = horse.getPosition();
+    for (let i = 0; i < 120; i += 1) {
+      horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+      assert.equal(horse.getSpeed(), 0);
+    }
+    const after = horse.getPosition();
+    assert.ok(Math.hypot(after.x - stopped.x, after.z - stopped.z) < 1e-6, 'a stopped horse does not drift');
+  }
 });
 
 test('HORSE CONTROLLER: reverse crawls far slower than the walk and steers inverted', () => {

@@ -54,6 +54,29 @@ test('HORSE ANIMATOR: zero speed freezes the phase even in a moving gait', () =>
   assert.equal(animator.getPhase(), phase);
 });
 
+test('HORSE ANIMATOR: graze/headLow never render while the horse is moving', () => {
+  const model = createHorseModel();
+  const animator = new HorseAnimator(model);
+  // Deep graze pose reference (standing): the neck reaches far down.
+  for (let i = 0; i < 90; i += 1) {
+    animator.update({ deltaSeconds: 1 / 60, speed: 0, gait: 'idle', idleAction: 'graze', idleActionTime: i / 60 });
+  }
+  const grazeNeck = model.joints.neck.rotation.x;
+  assert.ok(grazeNeck > 0.5, 'grazing neck reaches down while standing');
+  // Moving with the (stale) graze action still active: the neck must stay up —
+  // the gait pose owns the neck, the idle action is suppressed entirely.
+  for (let i = 0; i < 30; i += 1) {
+    animator.update({ deltaSeconds: 1 / 60, speed: 4.2, gait: 'walk', idleAction: 'graze', idleActionTime: 2 });
+  }
+  assert.ok(model.joints.neck.rotation.x < 0.3, `neck stays up while moving (${model.joints.neck.rotation.x.toFixed(2)})`);
+  assert.ok(model.joints.neck.rotation.x < grazeNeck - 0.3, 'moving neck is nothing like the graze pose');
+  // Same guarantee for headLow.
+  for (let i = 0; i < 30; i += 1) {
+    animator.update({ deltaSeconds: 1 / 60, speed: 4.2, gait: 'walk', idleAction: 'headLow', idleActionTime: 2 });
+  }
+  assert.ok(model.joints.neck.rotation.x < 0.3, 'headLow also suppressed while moving');
+});
+
 test('HORSE ANIMATOR: damage flinch Jerks the neck, then it settles', () => {
   const model = createHorseModel();
   const animator = new HorseAnimator(model);

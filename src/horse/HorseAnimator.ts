@@ -20,7 +20,7 @@
 import type { HorseModel } from './HorseModel.js';
 import { HORSE_GAITS, HORSE_PROPORTIONS, type HorseGait } from './HorseProportions.js';
 
-export type HorseIdleAction = 'none' | 'graze' | 'look' | 'shift';
+export type HorseIdleAction = 'none' | 'graze' | 'look' | 'shift' | 'headLow';
 
 export interface HorseAnimatorInput {
   deltaSeconds: number;
@@ -102,6 +102,10 @@ export class HorseAnimator {
   private tailFlickTimer = 4;
   private tailFlickAge = -1;
   private lastGait: HorseGait | 'dead' = 'idle';
+  /** Shift-action variant (stable per action start — no per-frame re-rolls). */
+  private shiftKind = 0;
+  private shiftSide = 0;
+  private lastActionTime: number | null = null;
 
   constructor(model: HorseModel) {
     this.model = model;
@@ -258,11 +262,15 @@ export class HorseAnimator {
     const action = ridden ? 'none' : input.idleAction ?? 'none';
     const actionT = input.idleActionTime ?? 0;
 
-    // Breathing (chest/ barrel) — always present while alive.
+    // Breathing (chest/ barrel) + a faint, constant head life — always
+    // present while alive and standing (spec §5: the horse never statues).
     this.setAll((set) => {
       set('body.posY', HORSE_PROPORTIONS.bodyCenterY - 0.008 * (0.5 - 0.5 * Math.cos(t * 1.6)), 6);
       set('body.rz', 0.008 * Math.sin(t * 0.8), 6);
       set('neck.rx', -0.18 + 0.02 * Math.sin(t * 1.6 + 0.7), 6);
+      set('neck.ry', 0.035 * Math.sin(t * 0.47 + 2.1), 5);
+      set('head.rx', 0.06 + 0.018 * Math.sin(t * 0.9 + 1.3), 5);
+      set('head.ry', 0.05 * Math.sin(t * 0.31 + 0.4), 5);
     });
 
     if (action === 'graze') {
@@ -275,6 +283,16 @@ export class HorseAnimator {
         set('tail.ry', 0.25 * Math.sin(t * 2.2), 8);
         set('tail.rz', 0.1 * reach, 8);
       });
+    } else if (action === 'headLow') {
+      // Relaxed head droop — resting, not eating (distinct from graze).
+      const reach = easeOut(clamp(actionT / 0.8, 0, 1));
+      this.setAll((set) => {
+        set('neck.rx', -0.18 + 0.58 * reach + 0.025 * Math.sin(t * 1.1) * reach, 5);
+        set('head.rx', 0.06 + 0.3 * reach + 0.03 * Math.sin(t * 0.8) * reach, 6);
+        set('head.ry', 0.09 * Math.sin(t * 0.55 + 1), 6);
+        set('earL.rz', -0.1 - 0.18 * reach, 6);
+        set('earR.rz', 0.1 + 0.18 * reach, 6);
+      });
     } else if (action === 'look') {
       this.setAll((set) => {
         set('neck.ry', 0.3 * Math.sin(t * 0.9), 6);
@@ -284,26 +302,65 @@ export class HorseAnimator {
         set('earR.rz', 0.1 + 0.25 * Math.max(0, Math.sin(t * 2.6 + 2.4)), 8);
       });
     } else if (action === 'shift') {
-      // Weight shifts between the hind legs; a hoof picks up briefly.
-      const w = Math.sin(t * 1.1);
-      this.setAll((set) => {
-        set('body.rz', 0.035 * w, 6);
-        set('body.posY', HORSE_PROPORTIONS.bodyCenterY - 0.012 + 0.008 * w, 6);
-        set('legBL.rx', 0.06 * w, 8);
-        set('legBR.rx', -0.06 * w, 8);
-        set('kneeBL.rx', -0.06 - 0.25 * Math.max(0, w), 8);
-        set('tail.ry', 0.2 * Math.sin(t * 1.7), 8);
-      });
+      // Weight shifts between the legs. Two variants roll per action start:
+      // a hind-pair rock, or one FRONT hoof lifted and repositioned.
+      if (actionT < (this.lastActionTime ?? Infinity)) {
+        this.shiftKind = Math.random() < 0.55 ? 0 : 1;
+        this.shiftSide = Math.random() < 0.5 ? 0 : 1;
+      }
+      this.lastActionTime = actionT;
+      if (this.shiftKind === 0) {
+        const w = Math.sin(t * 1.1);
+        this.setAll((set) => {
+          set('body.rz', 0.035 * w, 6);
+          set('body.posY', HORSE_PROPORTIONS.bodyCenterY - 0.012 + 0.008 * w, 6);
+          set('legBL.rx', 0.06 * w, 8);
+          set('legBR.rx', -0.06 * w, 8);
+          set('kneeBL.rx', -0.06 - 0.25 * Math.max(0, w), 8);
+          set('tail.ry', 0.2 * Math.sin(t * 1.7), 8);
+        });
+      } else {
+        // One front hoof: lift (0–0.45s), hold (0.45–1s), set back down.
+        const liftT = actionT < 0.45 ? easeOut(actionT / 0.45)
+          : actionT < 1 ? 1
+          : Math.max(0, 1 - easeOut(clamp((actionT - 1) / 0.5, 0, 1)));
+        const lift = 0.52 * liftT;
+        const knee = -0.85 * liftT;
+        const front = this.shiftSide === 0
+          ? { leg: 'legFL.rx' as PoseKey, knee: 'kneeFL.rx' as PoseKey, legR: 'legFR.rx' as PoseKey }
+          : { leg: 'legFR.rx' as PoseKey, knee: 'kneeFR.rx' as PoseKey, legR: 'legFL.rx' as PoseKey };
+        this.setAll((set) => {
+          set('body.posY', HORSE_PROPORTIONS.bodyCenterY - 0.006 * liftT, 6);
+          set('body.rz', (this.shiftSide === 0 ? -0.018 : 0.018) * liftT, 6);
+          set(front.leg, lift, 9);
+          set(front.knee, knee, 9);
+          set(front.legR, -0.03 * liftT, 8);
+          set('tail.ry', 0.16 * Math.sin(t * 1.5), 8);
+        });
+      }
     }
   }
 
+  /**
+   * Steering carriage (revision §6): when the horse turns, the neck/head
+   * guide the body through the turn — the head leads slightly more than the
+   * neck, the neck tilts a touch into the lean. All channels are
+   * proportional to the LIVE turn rate (stronger at higher rates), clamped
+   * to subtle values, and eased back to neutral by the base pose targets
+   * (the shared exponential smoothing never pops).
+   */
   private applyTurnLean(input: HorseAnimatorInput): void {
     const turnRate = clamp(input.turnRate ?? 0, -3, 3);
     if (Math.abs(turnRate) < 0.05) return;
     const lean = clamp(-turnRate * 0.06, -0.12, 0.12);
     this.setAll((set) => {
       set('body.rz', (this.targets.get('body.rz') ?? 0) + lean, 8);
+      // Neck yaws into the turn (subtle, clamped ±0.4 rad).
       set('neck.ry', (this.targets.get('neck.ry') ?? 0) + clamp(turnRate * 0.16, -0.4, 0.4), 8);
+      // Head leads a little further (clamped ±0.5 rad).
+      set('head.ry', (this.targets.get('head.ry') ?? 0) + clamp(turnRate * 0.22, -0.5, 0.5), 9);
+      // Slight neck tilt into the lean (clamped ±0.12 rad).
+      set('neck.rz', clamp(turnRate * 0.05, -0.12, 0.12), 7);
     });
   }
 

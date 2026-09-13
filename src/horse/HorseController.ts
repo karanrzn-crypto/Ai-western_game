@@ -53,6 +53,8 @@ export interface HorseWorldContext {
   playerZ: number;
   /** Player is moving on foot (drives follow decisions + idle life). */
   playerMoving: boolean;
+  /** Player horizontal speed (m/s) — the follow condition needs it. */
+  playerSpeed: number;
 }
 
 export type HorseEvent = 'death' | 'damage' | 'revived' | 'fatigued';
@@ -82,7 +84,7 @@ export interface HorseSnapshot {
   aiState: HorseAiState;
   mounted: boolean;
   /** Idle-life action the animator should render right now. */
-  idleAction: 'none' | 'graze' | 'look' | 'shift';
+  idleAction: 'none' | 'graze' | 'look' | 'shift' | 'headLow';
   turnRate: number;
 }
 
@@ -167,17 +169,20 @@ export class HorseController {
   getFear(): number { return this.fear; }
   getTurnRate(): number { return this.lastTurnRate; }
   get brainState(): HorseAiState { return this.brain.current; }
-  get idleAction(): 'none' | 'graze' | 'look' | 'shift' {
+  get idleAction(): 'none' | 'graze' | 'look' | 'shift' | 'headLow' {
     const action = this.brain.idleActionName;
     return action === 'step' ? 'none' : action;
   }
+  /** True while the horse holds the explicit STAY command. */
+  isStaying(): boolean { return this.brain.isStaying; }
 
   /** Spec §15 relationship snapshot — HUD + tests. */
-  getRelationship(): { player: 'on_foot' | 'riding'; horse: 'waiting' | 'following' | 'summoned' | 'moving' | 'fleeing' | 'injured' | 'dead' } {
+  getRelationship(): { player: 'on_foot' | 'riding'; horse: 'waiting' | 'staying' | 'following' | 'summoned' | 'moving' | 'fleeing' | 'injured' | 'dead' } {
     const horse = this.brain.current;
     return {
       player: this.mounted ? 'riding' : 'on_foot',
       horse: horse === 'ridden' ? 'waiting'
+        : horse === 'stay' ? 'staying'
         : horse === 'follow' ? 'following'
         : horse === 'come' ? 'summoned'
         : horse === 'moving' ? 'moving'
@@ -227,11 +232,15 @@ export class HorseController {
     return Math.hypot(dx, dz) <= 2.6;
   }
 
-  /** Take the rider. The caller attaches the character model to the socket. */
-  mount(): void {
+  /**
+   * Take the rider. The caller attaches the character model to the socket and
+   * plays the mount animation; `lockSeconds` keeps the horse standing for the
+   * whole choreography (reach → grip → climb → settle) — it may not walk off.
+   */
+  mount(lockSeconds = 0.45): void {
     if (!this.isAlive() || this.mounted) return;
     this.mounted = true;
-    this.mountLock = 0.45; // horse stands while the rider settles
+    this.mountLock = Math.max(0.45, lockSeconds); // horse stands while the rider settles
     this.brain.force('ridden');
     this.targetGait = 'idle';
     this.speed = 0;
@@ -278,14 +287,20 @@ export class HorseController {
     this.mountLock = 0.3;
   }
 
-  // --- Summon (spec §9) --------------------------------------------------------
+  // --- Summon + stay (spec §9 / revision §9/§10) -------------------------------
 
-  /** Whistle: returns false while the cooldown is still running. */
+  /** COME (whistle): returns false while the cooldown is still running. */
   summon(): boolean {
     if (this.mounted || !this.isAlive()) return false;
     return this.brain.summon();
   }
   get summonCooldown(): number { return this.brain.summonCooldownRemaining; }
+
+  /** STAY command: park here (toggle). False when it cannot obey right now. */
+  stay(): boolean {
+    if (this.mounted || !this.isAlive()) return false;
+    return this.brain.commandStay();
+  }
 
   // --- Damage / fear (spec §6/§13) ----------------------------------------------
 
@@ -359,7 +374,10 @@ export class HorseController {
     this.stamina.update(dt, this.actualGait());
   }
 
-  /** Gait ladder + throttle/brake/reverse while ridden (spec §4/§19). */
+  /** Gait ladder + throttle/brake/reverse while ridden (spec §4/§19).
+   *  Natural momentum contract: W held = accelerate to / hold the selected
+   *  gait; W released = the animal COASTS — natural deceleration to a smooth
+   *  full stop, then standing (no snap, no cruise-hold, no artificial drift). */
   private applyRidingInput(input: HorseRidingInput, dt: number): void {
     if (this.mountLock > 0) return; // horse stands while the rider settles
 
@@ -372,7 +390,8 @@ export class HorseController {
       const index = LADDER.indexOf(this.targetGait);
       this.targetGait = LADDER[Math.max(0, index - 1)];
     }
-    // Holding W from a standstill always starts riding (never a dead throttle).
+    // Holding W always rides at a walk or above: never a dead throttle from a
+    // standstill, and never an instant stop when the ladder sits at idle.
     if (input.throttle && this.targetGait === 'idle') this.targetGait = 'walk';
     if (LADDER.indexOf(this.targetGait) > LADDER.indexOf(ceiling)) this.targetGait = ceiling;
 
@@ -400,10 +419,10 @@ export class HorseController {
       this.speed = Math.min(targetSpeed, this.speed + accel * dt);
       return;
     }
-    // Cruise: hold the target gait speed with mild natural friction.
-    if (this.speed > targetSpeed) this.speed = Math.max(targetSpeed, this.speed - HORSE_NATURAL_DECELERATION * dt);
-    else if (this.speed < targetSpeed) this.speed = Math.min(targetSpeed, this.speed + HORSE_GAITS[this.targetGait].acceleration * dt);
-    if (this.targetGait === 'idle' && this.speed < 0.05) this.speed = 0;
+    // Reins neutral: the horse loses momentum like a real animal — gradual
+    // natural deceleration to exactly zero, then it stands (no snapping).
+    if (this.speed > 0) this.speed = Math.max(0, this.speed - HORSE_NATURAL_DECELERATION * dt);
+    else if (this.speed < 0) this.speed = Math.min(0, this.speed + HORSE_NATURAL_DECELERATION * dt);
   }
 
   /** Execute the brain's order (unmounted). */
@@ -414,6 +433,7 @@ export class HorseController {
       healthRatio: this.health.ratio,
       mounted: false,
       playerMoving: context.playerMoving,
+      playerSpeed: context.playerSpeed,
       horseX: this.position.x,
       horseZ: this.position.z,
       playerX: context.playerX,

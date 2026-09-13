@@ -9,6 +9,7 @@ import {
   HorseAnimator,
   HorsePersistence,
   HORSE_PROPORTIONS,
+  GAIT_PHASES,
   validateHorseSave,
 } from '../src/index.js';
 
@@ -52,6 +53,71 @@ test('HORSE ANIMATOR: zero speed freezes the phase even in a moving gait', () =>
   const phase = animator.getPhase();
   animator.update({ deltaSeconds: 0.5, speed: 0, gait: 'trot' });
   assert.equal(animator.getPhase(), phase);
+});
+
+// --- Controls revision §5: gait phase hygiene --------------------------------
+
+const GAITS = ['walk', 'trot', 'canter', 'gallop'] as const;
+const mod2pi = (a: number): number => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+/** Signed angular distance in (-π, π]. */
+const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+
+test('HORSE GAITS: front legs are never synchronized and every leg is distinct, in every gait', () => {
+  for (const gait of GAITS) {
+    const { fl, fr, bl, br } = GAIT_PHASES[gait];
+    const offsets = [
+      ['fl', mod2pi(fl)], ['fr', mod2pi(fr)], ['bl', mod2pi(bl)], ['br', mod2pi(br)],
+    ] as const;
+    // Front pair: never identical (mod 2π) — the core §5 guarantee.
+    assert.notEqual(offsets[0][1], offsets[1][1], `${gait}: front legs synchronized`);
+    // ALL four offsets pairwise distinct (mod 2π).
+    for (let i = 0; i < offsets.length; i += 1) {
+      for (let k = i + 1; k < offsets.length; k += 1) {
+        assert.ok(
+          Math.abs(offsets[i][1] - offsets[k][1]) > 1e-9,
+          `${gait}: ${offsets[i][0]} and ${offsets[k][0]} share phase ${offsets[i][1]}`,
+        );
+      }
+    }
+  }
+});
+
+test('HORSE GAITS: the phase patterns stay believable western gaits', () => {
+  // Walk: evenly quartered 4-beat lateral sequence.
+  const walk = GAIT_PHASES.walk;
+  const walkSlots = [walk.bl, walk.fl, walk.br, walk.fr].map(mod2pi).sort((a, b) => a - b);
+  for (let i = 0; i < 4; i += 1) {
+    assert.ok(Math.abs(walkSlots[i] - i * (Math.PI / 2)) < 1e-6, `walk quarter beat ${i} off (${walkSlots[i]})`);
+  }
+  // Trot: diagonal pairs preserved (LF≈BR, FR≈BL within the small dissociation).
+  const trot = GAIT_PHASES.trot;
+  assert.ok(Math.abs(wrapPi(trot.fl - trot.br)) < 0.2, 'trot LF+BR diagonal pair');
+  assert.ok(Math.abs(wrapPi(trot.fr - trot.bl)) < 0.2, 'trot FR+BL diagonal pair');
+  assert.ok(Math.abs(Math.abs(wrapPi(trot.fl - trot.fr)) - Math.PI) < 0.2, 'trot pairs half a cycle apart');
+  // Canter: 3-beat transverse — RH leads, LH+RF pair, LF lead fore.
+  const canter = GAIT_PHASES.canter;
+  assert.equal(mod2pi(canter.br), 0, 'canter RH first beat');
+  assert.ok(Math.abs(wrapPi(canter.bl - canter.fr)) < 0.2, 'canter LH+RF diagonal pair');
+  assert.ok(Math.abs(mod2pi(canter.fl - canter.br) - Math.PI * 4 / 3) < 0.2, 'canter lead fore on the third beat');
+  // Gallop: transverse order RH → LH → RF → LF with tight pairs.
+  const gallop = GAIT_PHASES.gallop;
+  const order = [gallop.br, gallop.bl, gallop.fr, gallop.fl].map(mod2pi);
+  assert.ok(order[0] < order[1] && order[1] < order[2] && order[2] < order[3], 'gallop transverse footfall order');
+  assert.ok(order[1] - order[0] < Math.PI / 2, 'gallop hind pair close');
+  assert.ok(order[3] - order[2] < Math.PI / 2, 'gallop front pair close');
+});
+
+test('HORSE ANIMATOR: canter drives the front legs with visibly different angles', () => {
+  // Behavioral check on the rig: sample one full canter cycle and confirm the
+  // two front hips never hold the same rotation angle at the same instant.
+  const model = createHorseModel();
+  const animator = new HorseAnimator(model);
+  let maxSync = 0;
+  for (let i = 0; i < 240; i += 1) {
+    animator.update({ deltaSeconds: 1 / 60, speed: 7.0, gait: 'canter' });
+    maxSync = Math.max(maxSync, Math.abs(model.joints.legFL.rotation.x - model.joints.legFR.rotation.x));
+  }
+  assert.ok(maxSync > 0.15, `front legs must diverge in canter (max |Δrx| ${maxSync.toFixed(3)})`);
 });
 
 test('HORSE ANIMATOR: graze/headLow never render while the horse is moving', () => {

@@ -74,50 +74,51 @@ test('HORSE BRAIN: summon navigates to the player, then idles on arrival', () =>
   assert.equal(arrived.targetX, null);
 });
 
-test('HORSE BRAIN: follow starts far only when the player moves away, stops at the keep-distance radius', () => {
+test('HORSE BRAIN: autonomous follow is GONE — a player walking away is never chased (20s sim)', () => {
   const brain = new HorseBrain();
   brain.notePosition(0, 0);
-  // 8m away but the player is STANDING STILL: no auto-follow (§8).
-  const still = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 8, playerZ: 0 });
-  assert.equal(still.state, 'idle');
-  // The player walks further away (speed > 0.5, velocity ALONG the horse→player
-  // direction, distance growing): follow (§11).
-  const far = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 9, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
-  assert.equal(far.state, 'follow');
-  assert.ok(far.targetX !== null && far.targetX < 9); // aims short of the player
-  // While following, the player may pause — the horse keeps closing in.
-  const pause = brain.update({ ...baseCtx(), horseX: 5, horseZ: 0, playerX: 9, playerZ: 0 });
-  assert.equal(pause.state, 'follow');
-  // Close: within the keep-distance band the horse settles (idle/waiting).
-  const near = brain.update({ ...baseCtx(), horseX: 2.8, horseZ: 0, playerX: 5.5, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
-  assert.equal(near.state, 'idle');
-  assert.equal(near.targetX, null);
+  // 20s at 10 Hz: the player starts 5m away and walks AWAY at 3m/s for 10s,
+  // then stands still 20m out. The horse must NEVER decide to follow/come.
+  let px = 5;
+  let sawNonIdleLocomotion = false;
+  for (let i = 0; i < 200; i += 1) {
+    if (i < 100) px += 0.3; // 3 m/s × 0.1s decision steps
+    const order = brain.update({
+      deltaSeconds: 0.1,
+      alive: true,
+      healthRatio: 1,
+      mounted: false,
+      playerMoving: i < 100,
+      horseX: 0, horseZ: 0,
+      playerX: px, playerZ: 0,
+    });
+    assert.ok((order.state as string) !== 'follow' && (order.state as string) !== 'come', `autonomous chase at t=${(i * 0.1).toFixed(1)}s (${order.state})`);
+    // Any target must be a small idle-life step, never a pursuit toward the
+    // player's position.
+    if (order.targetX !== null && order.targetZ !== null) {
+      const distToPlayer = Math.hypot(order.targetX - px, order.targetZ - 0);
+      const stepLen = Math.hypot(order.targetX, order.targetZ);
+      assert.ok(stepLen < 3.5, `idle step stays local (${stepLen.toFixed(2)}m)`);
+      if (i < 100 && distToPlayer < Math.hypot(px, 0) - 0.5) sawNonIdleLocomotion = true;
+    }
+  }
+  assert.equal(sawNonIdleLocomotion, false, 'no order ever closes the gap to the walking player');
 });
 
-test('HORSE BRAIN: follow direction matrix — away yes, toward/strafe/still never (§11)', () => {
+test('HORSE BRAIN: no follow in any direction — away/toward/strafe/still all stay idle', () => {
   const newBrain = () => {
     const b = new HorseBrain();
     b.notePosition(0, 0);
     return b;
   };
-  // Player walks AWAY (velocity along +X, player at +X): FOLLOW.
-  const away = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 3, playerVelZ: 0 });
-  assert.equal(away.state, 'follow');
-  // Player walks TOWARD the horse (velocity −X while at +X): NO follow.
-  const toward = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: -3, playerVelZ: 0 });
-  assert.equal(toward.state, 'idle');
-  // Player STRAFES sideways (velocity along Z while far on X): NO follow.
-  const strafe = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 0, playerVelZ: 3 });
-  assert.equal(strafe.state, 'idle');
-  // Player stands still (speed 0): NO follow.
-  const still = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0 });
-  assert.equal(still.state, 'idle');
-  // Diagonal: mostly-away velocity (dot ≈ 0.71 > 0.35): FOLLOW.
-  const diagonalAway = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 2.4, playerVelZ: 1.8 });
-  assert.equal(diagonalAway.state, 'follow');
-  // Diagonal mostly-sideways (dot ≈ 0.17 < 0.35): NO follow.
-  const diagonalSide = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 10, playerZ: 0, playerMoving: true, playerSpeed: 3, playerVelX: 0.6, playerVelZ: 2.9 });
-  assert.equal(diagonalSide.state, 'idle');
+  // Player far away, walking away / toward / strafing / standing: ALL idle.
+  // (The velocity inputs no longer exist — follow was removed entirely.)
+  const labels = ['away', 'toward', 'strafe', 'still'];
+  for (const label of labels) {
+    const order = newBrain().update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 12, playerZ: 0 });
+    assert.equal(order.state, 'idle', `${label}: must never follow`);
+    assert.equal(order.targetX, null, `${label}: no pursuit target`);
+  }
 });
 
 test('HORSE BRAIN: a horse that fled away never auto-returns to a stationary player', () => {
@@ -134,7 +135,7 @@ test('HORSE BRAIN: a horse that fled away never auto-returns to a stationary pla
   // and any (idle-step) target must point AWAY from the player, not back.
   for (let i = 0; i < 300; i += 1) {
     order = brain.update({ ...baseCtx(), deltaSeconds: 0.2, horseX: -15, horseZ: 0 });
-    assert.ok(order.state !== 'follow' && order.state !== 'come', 'no autonomous return');
+    assert.ok((order.state as string) !== 'follow' && (order.state as string) !== 'come', 'no autonomous return');
     const { targetX, targetZ } = order;
     if (targetX !== null && targetZ !== null) {
       const targetDist = Math.hypot(targetX - 2, targetZ - 0);
@@ -149,7 +150,7 @@ test('HORSE BRAIN: STAY parks the horse — no follow, no come, idle life in pla
   assert.equal(brain.commandStay(), true);
   assert.equal(brain.isStaying, true);
   // The player walks far away: the horse remains (idle, no target, no follow).
-  let order = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true, playerSpeed: 4 });
+  let order = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true });
   assert.equal(order.state, 'stay');
   assert.equal(order.targetX, null);
   // Idle life continues while staying (a non-step action is emitted).
@@ -165,31 +166,33 @@ test('HORSE BRAIN: STAY parks the horse — no follow, no come, idle life in pla
   // Second press releases the stay.
   assert.equal(brain.commandStay(), true);
   assert.equal(brain.isStaying, false);
-  // Normal rules resume: the player 25m away WALKING AWAY → follow (§11 gate
-  // needs the away-velocity, which this context now provides).
-  const released = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true, playerSpeed: 4, playerVelX: 4, playerVelZ: 0 });
-  assert.equal(released.state, 'follow'); // normal follow logic applies again
+  // Normal rules resume — and "normal" means NO chase: the player 25m away
+  // WALKING AWAY is ignored (autonomous follow does not exist anymore).
+  const released = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 25, playerZ: 0, playerMoving: true });
+  assert.equal(released.state, 'idle');
+  assert.equal(released.targetX, null);
 });
 
-test('HORSE BRAIN: COME overrides STAY; after fleeing STAY resumes where the horse calmed', () => {
+test('HORSE BRAIN: COME overrides STAY; STAY permanently blocks even a scare (controls §1)', () => {
   const brain = new HorseBrain();
   brain.notePosition(0, 0);
   brain.commandStay();
   assert.equal(brain.summon(), true); // explicit COME wins over STAY
   assert.equal(brain.isStaying, false);
-  const coming = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 12, playerZ: 0, playerMoving: true, playerSpeed: 2 });
+  const coming = brain.update({ ...baseCtx(), horseX: 0, horseZ: 0, playerX: 12, playerZ: 0, playerMoving: true });
   assert.equal(coming.state, 'come');
-  // STAY + scare: the horse flees, then resumes STAYING at the new spot.
+  // STAY + scare: the park HOLDS — fear never becomes locomotion while
+  // staying (the flinch/fear animation plays in place instead).
   const brain2 = new HorseBrain();
   brain2.notePosition(0, 0);
   brain2.commandStay();
   brain2.scare(5, 0, 0, 0);
-  let order = brain2.update({ ...baseCtx(), horseX: 0, horseZ: 0 });
-  assert.equal(order.state, 'flee');
-  for (let i = 0; i < 60; i += 1) order = brain2.update({ ...baseCtx(), deltaSeconds: 0.2, horseX: -3, horseZ: 0 });
-  assert.equal(order.state, 'stay'); // calm → still a STAYING horse
-  assert.equal(order.targetX, null);
-  assert.equal(brain2.isStaying, true);
+  for (let i = 0; i < 60; i += 1) {
+    const order = brain2.update({ ...baseCtx(), deltaSeconds: 0.2, horseX: 0, horseZ: 0 });
+    assert.equal(order.state, 'stay', `scare must not move a staying horse (t=${(i * 0.2).toFixed(1)}s got ${order.state})`);
+    assert.equal(order.targetX, null, 'no flee target while staying');
+  }
+  assert.equal(brain2.isStaying, true); // still parked, exactly where it was
 });
 
 test('HORSE BRAIN: flee runs away from the threat and calms down after the timer', () => {
@@ -247,9 +250,6 @@ function baseCtx() {
     healthRatio: 1,
     mounted: false,
     playerMoving: false,
-    playerSpeed: 0,
-    playerVelX: 0,
-    playerVelZ: 0,
     horseX: 0,
     horseZ: 0,
     playerX: 2,

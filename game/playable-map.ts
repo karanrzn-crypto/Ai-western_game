@@ -33,6 +33,7 @@ import {
   createHorseModel,
   HorseAnimator,
   HorseController,
+  mountEnterCameraMode,
   HorsePersistence,
   HORSE_PROPORTIONS,
 } from '../src/index.js';
@@ -56,9 +57,20 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// PERFORMANCE (controls revision §6 — measured, not blind): the frame cost is
+// FILL-BOUND (software raster: ~22ms of the main pass scales linearly with
+// pixel count; see the A/B matrix in the worklog). Capping the pixel ratio at
+// 1.5 keeps HiDPI displays (dpr 2 = 4× fragments) from multiplying the
+// dominant cost; the output is identical at dpr ≤ 1.5. antialias (≈2ms),
+// shadow filter type and the 2048² map were A/B-tested and stay as they are.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 renderer.setSize(Math.max(stage.clientWidth, 1), Math.max(stage.clientHeight, 1));
 renderer.shadowMap.enabled = true;
+// Shadow depth pass (4.2MP at 2048²) costs ~10.5ms per frame — re-rendering
+// it EVERY frame is wasted work while the sun orbits a barely-visible
+// 0.02°/frame (180s day). autoUpdate off + needsUpdate every other frame
+// (set in animate()) halves that cost with an invisible one-frame shadow lag.
+renderer.shadowMap.autoUpdate = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 stage.appendChild(renderer.domElement);
@@ -332,7 +344,7 @@ function updateControlHint(): void {
     hint.textContent = 'tap W/S = gait up/down · hold W ride · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
     return;
   }
-  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · T come · G stay · V camera · F creative fly · H/J damage/heal + B/N horse (debug) · R respawn · TAB edit';
+  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · B come · N stay · V camera · F creative fly · H/J player debug · [ ] horse debug · R respawn · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -514,22 +526,32 @@ window.addEventListener('keydown', (event) => {
   // TWICE (the camera toggle cancelled itself out and never switched).
 
   // Horse commands (COME / STAY) + debug vitals — play mode only (in Edit
-  // Mode the editor keeps T/G for its rotate shortcuts, and the world is
-  // paused anyway).
+  // Mode the editor keeps T/G/Q/E/R/F for its rotate shortcuts, and the world
+  // is paused anyway).
+  //
+  // COMMAND MODEL (controls revision §1/§2):
+  //   B = COME   — the horse explicitly navigates to the player.
+  //   N = STAY   — the horse parks; PERMANENT until N again (release) or B.
+  //   No command = NO autonomous follow — the horse never closes the gap on
+  //   its own, no matter how far the player walks.
+  //   Horse damage/heal are DEBUG-ONLY actions on [ / ] — keys with NO other
+  //   meaning anywhere in the game (a Shift-modified B/N would collide with
+  //   sprint+command and leave one key carrying two meanings).
   if (!editor.isEditMode() && !creativeActive) {
-    if (event.code === 'KeyT' && !horse.isMounted()) {
+    if (event.code === 'KeyB' && !horse.isMounted()) {
       if (horse.summon()) showStatusMessage('COME — your horse makes its way to you.');
-      else showStatusMessage(`Whistle ready in ${horse.summonCooldown.toFixed(1)}s`);
+      else showStatusMessage(`COME ready in ${horse.summonCooldown.toFixed(1)}s`);
     }
-    if (event.code === 'KeyG' && !horse.isMounted()) {
+    if (event.code === 'KeyN' && !horse.isMounted()) {
       if (horse.stay()) showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Stay released.');
       else showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Your horse cannot stay right now.');
     }
-    if (event.code === 'KeyB') {
+    if (event.code === 'BracketLeft') {
+      // DEBUG ONLY: exercise horse damage/flee/death without combat.
       const p = playerController.getPosition();
       horse.damage(25, p.x, p.z);
     }
-    if (event.code === 'KeyN') horse.heal(35);
+    if (event.code === 'BracketRight') horse.heal(35); // DEBUG ONLY
   }
 
   if (!editor.isEditMode()) return;
@@ -774,9 +796,36 @@ function setHud(): void {
 
 const clock = new THREE.Clock();
 let previousBodyYaw = playerController.getBodyYaw();
-/** Player velocity tracking for the follow direction test (revision §11). */
-let lastPlayerX = playerController.getPosition().x;
-let lastPlayerZ = playerController.getPosition().z;
+/** Alternates each frame — drives the every-other-frame shadow map refresh. */
+let shadowFrame = 0;
+
+// --- FPS + frame-time counter (controls revision §6) -----------------------
+// Always visible in the PLAY MODE panel (the game runs in development mode).
+// Sampled over 0.5s windows so the text stays readable; the frame-time figure
+// is an exponential moving average over the LAST frames (spike-sensitive).
+// NOTE: this uses REAL wall-clock deltas (performance.now), NOT the game's
+// clamped delta (animate caps it at 50ms — the counter must still report
+// frame costs beyond that clamp honestly).
+const fpsValueEl = document.getElementById('fps-value');
+const frameValueEl = document.getElementById('frame-value');
+let perfWindowStart = performance.now();
+let perfFrames = 0;
+let frameEma = 1 / 60;
+let perfLast = perfWindowStart;
+function updatePerfCounter(): void {
+  const now = performance.now();
+  const wallDelta = Math.max(0, now - perfLast) / 1000;
+  perfLast = now;
+  frameEma += (wallDelta - frameEma) * 0.05;
+  perfFrames += 1;
+  const elapsed = (now - perfWindowStart) / 1000;
+  if (elapsed >= 0.5 && fpsValueEl && frameValueEl) {
+    fpsValueEl.textContent = (perfFrames / elapsed).toFixed(0);
+    frameValueEl.textContent = (frameEma * 1000).toFixed(1);
+    perfWindowStart = now;
+    perfFrames = 0;
+  }
+}
 
 /** Shortest signed angular distance of `angle` into (-π, π]. */
 function wrapAngle(angle: number): number {
@@ -825,16 +874,48 @@ let ridePitch = 0;
 // Revision issue 3: the approach is a POLAR ARC around the saddle axis — the
 // rider always walks AROUND the horse to the left stirrup, never straight
 // through its body, no matter which side the mount was triggered from. The
-// grip phase pins the left hand to the horn (verified by live hand-joint
-// probes), and the climb lifts the rider over the seat with the right leg
-// swinging wide of the cantle.
+// grip phase rests the left hand ON the near seat edge (a real, contact-
+// checked grip), and the climb lifts the rider HIGH before the slide so the
+// folded/swinging legs pass above the barrel — all verified by the P4
+// full-frame swept clearance check (scripts/mount-solver.mjs + live probe).
 const RIDER_SEAT_QUATERNION = new THREE.Quaternion();
 const MOUNT_DURATION = 2.1; // seconds
 // Phase boundaries as FRACTIONS of the timeline:
 const MOUNT_WALK_END = 0.4;   // arrived at the left stirrup, facing the horse
-const MOUNT_REACH_END = 0.58; // left hand lands on the horn
-const MOUNT_GRIP_END = 0.72;  // grip held, left foot finds the stirrup
+const MOUNT_REACH_END = 0.58; // hand rests ON the near seat edge
+const MOUNT_GRIP_END = 0.72;  // grip held, body coiled for the climb
 const MOUNT_CLIMB_END = 0.9;  // up and over
+// --- Mount timeline tuning (P4 full-frame swept clearance) -----------------
+// Solved OFFLINE against the horse+saddle collider set with the real rig
+// (scripts/mount-solver.mjs): every rider capsule (torso, arms, hands,
+// thighs, shins, boots) stays clear of the barrel/chest/saddle across the
+// ENTIRE timeline, and the grip hand rests ON the near seat edge. The old
+// straight-arm horn reach swept the forearm THROUGH the chest (up to 8cm)
+// and the low climb slide dragged both legs through the barrel (up to 19cm).
+const MOUNT_REACH_LEAN = -0.08;   // slight lean-in; the arm does the reaching
+const MOUNT_REACH_UP_END = 0.5;   // arm fully raised, elbow folded
+const MOUNT_REACH_RX_UP = 2.3;    // shoulder rx raised on the side diagonal
+const MOUNT_REACH_RZ_UP = -1.0;   // raise-plane toward the head side (clears the chest face)
+const MOUNT_REACH_RX = 2.1;       // rx at the grip — hand ON the seat edge
+const MOUNT_REACH_RZ_PLACE = -0.15;
+const MOUNT_REACH_ELBOW_BEND = -1.9; // folded while traversing up
+const MOUNT_REACH_ELBOW_END = 0.35;  // extended onto the seat edge
+const MOUNT_STAND_OFF = 0.3;      // step-out while reaching (elbow arc clears the chest)
+const MOUNT_LIFT_PEAK = 0.22;     // root rides ABOVE the socket at the lift peak
+const MOUNT_LIFT_RISE_END = 0.84; // rise complete (hips clear the barrel top)
+const MOUNT_LIFT_FALL_START = 0.88; // descend into the seat
+const MOUNT_SLIDE_START = 0.82;   // root x/z slide to the seat center, while lifted
+const MOUNT_SLIDE_END = 0.94;
+const MOUNT_LEG_L_FOLD_START = 0.73; // left leg folds while the root lifts
+const MOUNT_LEG_L_FOLD_END = 0.86;
+const MOUNT_SWING_START = 0.84;   // right leg swings over the cantle, hard-tucked
+const MOUNT_SWING_PEAK_AT = 0.875;
+const MOUNT_SWING_RX = 2.25;
+const MOUNT_SWING_RZ = 0.62;
+const MOUNT_SWING_KNEE = -1.7;
+const MOUNT_ARM_R_RX = 0.14;      // right arm stays close to the torso
+const MOUNT_ARM_R_RZ = -0.14;
+const MOUNT_ARM_R_ELBOW = 0.22;
 const MOUNT_STAND = new THREE.Vector3(-0.45, -HORSE_PROPORTIONS.riderFeetY, -0.02); // on the ground, left side, beside the stirrup
 const MOUNT_STAND_PHI = Math.atan2(MOUNT_STAND.x, MOUNT_STAND.z); // polar angle of the stand point
 const MOUNT_STAND_R = Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z);
@@ -886,6 +967,14 @@ function mountHorse(): void {
   if (isRiding() || !horse.isAlive() || playerController.isDead()) return;
   const feet = playerController.getFeetPosition();
   if (!horse.canMount(feet)) return;
+  // MOUNT CAMERA (controls revision §3): the choreography always plays in
+  // THIRD PERSON. A first-person mount switches BEFORE the animation begins
+  // (the rig snaps behind the character, framing the whole mount) and stays
+  // third person after the rider settles. V still works once riding.
+  const enterMode = mountEnterCameraMode(playerController.getCameraMode());
+  if (playerController.getCameraMode() !== enterMode) {
+    playerController.setCameraMode(enterMode);
+  }
   playerController.freezeMotion();
   playerController.setCrouching(false);
   horse.mount(MOUNT_DURATION + 0.25);
@@ -972,55 +1061,67 @@ function applyRiderPose(): void {
 /**
  * Mount choreography pose (per frame, while mountAnim is active). Phases:
  *   approach [0, walk)   polar arc around the horse to the left stirrup
- *   reach    [walk, reach) stand tall, LEFT arm extends up to the horn
- *   grip     [reach, grip) hand visibly holds the horn, left foot finds the stirrup
- *   climb    [grip, climb) root arcs up over the seat, right leg swings over wide
+ *   reach    [walk, reach) step out, raise the arm along the head-side and
+ *                        rest the hand ON the near seat edge (a real grip)
+ *   grip     [reach, grip) hold, body coils for the climb
+ *   climb    [grip, climb) root rises HIGH (hips clear the barrel), then
+ *                        slides to the seat center while the left leg folds
+ *                        and the right leg swings over, hard-tucked
  *   settle   [climb, 1]    ease into the seat, sit-dip, final riding pose
  * All joint targets end exactly on applyRiderPose's values (no pop at handover).
+ * Trajectory solved against the horse/saddle colliders — see the MOUNT_*
+ * constants above and scripts/mount-solver.mjs.
  */
 function poseMountRider(t: number): void {
   const j = character.joints;
   const lerp = (a: number, b: number, k: number): number => a + (b - a) * k;
-  const kReach = seg(t, MOUNT_WALK_END * 0.75, MOUNT_REACH_END);
-  const kGrip = seg(t, MOUNT_REACH_END, MOUNT_GRIP_END);
+  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+  const easeOutPow3 = (k: number): number => 1 - Math.pow(1 - clamp01(k), 3);
+  const kUpRaw = seg(t, MOUNT_WALK_END * 0.75, MOUNT_REACH_UP_END);
+  const kUp = easeOutPow3(kUpRaw);
+  const kPlace = seg(t, MOUNT_REACH_UP_END, MOUNT_REACH_END);
   const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
   const kSettle = seg(t, MOUNT_CLIMB_END, 1);
-  const seated = Math.max(kClimb, kSettle);
-  // Torso: upright walk → lean in toward the horse → straighten on the climb → seated.
-  const lean = lerp(0, -0.26, kReach) * (1 - kSettle) + -0.05 * seated;
+  const kHold = Math.max(kClimb, kSettle);
+  const seated = kHold;
+  // Torso: upright walk → slight lean-in → straighten on the climb → seated.
+  const lean = lerp(0, MOUNT_REACH_LEAN, kUpRaw) * (1 - kSettle) + -0.05 * seated;
   j.hips.rotation.x = lean;
   j.spine.rotation.x = lerp(lean * 0.5, 0.02, kSettle);
   j.chest.rotation.set(0, 0, 0);
   j.head.rotation.set(lerp(-0.1, -0.04, kSettle), 0, 0);
   j.neck.rotation.set(0, 0, 0);
-  // Stand TALL through approach/reach/grip (hand must reach the horn), then
-  // sink to the seated hip height over the climb + settle.
+  // Stand TALL through approach/reach/grip, then sink to the seated hip
+  // height over the climb + settle.
   j.hips.position.y = lerpNum(CHARACTER_PROPORTIONS.hipY, 0.675, seated);
-  // LEFT arm — the horn grip: raises UP-forward onto the horn during the reach
-  // (the horn sits ~0.5m above the standing shoulder), visibly holds through
-  // the grip, releases along the climb as the body passes the horn, then
-  // settles into the low rein hand.
-  j.shoulderL.rotation.set(
-    lerp(lerp(0.1, 2.9, kReach), 0.7, Math.max(kClimb, kSettle)),
-    0,
-    lerp(lerp(-0.06, 0.05, kReach), 0.07, Math.max(kClimb, kSettle)),
-  );
-  j.elbowL.rotation.set(lerp(lerp(-0.08, 0.25, kReach), 0.3, Math.max(kClimb, kSettle)), 0, 0);
-  // RIGHT arm — swings across the body for balance during the climb, then
+  // LEFT arm — rises along the rider's LEFT side (head-side diagonal, clear
+  // of the chest face) with a folded elbow, then the hand arcs over the chest
+  // top and rests ON the near seat edge; releases along the climb into the
+  // low rein hand.
+  const rxUp = lerp(0.1, MOUNT_REACH_RX_UP, kUp);
+  const rzUp = lerp(-0.06, MOUNT_REACH_RZ_UP, kUp);
+  const rxPlace = lerp(MOUNT_REACH_RX_UP, MOUNT_REACH_RX, kPlace);
+  const rzPlace = lerp(MOUNT_REACH_RZ_UP, MOUNT_REACH_RZ_PLACE, kPlace);
+  const elbowUp = lerp(-0.08, MOUNT_REACH_ELBOW_BEND, kUp);
+  j.shoulderL.rotation.set(lerp(lerp(rxUp, rxPlace, kPlace), 0.7, kHold), 0, lerp(lerp(rzUp, rzPlace, kPlace), 0.07, kHold));
+  j.elbowL.rotation.set(lerp(lerp(elbowUp, MOUNT_REACH_ELBOW_END, kPlace), 0.3, kHold), 0, 0);
+  // RIGHT arm — stays close to the body for balance during the climb, then
   // rests on the right thigh.
-  j.shoulderR.rotation.set(lerp(0.12, 0.35, kClimb) * (1 - kSettle) + 0.06 * kSettle, 0, lerp(lerp(-0.05, -0.3, kClimb), -0.03, kSettle));
-  j.elbowR.rotation.set(lerp(-0.08, 0.45, kClimb) * (1 - kSettle) + 0.15 * kSettle, 0, 0);
-  // LEFT leg — planted until the grip, then the foot finds the stirrup.
-  j.legL.rotation.set(lerp(0.05, 1.1, Math.max(kGrip, seated)), 0, lerp(-0.06, -0.6435, Math.max(kGrip, seated)));
-  j.kneeL.rotation.set(lerp(-0.12, -1.45, Math.max(kGrip, seated)), 0, 0);
-  j.footL.rotation.set(lerp(0, 0.35, Math.max(kGrip, seated)), 0, 0);
-  // RIGHT leg — swings up and WIDE over the cantle: the swing peaks early
-  // (by ~75% of the climb) with a strong outward roll so the shin/boot pass
-  // OUTSIDE the hindquarters and cantle (clearance sweep-verified ≥ 7cm),
-  // then folds down into the seated stirrup pose.
-  const kSwing = seg(t, MOUNT_GRIP_END, MOUNT_GRIP_END + 0.75 * (MOUNT_CLIMB_END - MOUNT_GRIP_END));
-  j.legR.rotation.set(lerp(lerp(0.05, 2.04, kSwing), 1.1, kSettle), 0, lerp(lerp(0.02, 0.3, kSwing), 0.6435, kSettle));
-  j.kneeR.rotation.set(lerp(lerp(-0.12, -1.08, kSwing), -1.45, kSettle), 0, 0);
+  j.shoulderR.rotation.set(lerp(0.12, MOUNT_ARM_R_RX, kClimb) * (1 - kSettle) + 0.06 * kSettle, 0, lerp(lerp(-0.05, MOUNT_ARM_R_RZ, kClimb), -0.03, kSettle));
+  j.elbowR.rotation.set(lerp(-0.08, MOUNT_ARM_R_ELBOW, kClimb) * (1 - kSettle) + 0.15 * kSettle, 0, 0);
+  // LEFT leg — folds to the seat pose while the root LIFTS (the foot rises
+  // outside the flank; folding at low root height dragged it through the
+  // barrel — solved in the P4 sweep).
+  const kFold = seg(t, MOUNT_LEG_L_FOLD_START, MOUNT_LEG_L_FOLD_END);
+  j.legL.rotation.set(lerp(0.05, 1.1, kFold), 0, lerp(-0.06, -0.6435, kFold));
+  j.kneeL.rotation.set(lerp(-0.12, -1.45, kFold), 0, 0);
+  j.footL.rotation.set(lerp(0, 0.35, kFold), 0, 0);
+  // RIGHT leg — swings up and WIDE over the cantle with a hard tuck (shin and
+  // boot stay above the barrel top while crossing), then folds down into the
+  // seated stirrup pose.
+  const kSwing = easeOutPow3(seg(t, MOUNT_SWING_START, MOUNT_SWING_PEAK_AT));
+  j.legR.rotation.set(lerp(lerp(0.05, MOUNT_SWING_RX, kSwing), 1.1, kSettle), 0, lerp(lerp(0.02, MOUNT_SWING_RZ, kSwing), 0.6435, kSettle));
+  j.kneeR.rotation.set(lerp(lerp(-0.12, MOUNT_SWING_KNEE, kSwing), -1.45, kSettle), 0, 0);
   j.footR.rotation.set(lerp(0, 0.35, kSettle), 0, 0);
 }
 
@@ -1030,8 +1131,6 @@ function updateMountAnim(delta: number): void {
   mountAnim.age += delta;
   const t = Math.min(1, mountAnim.age / MOUNT_DURATION);
   const kIn = seg(t, 0, MOUNT_WALK_END);
-  const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
-  const kSettle = seg(t, MOUNT_CLIMB_END, 1);
   if (t < MOUNT_WALK_END) {
     // POLAR APPROACH: arc around the saddle axis to the left stirrup — the
     // radius never dips inside the horse's silhouette (mountSafeRadius), so
@@ -1052,20 +1151,26 @@ function updateMountAnim(delta: number): void {
     }
     character.root.position.y += Math.abs(Math.sin(kIn * Math.PI * 4)) * 0.035 * (1 - kIn);
   } else {
-    // At the stirrup: stand facing the horse, then arc up OVER the seat —
-    // the root slides horizontally to the seat center while it lifts, so the
-    // rider finishes centered on the saddle (no end snap). The lift peaks at
-    // 62% of the climb (deliberately before the leg-swing peak) so the swinging
-    // right thigh clears the barrel's top edge while the root is still low.
-    const kSlide = kClimb;
-    const liftPhase = Math.min(1, Math.max(0, (t - MOUNT_GRIP_END) / (MOUNT_CLIMB_END - MOUNT_GRIP_END)));
-    character.root.position.set(
-      lerpNum(MOUNT_STAND.x, 0, kSlide),
-      lerpNum(MOUNT_STAND.y, 0, kClimb) + Math.sin(liftPhase * Math.PI * 0.62 + 0.18) * 0.34 * (1 - kSettle),
-      lerpNum(MOUNT_STAND.z, 0, kSlide),
-    );
-    character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, kClimb + (kSettle - kClimb) * 0.5);
-    const sitDip = Math.sin(kSettle * Math.PI) * -0.03;
+    // At the stirrup: stand facing the horse, then CLIMB — the root rises
+    // HIGH first (hips clear the barrel top with the legs folded/tucked),
+    // THEN slides to the seat center while lifted, and finally descends into
+    // the seat over the settle. The old low slide dragged both legs through
+    // the barrel (P4 sweep: up to 19cm) — solved by lift-before-slide.
+    const kClimb = seg(t, MOUNT_GRIP_END, MOUNT_CLIMB_END);
+    const kSettle = seg(t, MOUNT_CLIMB_END, 1);
+    const kRise = seg(t, MOUNT_GRIP_END, MOUNT_LIFT_RISE_END);
+    const kFall = seg(t, MOUNT_LIFT_FALL_START, 1);
+    const kSlide = seg(t, MOUNT_SLIDE_START, MOUNT_SLIDE_END);
+    const standOff = MOUNT_STAND_OFF * seg(t, 0.3, 0.42) * (1 - seg(t, 0.72, 0.8));
+    const standX = MOUNT_STAND.x - standOff;
+    const y = lerpNum(MOUNT_STAND.y, MOUNT_LIFT_PEAK, kRise)
+      + lerpNum(0, -MOUNT_LIFT_PEAK, kFall * kFall * (3 - 2 * kFall));
+    character.root.position.set(lerpNum(standX, 0, kSlide), y, lerpNum(MOUNT_STAND.z, 0, kSlide));
+    // Face the horse through the climb; the rotation completes by the settle
+    // (a half-blend here left the seat-pose feet swung 45° off into the chest).
+    const quatBlend = Math.min(1, kClimb + kSettle);
+    character.root.quaternion.slerpQuaternions(MOUNT_FACE_HORSE, RIDER_SEAT_QUATERNION, quatBlend);
+    const sitDip = Math.sin(kSettle * Math.PI) * -0.01;
     character.root.position.y += sitDip;
   }
   poseMountRider(t);
@@ -1204,7 +1309,9 @@ function animate(): void {
       input.consumePressed('crouch');
       input.consumePressed('respawn');
       if (input.consumePressed('interact')) dismountHorse();
-      if (input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      // The camera stays THIRD PERSON for the whole mount choreography —
+      // a V press during the animation is dropped, not queued.
+      if (!mountAnim && input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
       if (input.consumePressed('debugDamage')) health.damage(30);
       if (input.consumePressed('debugHeal')) health.heal(35);
     } else {
@@ -1239,22 +1346,12 @@ function animate(): void {
   if (!editor.isEditMode() && !creativeActive) {
     const riding = isRiding() && horse.isMounted() ? buildRidingInput() : undefined;
     const playerPos = playerController.getPosition();
-    // Player velocity for the follow condition (revision §11): finite-diff the
-    // position (robust to every controller mode — walking, landing, push-out).
-    const dt = Math.max(delta, 1e-4);
-    const velX = (playerPos.x - lastPlayerX) / dt;
-    const velZ = (playerPos.z - lastPlayerZ) / dt;
-    lastPlayerX = playerPos.x;
-    lastPlayerZ = playerPos.z;
     horse.update({
       deltaSeconds: delta,
       playerX: playerPos.x,
       playerY: playerPos.y,
       playerZ: playerPos.z,
       playerMoving: !isRiding() && playerController.getHorizontalSpeed() > 0.5,
-      playerSpeed: playerController.getHorizontalSpeed(),
-      playerVelX: Number.isFinite(velX) ? velX : 0,
-      playerVelZ: Number.isFinite(velZ) ? velZ : 0,
     }, riding);
     const separation = horse.takePlayerSeparation();
     if (separation && !isRiding()) {
@@ -1305,6 +1402,11 @@ function animate(): void {
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
   );
   dayNight.update(delta);
+  // Shadow maps refresh every OTHER frame (performance revision §6): the
+  // orbiting sun moves ~0.02° per frame, so the one-frame shadow lag is
+  // invisible, while the 4.2MP depth pass no longer runs on every frame.
+  shadowFrame ^= 1;
+  renderer.shadowMap.needsUpdate = shadowFrame === 0;
   gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
   // The selection box only needs to track transforms in edit mode; the one
   // frame after leaving edit mode hides it for good.
@@ -1317,6 +1419,7 @@ function animate(): void {
   });
   updateSelectionPanel();
   setHud();
+  updatePerfCounter();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }

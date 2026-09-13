@@ -72,16 +72,24 @@ const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.m
 const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
 
 /**
- * Leg phase offsets per gait (radians of the shared cycle phase):
- *   walk   — 4-beat lateral sequence: LF, RF… classic walk: LH, LF, RH, RF.
- *   trot   — 2-beat diagonal pairs (LF+RH, RF+LH).
- *   canter — 3-beat: RH, LH, then the LF+RF lead pair.
- *   gallop — 4-beat with front-pair suspension and a longer hind reach.
+ * Leg phase offsets per gait (radians of the shared cycle phase).
+ *
+ * CONTROLS REVISION §5: the two front legs are NEVER exactly synchronized and
+ * every leg owns a DISTINCT offset in every gait — real horses always show a
+ * small dissociation inside a footfall pair (~20–40 ms), so a tiny 0.12 rad
+ * lag (≈13 ms at trot/canter cycle rates) keeps the gait believable while
+ * guaranteeing no two legs ever share a phase.
+ *   walk   — 4-beat lateral sequence: LH, LF, RH, RF (evenly quartered).
+ *   trot   — 2-beat diagonal pairs (LF+RH, RF+LH) with a small hind-lag.
+ *   canter — 3-beat transverse: RH, LH+RF (diagonal pair, small dissociation),
+ *            LF lead fore, then suspension.
+ *   gallop — 4-beat transverse RH → LH → RF → LF with front-pair suspension
+ *            and a longer hind reach.
  */
-const GAIT_PHASES: Record<Exclude<HorseGait, 'idle'>, { fl: number; fr: number; bl: number; br: number }> = {
+export const GAIT_PHASES: Record<Exclude<HorseGait, 'idle'>, { fl: number; fr: number; bl: number; br: number }> = {
   walk: { fl: Math.PI * 0.5, fr: Math.PI * 1.5, bl: 0, br: Math.PI },
-  trot: { fl: 0, fr: Math.PI, bl: Math.PI, br: 0 },
-  canter: { fl: Math.PI * 4 / 3, fr: Math.PI * 4 / 3, bl: Math.PI * 2 / 3, br: 0 },
+  trot: { fl: 0, fr: Math.PI, bl: Math.PI + 0.12, br: 0.12 },
+  canter: { fl: Math.PI * 4 / 3, fr: Math.PI * 2 / 3 + 0.12, bl: Math.PI * 2 / 3, br: 0 },
   gallop: { fl: Math.PI + 0.45, fr: Math.PI, bl: 0.45, br: 0 },
 };
 

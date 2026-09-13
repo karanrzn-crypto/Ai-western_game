@@ -6,35 +6,40 @@
  * It owns NO movement math and NO rendering; HorseController executes the
  * orders through the gait/steering/collision machinery.
  *
- * States (revision §10) — always exactly one, never mixed:
+ * COMMAND MODEL (controls revision §1) — the horse is NEVER autonomous:
+ *   No command = no movement toward the player. There is NO follow behavior
+ *   at all — not distance-based, not direction-based. The horse only ever
+ *   navigates because an explicit command or a hard-wired reflex says so.
+ *
+ * States — always exactly one, never mixed:
  *   idle    — unmounted default; free to perform natural idle life (look /
  *             graze / weight shift / head low / a few small steps).
- *   stay    — explicit player command: remains at its current location even
- *             if the player walks away. Idle life CONTINUES in place (§11),
- *             but no locomotion steps and never an autonomous return.
- *   follow  — trails the player automatically ONLY under the game's intended
- *             follow condition: the PLAYER is moving away from the horse and
- *             the separation exceeds followStart. A horse that moved away by
- *             itself (flee, idle wander) never auto-returns (§8).
- *   come    — an explicit player command (COME / whistle): navigate to the
- *             player from anywhere, stop at the arrival distance, then idle.
+ *   stay    — explicit player command (STAY): remains at its current location
+ *             PERMANENTLY — until the player presses STAY again (release) or
+ *             issues COME (the one command that overrides it). Idle life
+ *             CONTINUES in place, but no locomotion steps, no follow, no
+ *             autonomous return, and even a scare/flee cannot move it
+ *             (controls revision §1: permanently blocked until released).
+ *   come    — explicit player command (COME): navigate to the player from
+ *             anywhere, stop at the arrival distance, then idle.
  *   moving  — executing a small idle-life step or any transient locomotion.
- *   flee    — scared: run AWAY from the threat point, control limited. When
- *             the flee ends the horse calms where it IS (no auto-return); if
- *             STAY was active it resumes staying at its new location.
+ *   flee    — hard-wired fear reflex (NOT a command reuse): run AWAY from the
+ *             threat point, control limited. When the flee ends the horse
+ *             calms where it IS (never a return-to-player); if STAY was
+ *             active it resumes staying at its new location.
  *   injured — alive but health < 30%: gait capped, posture low; idle life
  *             continues while standing (never while moving).
  *   dead    — terminal; all autonomy stops. Only an explicit future revival
  *             mechanic may end it (no respawn, no timer).
  *   ridden  — the player is in the saddle: AI yields completely.
  *
- * Stuck watchdog: while navigating (come/follow/flee), if the displacement
- * over the watchdog window is below the minimum, the brain emits an UNSTUCK
- * maneuver (reverse + turn) instead of pushing into the obstacle forever.
+ * Stuck watchdog: while navigating (come/flee), if the displacement over the
+ * watchdog window is below the minimum, the brain emits an UNSTUCK maneuver
+ * (reverse + turn) instead of pushing into the obstacle forever.
  */
 
 export type HorseAiState =
-  | 'idle' | 'stay' | 'follow' | 'come' | 'moving' | 'flee' | 'injured' | 'ridden' | 'dead';
+  | 'idle' | 'stay' | 'come' | 'moving' | 'flee' | 'injured' | 'ridden' | 'dead';
 
 export type HorseIdleActionName = 'none' | 'graze' | 'look' | 'shift' | 'headLow' | 'step';
 
@@ -46,13 +51,8 @@ export interface HorseBrainContext {
   healthRatio: number;
   /** The player is mounted (AI yields). */
   mounted: boolean;
-  /** Is the player currently moving on foot? */
+  /** Is the player currently moving on foot? (drives idle-life scheduling) */
   playerMoving: boolean;
-  /** Player horizontal speed (m/s) — the follow condition needs "moving away". */
-  playerSpeed: number;
-  /** Player horizontal velocity (m/s) — follow requires MOVING AWAY (§11). */
-  playerVelX: number;
-  playerVelZ: number;
   /** World positions (feet level). */
   horseX: number; horseZ: number;
   playerX: number; playerZ: number;
@@ -74,8 +74,6 @@ export interface HorseBrainOrder {
 }
 
 export interface HorseBrainOptions {
-  followStart?: number;
-  followStop?: number;
   summonArrive?: number;
   summonCooldown?: number;
   fleeDuration?: number;
@@ -110,14 +108,10 @@ export class HorseBrain {
   private fleeTimer = 0;
   private fleeTarget: { x: number; z: number } | null = null;
   private summonCooldownTimer = 0;
-  /** Player↔horse distance at the previous decision tick (follow direction). */
-  private lastPlayerDistance: number | null = null;
   private unstuckPhase = 0;
   private stuckSampleX = 0;
   private stuckSampleZ = 0;
   private stuckSampleTimer = 0;
-  private readonly followStart: number;
-  private readonly followStop: number;
   private readonly summonArrive: number;
   private readonly summonCooldown: number;
   private readonly fleeDuration: number;
@@ -127,8 +121,6 @@ export class HorseBrain {
   private readonly stuckMinDisplacement: number;
 
   constructor(options: HorseBrainOptions = {}) {
-    this.followStart = options.followStart ?? 6.5;
-    this.followStop = options.followStop ?? 3.0;
     this.summonArrive = options.summonArrive ?? 3.0;
     this.summonCooldown = options.summonCooldown ?? 3;
     this.fleeDuration = options.fleeDuration ?? 4.2;
@@ -142,7 +134,8 @@ export class HorseBrain {
   get isStaying(): boolean { return this.stayActive; }
 
   /** COME — explicit command: navigate to the player. False while on cooldown
-   *  or when the horse cannot obey (dead / ridden). Overrides STAY. */
+   *  or when the horse cannot obey (dead / ridden). The ONE command that
+   *  overrides STAY (controls revision §1). */
   summon(): boolean {
     if (this.state === 'dead' || this.state === 'ridden') return false;
     if (this.summonCooldownTimer > 0) return false;
@@ -179,9 +172,13 @@ export class HorseBrain {
   }
 
   /** Scare the horse away from a world point. Fear overrides every command
-   *  (a startled horse runs first); STAY resumes where it calms. */
+   *  (a startled horse runs first) — EXCEPT STAY: a parked horse has its
+   *  movement PERMANENTLY blocked (controls revision §1) until the player
+   *  releases it, so fear/flinch play out as animations in place while the
+   *  world position never changes. */
   scare(threatX: number, threatZ: number, horseX: number, horseZ: number): void {
     if (this.state === 'dead' || this.state === 'ridden') return;
+    if (this.stayActive) return;
     this.state = 'flee';
     this.fleeTimer = this.fleeDuration;
     // Flee target: 12m directly away from the threat.
@@ -253,7 +250,7 @@ export class HorseBrain {
     // Injury supersedes idle-ish states but never interrupts COME (explicit)
     // or FLEE (panic); recovery hands the state back (STAY included).
     if (this.state !== 'flee' && this.state !== 'come' && this.state !== 'stay' && this.state !== 'injured'
-      && injured && (this.state === 'idle' || this.state === 'moving' || this.state === 'follow')) {
+      && injured && (this.state === 'idle' || this.state === 'moving')) {
       this.state = 'injured';
     } else if (this.state === 'injured' && !injured) {
       this.state = this.stayActive ? 'stay' : 'idle';
@@ -262,8 +259,7 @@ export class HorseBrain {
     this.decisionClock += dt;
     if (this.decisionClock >= 1 / this.tickHz) {
       this.decisionClock = 0;
-      this.decide(context, distToPlayer);
-      this.lastPlayerDistance = distToPlayer;
+      this.decide(context);
     }
 
     return this.buildOrder(context, distToPlayer);
@@ -272,36 +268,14 @@ export class HorseBrain {
   /** Slow decision pass (10 Hz): state selection + idle-life scheduling.
    *  The idle mix: look around, graze, weight shift / hoof lift, relaxed
    *  head-low, a few small steps — randomized pick, durations and gaps, so
-   *  no fixed loop emerges. STAY keeps the idle life but drops the steps. */
-  private decide(context: HorseBrainContext, distToPlayer: number): void {
+   *  no fixed loop emerges. STAY keeps the idle life but drops the steps.
+   *  There is NO follow arbitration: nothing here ever moves the horse
+   *  toward the player without an explicit COME command (controls §1). */
+  private decide(context: HorseBrainContext): void {
     if (this.state === 'flee' || this.state === 'come' || this.state === 'ridden' || this.state === 'dead') return;
 
-    // FOLLOW arbitration (§8/§10/§11): only the game's intended follow condition
-    // engages it — the PLAYER is walking AWAY from the horse (their velocity
-    // has a positive component along the horse→player direction) and the gap
-    // is beyond followStart. A horse that drifted/fled away by itself stays
-    // put; a stationary, approaching, or side-strafing player never triggers
-    // follow; a shrinking gap neither.
-    if (this.state !== 'stay' && this.state !== 'follow'
-      && distToPlayer > this.followStart
-      && context.playerSpeed > 0.5
-      && (this.lastPlayerDistance === null || distToPlayer >= this.lastPlayerDistance - 0.05)) {
-      const awayX = (context.playerX - context.horseX) / Math.max(distToPlayer, 1e-4);
-      const awayZ = (context.playerZ - context.horseZ) / Math.max(distToPlayer, 1e-4);
-      const velLen = Math.hypot(context.playerVelX, context.playerVelZ);
-      const movingAway = velLen > 0.25
-        && (context.playerVelX * awayX + context.playerVelZ * awayZ) / velLen > 0.35;
-      if (movingAway) {
-        this.state = 'follow';
-        this.idleAction = 'none';
-        this.stepTarget = null;
-        return;
-      }
-    }
-    if (this.state === 'follow' && distToPlayer <= this.followStop) {
-      this.state = 'idle';
-      this.idleActionTimer = 1.2;
-    }
+    // (Autonomous follow was REMOVED — controls revision §1. Only the
+    // explicit COME command navigates toward the player.)
 
     if (this.state === 'idle' || this.state === 'stay' || this.state === 'injured') {
       const stepAllowed = this.state === 'idle'; // STAY: idle life stays in place
@@ -337,7 +311,7 @@ export class HorseBrain {
           const nx = context.horseX + Math.cos(angle) * radius;
           const nz = context.horseZ + Math.sin(angle) * radius;
           const distTarget = Math.hypot(nx - context.playerX, nz - context.playerZ);
-          if (distTarget > this.followStop + 0.6) {
+          if (distTarget > this.summonArrive + 0.6) {
             this.stepTarget = { x: nx, z: nz };
             this.idleAction = 'step';
             this.idleActionAge = 0;
@@ -394,28 +368,6 @@ export class HorseBrain {
           unstuck: false,
         };
       }
-      case 'follow': {
-        const unstuck = this.updateStuckWatch(context);
-        if (unstuck) return this.unstuckOrder(context, ceiling);
-        if (distToPlayer <= this.followStop) {
-          // Player stopped or close enough — hold (spec §8).
-          return { state: 'follow', targetX: null, targetZ: null, arriveRadius: 0, gaitCeiling: ceiling, idleAction: 'none', unstuck: false };
-        }
-        // Aim a bit short of the player so the horse never bumps them.
-        const dx = context.playerX - context.horseX;
-        const dz = context.playerZ - context.horseZ;
-        const stopAt = this.followStop * 0.9;
-        const scale = Math.max(0, 1 - stopAt / Math.max(distToPlayer, 1e-4));
-        return {
-          state: 'follow',
-          targetX: context.playerX - dx * scale,
-          targetZ: context.playerZ - dz * scale,
-          arriveRadius: 0.8,
-          gaitCeiling: ceiling,
-          idleAction: 'none',
-          unstuck: false,
-        };
-      }
       case 'moving': {
         if (!this.stepTarget) {
           this.state = this.stayActive ? 'stay' : 'idle';
@@ -448,9 +400,6 @@ export class HorseBrain {
         return { state: 'ridden', targetX: null, targetZ: null, arriveRadius: 0, gaitCeiling: 'gallop', idleAction: 'none', unstuck: false };
       case 'dead':
         return { state: 'dead', targetX: null, targetZ: null, arriveRadius: 0, gaitCeiling: 'walk', idleAction: 'none', unstuck: false };
-      case 'flee':
-      case 'come':
-      case 'follow':
       case 'idle':
       default: {
         // Idle: render the scheduled idle action; a step is handled above via

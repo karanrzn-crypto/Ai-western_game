@@ -132,14 +132,10 @@ export const HORSE_STAMINA = {
   fatigueRecover: 35,
 } as const;
 
-/** AI tuning (distances in meters, timers in seconds). */
+/** AI tuning (distances in meters, timers in seconds).
+ *  COMMAND MODEL note: there are NO follow distances — the horse never
+ *  autonomously follows the player (controls revision §1). */
 export const HORSE_AI = {
-  /** Start following when the player is farther than this. */
-  followStart: 6.5,
-  /** Keep this distance from the player while following. */
-  followStop: 3.0,
-  /** Never step closer than this to the player (no bumping). */
-  followHardStop: 2.2,
   /** Summon arrives at this distance. */
   summonArrive: 3.0,
   /** Whistle cooldown. */

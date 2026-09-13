@@ -12,9 +12,12 @@
  *   - Stamina gates the gallop (fatigue lock), injury caps the ceiling,
  *     braking is stronger than natural deceleration, reverse crawls.
  *   - AI orders come from HorseBrain at 10 Hz; whisker steering + a stuck
- *     watchdog keep follow/summon natural without teleporting.
+ *     watchdog keep summon navigation natural without teleporting.
+ *   - COMMAND MODEL: there is NO autonomous follow. The horse navigates only
+ *     for explicit COME orders, fear flee, or the rider's input.
  */
 import type { Vec3 } from '../core/types.js';
+import type { CameraMode } from '../player/PlayerController.js';
 import { CollisionWorld } from '../physics/CollisionWorld.js';
 import { rayAabbDistance } from '../player/ThirdPersonCamera.js';
 import { findSafeSpawnPosition } from '../player/Spawn.js';
@@ -51,14 +54,8 @@ export interface HorseWorldContext {
   playerX: number;
   playerY: number;
   playerZ: number;
-  /** Player is moving on foot (drives follow decisions + idle life). */
+  /** Player is moving on foot (drives idle-life scheduling). */
   playerMoving: boolean;
-  /** Player horizontal speed (m/s) — the follow condition needs it. */
-  playerSpeed: number;
-  /** Player horizontal velocity (m/s) — follow requires MOVING AWAY from the
-   *  horse (dot of this with the horse→player direction), revision §11. */
-  playerVelX: number;
-  playerVelZ: number;
 }
 
 export type HorseEvent = 'death' | 'damage' | 'revived' | 'fatigued';
@@ -104,6 +101,17 @@ function clamp(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, value));
 }
 
+/**
+ * MOUNT CAMERA contract (controls revision §3): the mount choreography always
+ * plays — and always ends — in THIRD PERSON. If mounting starts in first
+ * person, the camera switches to third person BEFORE the approach/reach/
+ * grip/climb/settle timeline begins, and remains third person afterwards
+ * (the player can still toggle V once they are riding).
+ */
+export function mountEnterCameraMode(_current: CameraMode): CameraMode {
+  return 'third_person';
+}
+
 export class HorseController {
   private readonly collisionWorld: CollisionWorld;
   readonly health: HealthSystem;
@@ -123,6 +131,8 @@ export class HorseController {
   private mounted = false;
   private fear = 0;
   private spookSurge = 0;
+  /** Refractory window for the hard-collision knock (one knock per impact). */
+  private hardKnockTimer = 0;
   private mountLock = 0;
   private lastTurnRate = 0;
   private deathHandled = false;
@@ -181,13 +191,12 @@ export class HorseController {
   isStaying(): boolean { return this.brain.isStaying; }
 
   /** Spec §15 relationship snapshot — HUD + tests. */
-  getRelationship(): { player: 'on_foot' | 'riding'; horse: 'waiting' | 'staying' | 'following' | 'summoned' | 'moving' | 'fleeing' | 'injured' | 'dead' } {
+  getRelationship(): { player: 'on_foot' | 'riding'; horse: 'waiting' | 'staying' | 'summoned' | 'moving' | 'fleeing' | 'injured' | 'dead' } {
     const horse = this.brain.current;
     return {
       player: this.mounted ? 'riding' : 'on_foot',
       horse: horse === 'ridden' ? 'waiting'
         : horse === 'stay' ? 'staying'
-        : horse === 'follow' ? 'following'
         : horse === 'come' ? 'summoned'
         : horse === 'moving' ? 'moving'
         : horse === 'flee' ? 'fleeing'
@@ -361,6 +370,7 @@ export class HorseController {
     this.fear = Math.max(0, this.fear - dt / 4.2);
     this.spookSurge = Math.max(0, this.spookSurge - dt);
     this.mountLock = Math.max(0, this.mountLock - dt);
+    this.hardKnockTimer = Math.max(0, this.hardKnockTimer - dt);
 
     if (this.health.isDead) {
       this.speed = 0;
@@ -437,9 +447,6 @@ export class HorseController {
       healthRatio: this.health.ratio,
       mounted: false,
       playerMoving: context.playerMoving,
-      playerSpeed: context.playerSpeed,
-      playerVelX: context.playerVelX,
-      playerVelZ: context.playerVelZ,
       horseX: this.position.x,
       horseZ: this.position.z,
       playerX: context.playerX,
@@ -484,8 +491,25 @@ export class HorseController {
     const steer = this.steerToward(order.targetX, order.targetZ, dt);
     this.steerHorse(steer, dt);
 
-    // Speed cap eases the arrival (no overshoot into the player).
-    const cap = Math.max(HORSE_GAITS.walk.speed, Math.min(HORSE_GAITS[wanted].speed, (distance - order.arriveRadius * 0.7) * 1.4));
+    // Speed cap eases the arrival (no overshoot into the player), THREE-TERM:
+    //   1. gait wish,
+    //   2. linear ease into the arrival radius,
+    //   3. BRAKING ENVELOPE — the speed from which the horse can still stop
+    //      BEFORE reaching the player: v ≤ √(2·decel·(d − contactMargin)).
+    //      Without term 3 the linear term demands more deceleration than
+    //      HORSE_BRAKE_DECELERATION delivers on a canter approach: the horse
+    //      overshot the 3m arrival, ran THROUGH the player and the separation
+    //      push snowplowed the player across the map (measured live: one COME
+    //      arrival dragged the player ~28m north).
+    const contactMargin = HORSE_PROPORTIONS.collisionRadius + PLAYER_RADIUS + 0.3;
+    const cap = Math.max(
+      HORSE_GAITS.walk.speed * 0.6,
+      Math.min(
+        HORSE_GAITS[wanted].speed,
+        (distance - order.arriveRadius * 0.7) * 1.4,
+        Math.sqrt(Math.max(0, distance - contactMargin) * 2 * HORSE_BRAKE_DECELERATION * 0.85),
+      ),
+    );
     const accel = HORSE_GAITS[wanted].acceleration;
     if (this.speed < cap) this.speed = Math.min(cap, this.speed + accel * dt);
     else this.speed = Math.max(cap, this.speed - HORSE_BRAKE_DECELERATION * dt);
@@ -577,13 +601,18 @@ export class HorseController {
         const desiredX = this.position.x - Math.sin(this.yaw) * step;
         const desiredZ = this.position.z - Math.cos(this.yaw) * step;
         // Player bump guard: never walk into the on-foot player (spec §10).
+        // TWO-SIDED: the step is refused whenever it would END inside the
+        // player's exclusion radius — including when the horse is ALREADY
+        // inside (the old current-distance precondition let a close pass
+        // slide straight through and shove the player along).
         const minPlayerDist = radius + PLAYER_RADIUS + 0.05;
+        const currentPlayerDist = Math.hypot(context.playerX - this.position.x, context.playerZ - this.position.z);
         const playerDx = desiredX - context.playerX;
         const playerDz = desiredZ - context.playerZ;
         const playerDist = Math.hypot(playerDx, playerDz);
         const blockedByPlayer = !this.mounted
-          && Math.hypot(context.playerX - this.position.x, context.playerZ - this.position.z) > minPlayerDist
-          && playerDist < minPlayerDist;
+          && playerDist < minPlayerDist
+          && playerDist <= currentPlayerDist + 1e-6;
         if (blockedByPlayer) {
           this.speed = 0;
         } else {
@@ -601,7 +630,15 @@ export class HorseController {
           this.position.y = result.position.y - height;
           this.grounded = result.grounded;
           // Hard collision at speed = a spook trigger + stamina knock.
-          if (movedDistance < wantedDistance * 0.55 && Math.abs(this.speed) > 4.5) {
+          // EDGE-TRIGGERED with a refractory window: while the horse grinds
+          // along a wall the blocked condition holds for many consecutive
+          // frames, and an ungated knock pumped stamina dry (measured 36 SP/s
+          // in headless) and pinned the spook surge. One knock per impact.
+          if (
+            movedDistance < wantedDistance * 0.55
+            && Math.abs(this.speed) > 4.5
+            && this.hardKnockTimer <= 0
+          ) {
             this.onHardCollision();
           }
           // Step-up (ledges/curbs) — same pattern as the player controller.
@@ -718,6 +755,7 @@ export class HorseController {
   }
 
   private onHardCollision(): void {
+    this.hardKnockTimer = 1; // refractory: one knock per impact, not per frame
     this.stamina.spend(3);
     if (this.mounted) {
       this.spookSurge = Math.max(this.spookSurge, 0.8);

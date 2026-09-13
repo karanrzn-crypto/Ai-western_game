@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CollisionWorld, HorseController, SceneStateManager, HORSE_GAITS, HORSE_PROPORTIONS } from '../src/index.js';
+import { CollisionWorld, HorseController, SceneStateManager, HORSE_GAITS, HORSE_PROPORTIONS, mountEnterCameraMode } from '../src/index.js';
 
 let uuidCounter = 0;
 function wall(manager: SceneStateManager, position: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
@@ -30,16 +30,13 @@ function horseAt(world: CollisionWorld, x = 0, z = 0, yaw = 0): HorseController 
 
 const DT = 1 / 60;
 
-function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false, vel: { x?: number; z?: number } = {}) {
+function ctx(playerFeet = { x: 0, y: 1.7, z: 0 }, playerMoving = false) {
   return {
     deltaSeconds: DT,
     playerX: playerFeet.x,
     playerY: playerFeet.y,
     playerZ: playerFeet.z,
     playerMoving,
-    playerSpeed: playerMoving ? 3.4 : 0,
-    playerVelX: vel.x ?? 0,
-    playerVelZ: vel.z ?? 0,
   };
 }
 
@@ -187,6 +184,52 @@ test('HORSE CONTROLLER: never passes through a wall — collision clamps, no tel
   assert.ok(p.z >= -6.5 + HORSE_PROPORTIONS.collisionRadius - 0.05);
 });
 
+test('HORSE CONTROLLER: grinding a wall does not pump stamina dry (knock is edge-triggered)', () => {
+  const { manager, world } = buildWorld();
+  wall(manager, { x: 0, y: 1.5, z: -6 }, { x: 10, y: 3, z: 1 });
+  const horse = horseAt(world, 0, 0, 0);
+  horse.mount();
+  // 3 seconds of full-throttle grind against the wall: the blocked condition
+  // holds on EVERY frame, but the knock must fire at most once per refractory
+  // window (1s) — 3s ⇒ ≤ 4 knocks (12 SP) + gallop-band drain (9/s ⇒ 27) ≈ 39.
+  for (let i = 0; i < 180; i += 1) {
+    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+  }
+  const sp = horse.getSnapshot().stamina;
+  assert.ok(sp >= 60, `wall grind must not drain stamina to 0 (SP left ${sp.toFixed(1)})`);
+});
+
+test('HORSE CONTROLLER: COME arrival never plows the player (no snowplow, no contact)', () => {
+  const { world } = buildWorld();
+  // Horse 12m east of the player, facing them; explicit COME; the caller
+  // applies the separation push (like playable-map does) and the brain
+  // re-targets the LIVE player position — the exact feedback loop that used
+  // to drag a player ~28m across the map on a canter arrival.
+  const horse = horseAt(world, 12, 0, Math.PI / 2);
+  let px = 0;
+  let pz = 0;
+  assert.equal(horse.summon(), true);
+  let minDist = Infinity;
+  let maxPlayerDrift = 0;
+  for (let i = 0; i < 60 * 30; i += 1) {
+    horse.update(ctx({ x: px, y: 1.7, z: pz }));
+    const sep = horse.takePlayerSeparation();
+    if (sep) {
+      px = sep.x;
+      pz = sep.z;
+    }
+    const h = horse.getPosition();
+    minDist = Math.min(minDist, Math.hypot(h.x - px, h.z - pz));
+    maxPlayerDrift = Math.max(maxPlayerDrift, Math.hypot(px, pz));
+  }
+  assert.ok(minDist >= 0.9, `horse must never reach the player capsule (min ${minDist.toFixed(3)}m)`);
+  assert.ok(maxPlayerDrift < 0.5, `player must never be plowed (drift ${maxPlayerDrift.toFixed(2)}m)`);
+  const snap = horse.getSnapshot();
+  const finalDist = Math.hypot(snap.position.x - px, snap.position.z - pz);
+  assert.ok(finalDist <= 4.5, `COME must arrive near the player (final ${finalDist.toFixed(2)}m)`);
+  assert.notEqual(snap.aiState, 'come', 'COME must terminate on arrival');
+});
+
 test('HORSE CONTROLLER: steps up onto low ledges and stands on top (terrain)', () => {
   const { manager, world } = buildWorld();
   wall(manager, { x: 0, y: 0.2, z: -10 }, { x: 6, y: 0.4, z: 24 }); // deep ledge
@@ -280,21 +323,20 @@ test('HORSE CONTROLLER: horse and player never hard-overlap (separation push)', 
   assert.ok(dist >= HORSE_PROPORTIONS.collisionRadius + 0.35 - 0.01);
 });
 
-test('HORSE CONTROLLER: follow keeps its distance, never teleports, never bumps', () => {
+test('HORSE CONTROLLER: a player walking away is NEVER chased — the horse stays put', () => {
   const { world } = buildWorld();
   const horse = horseAt(world, 0, 0);
-  let playerZ = 9;
-  let minDistance = Infinity;
-  let maxStep = 0;
+  // The player walks away at 3.4 m/s for 12s; the horse must stay a local
+  // animal: no follow state, no pursuit, position drift < 3.5m (idle steps).
+  let maxDrift = 0;
   for (let i = 0; i < 60 * 12; i += 1) {
-    horse.update(ctx({ x: 0, y: 1.7, z: playerZ }, true, { x: 0, z: 3.4 }));
+    const playerZ = 9 + i * 3.4 * DT;
+    horse.update(ctx({ x: 0, y: 1.7, z: playerZ }, true));
     const p = horse.getPosition();
-    minDistance = Math.min(minDistance, Math.hypot(p.x, p.z - playerZ));
-    maxStep = Math.max(maxStep, Math.abs(horse.getSpeed()) * DT);
+    maxDrift = Math.max(maxDrift, Math.hypot(p.x, p.z));
   }
-  assert.ok(minDistance > 1.8, `follow must not enter the player radius (min ${minDistance.toFixed(2)}m)`);
-  assert.ok(minDistance < 4.5, `follow must reach the keep-distance band (min ${minDistance.toFixed(2)}m)`);
-  assert.ok(maxStep <= HORSE_GAITS.gallop.speed * DT + 0.02);
+  assert.ok((horse.getAiState() as string) !== 'follow' && (horse.getAiState() as string) !== 'come', `state must never chase (${horse.getAiState()})`);
+  assert.ok(maxDrift < 3.5, `horse must stay put (drift ${maxDrift.toFixed(2)}m)`);
 });
 
 test('HORSE CONTROLLER: summon returns a far horse without teleporting', () => {
@@ -355,6 +397,24 @@ test('HORSE CONTROLLER: STAY for 10s — health never changes (issue 9)', () => 
   assert.equal(horse.getAiState(), 'stay');
 });
 
+test('HORSE CONTROLLER: STAY permanently blocks damage-flee — the horse parks in place (controls §1)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world, 0, 0, 0);
+  assert.equal(horse.stay(), true);
+  // Damage while staying: health DROPS (real damage event) but the horse must
+  // never enter flee locomotion — position bit-constant through 8s.
+  horse.damage(25, 5, 0);
+  assert.equal(horse.getSnapshot().health, 75, 'real damage still applies');
+  let maxDrift = 0;
+  for (let i = 0; i < 60 * 8; i += 1) {
+    horse.update(ctx({ x: 5, y: 1.7, z: 0 }));
+    const p = horse.getPosition();
+    maxDrift = Math.max(maxDrift, Math.hypot(p.x, p.z));
+  }
+  assert.equal(horse.getAiState(), 'stay', `must stay parked (${horse.getAiState()})`);
+  assert.equal(maxDrift, 0, `parked horse must not move an inch (drift ${maxDrift.toFixed(4)}m)`);
+});
+
 test('HORSE CONTROLLER: IDLE for 10s — health never changes (issue 9)', () => {
   const { world } = buildWorld();
   const horse = horseAt(world, 0, 0, 0);
@@ -363,18 +423,18 @@ test('HORSE CONTROLLER: IDLE for 10s — health never changes (issue 9)', () => 
   assert.equal(horse.getSnapshot().health, start, 'IDLE must not drain health');
 });
 
-test('HORSE CONTROLLER: FOLLOW for 10s — health unchanged without collisions (issue 9)', () => {
+test('HORSE CONTROLLER: player walking away for 10s — health unchanged, no chase (issue 9)', () => {
   const { world } = buildWorld();
   const horse = horseAt(world, 0, 0, 0);
   const start = horse.getSnapshot().health;
-  // The player walks away at 3.4 m/s from 0 → the follow engages and keeps its
-  // distance band; an empty world means no collision damage is possible.
+  // The player walks away at 3.4 m/s; an empty world means no collision
+  // damage is possible — and there is no follow to move the horse either.
   for (let i = 0; i < 600; i += 1) {
     const px = 8 + i * 3.4 * DT;
-    horse.update(ctx({ x: Math.min(px, 40), y: 1.7, z: 0 }, true, { x: 3.4, z: 0 }));
+    horse.update(ctx({ x: Math.min(px, 40), y: 1.7, z: 0 }, true));
   }
-  assert.equal(horse.getSnapshot().health, start, 'FOLLOW must not drain health without damage events');
-  assert.ok(['follow', 'idle', 'moving'].includes(horse.getAiState()), `AI state sane (${horse.getAiState()})`);
+  assert.equal(horse.getSnapshot().health, start, 'walking away must not drain health');
+  assert.ok((horse.getAiState() as string) !== 'follow' && (horse.getAiState() as string) !== 'come', `no chase (${horse.getAiState()})`);
 });
 
 test('HORSE CONTROLLER: only explicit damage lowers health — heal/debug paths intact', () => {
@@ -387,16 +447,28 @@ test('HORSE CONTROLLER: only explicit damage lowers health — heal/debug paths 
   assert.equal(horse.getSnapshot().health, 85);
 });
 
-// --- Revision issue 11: the follow condition is direction-aware --------------
+// --- Controls revision §1: nothing can ever engage a chase -------------------
 
-test('HORSE CONTROLLER: player approaching the horse never triggers follow (issue 11)', () => {
+test('HORSE CONTROLLER: player approaching the horse never moves it (command model)', () => {
   const { world } = buildWorld();
   const horse = horseAt(world, 20, 0, 0);
-  // The player starts 10m away on +X and walks TOWARD the horse (velocity −X,
-  // distance shrinking) — follow must never engage and the horse never moves.
+  // The player starts 10m away on +X and walks TOWARD the horse — no command
+  // exists that would make the horse close distance, and approach never
+  // triggers anything. The horse never moves.
   for (let i = 0; i < 120; i += 1) {
-    horse.update(ctx({ x: 30 - i * 3.4 * DT, y: 1.7, z: 0 }, true, { x: -3.4, z: 0 }));
+    horse.update(ctx({ x: 30 - i * 3.4 * DT, y: 1.7, z: 0 }, true));
   }
-  assert.ok(horse.getAiState() !== 'follow', `approach must not follow (${horse.getAiState()})`);
+  assert.ok((horse.getAiState() as string) !== 'follow' && (horse.getAiState() as string) !== 'come', `approach must not chase (${horse.getAiState()})`);
   assert.equal(horse.getPosition().x, 20); // the horse never moved
+});
+
+// --- Controls revision §3: the mount camera contract --------------------------
+
+test('MOUNT CAMERA: first-person mount switches to THIRD PERSON and never returns to FP', () => {
+  // FP → mount: the camera MUST enter the choreography as third person.
+  assert.equal(mountEnterCameraMode('first_person'), 'third_person');
+  // TP → mount: stays third person (no flicker, no toggle-back).
+  assert.equal(mountEnterCameraMode('third_person'), 'third_person');
+  // After the settle the mount flow keeps whatever this returned — i.e. the
+  // rider never lands back in first person from a mount start.
 });

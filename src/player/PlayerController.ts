@@ -258,7 +258,9 @@ export class PlayerController {
     this.gravity = options.gravity ?? 18;
     this.thirdPersonDistance = options.thirdPersonDistance ?? 5.5;
     this.thirdPersonHeight = options.thirdPersonHeight ?? 2.2;
-    this.lookSensitivity = options.lookSensitivity ?? 0.0022;
+    // RMB look sensitivity — tuned ~18% below the original 0.0022 so a
+    // horizontal drag sweeps the camera slightly slower (user feel request).
+    this.lookSensitivity = options.lookSensitivity ?? 0.0018;
     this.crouchSpeed = options.crouchSpeed ?? 2.6;
     this.crouchEyeFactor = Math.min(1, Math.max(0.3, options.crouchEyeFactor ?? 0.58));
     // One source of truth for camera heights (CharacterProportions): an
@@ -282,7 +284,9 @@ export class PlayerController {
     this.maxOrbitOffset = Math.max(0.3, Math.min(Math.PI, options.maxOrbitOffset ?? 1.9));
     this.bodyTurnRate = Math.max(1, options.bodyTurnRate ?? 9);
     this.bodyMaxTurnSpeed = Math.max(0.5, options.bodyMaxTurnSpeed ?? 7);
-    this.turnInPlaceRate = Math.max(0.5, options.turnInPlaceRate ?? 4.5);
+    // Turn-in-place angular speed — tuned ~18% below the original 4.5 rad/s
+    // so held A/D still spin briskly but with a calmer sweep (user feel request).
+    this.turnInPlaceRate = Math.max(0.5, options.turnInPlaceRate ?? 3.7);
     this.turnSpinUpRate = Math.max(1, options.turnSpinUpRate ?? 16);
     this.turnReleaseRate = Math.max(1, options.turnReleaseRate ?? 16);
     this.turnCameraAlignRate = Math.max(0.5, options.turnCameraAlignRate ?? 3);
@@ -371,6 +375,19 @@ export class PlayerController {
   }
 
   isDead(): boolean { return this.dead; }
+
+  /**
+   * Stop all motion in place (Development-mode fly camera hand-off): zeroes
+   * the horizontal velocity and the turn-in-place spin so the character
+   * freezes exactly where it stands — position, yaw, vertical state and
+   * grounded state are untouched, and the animator reads a standstill.
+   */
+  freezeMotion(): void {
+    this.velocity.x = 0;
+    this.velocity.z = 0;
+    this.spinVel = 0;
+    this.jumpQueued = false;
+  }
 
   /** Teleport to a (safe) point and reset all motion state. */
   respawnAt(position: Vec3): void {

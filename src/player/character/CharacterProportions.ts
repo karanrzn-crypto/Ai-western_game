@@ -7,8 +7,8 @@
  * Identity summary ("The Ranger", western gunslinger):
  *   height 1.83m (~7.6 heads), slim athletic build, broad-ish shoulders,
  *   long legs — proportions that read instantly from behind via the hat +
- *   vest + bandana silhouette and stay animation-friendly (no extreme
- *   volumes, normal joint pivots, no crossed deformation zones).
+ *   vest silhouette and stay animation-friendly (no extreme volumes,
+ *   normal joint pivots, no crossed deformation zones).
  *   Clothing is body-hugging only — no duster/coat/cape geometry exists.
  */
 export const CHARACTER_PROPORTIONS = {

@@ -3,17 +3,15 @@
  *
  * Visual identity goals (visible from far away and from behind):
  *   - wide-brim creased cowboy hat (the strongest silhouette driver)
- *   - brick-red neckerchief worn as a tight band around the neck — NO knot,
- *     NO hanging drop, NO cape/cloak/flowing cloth anywhere on the body
  *   - dark leather vest over a faded sand shirt, rolled sleeves + gloves
  *   - gun belt with brass buckle and ammo loops; a thigh-tied holster (rigid
  *     child of the right leg) keeps the revolver clear of the swinging thigh
  *   - tall boot shafts with cuffs, heel blocks and spurs
  *
  * Clothing is strictly body-hugging: head, hat, torso, shirt/vest, arms,
- * hands, pants, boots. Every loose/hanging garment (duster skirt, bandana
- * drop, back sheath) was removed deliberately — they read as a cape from
- * behind and no longer exist in the rig or the animator.
+ * hands, pants, boots. Every loose/hanging garment (duster skirt, neck ring
+ * ring, back sheath) was removed deliberately — they read as a cape or add
+ * nothing to the silhouette — and no longer exist in the rig or animator.
  *
  * Rig: every articulated part is a THREE.Group ("joint") so animation only
  * ever rotates groups; meshes are rigid children, which guarantees no cloth/
@@ -39,7 +37,6 @@ export interface CharacterMaterials {
   boot: THREE.MeshStandardMaterial;
   belt: THREE.MeshStandardMaterial;
   glove: THREE.MeshStandardMaterial;
-  bandana: THREE.MeshStandardMaterial;
   hat: THREE.MeshStandardMaterial;
   hatBand: THREE.MeshStandardMaterial;
   gunmetal: THREE.MeshStandardMaterial;
@@ -63,8 +60,8 @@ export interface CharacterModel {
   /** First-person: hide head+hat so they never block the camera. */
   setHeadVisible(visible: boolean): void;
   /**
-   * Full first-person body treatment: hides the head AND the neck/bandana
-   * stub that sits directly under the camera, so the view can never read as
+   * Full first-person body treatment: hides the head AND the neck stub that
+   * sits directly under the camera, so the view can never read as
    * "a camera parked on the collar". Third person restores both.
    */
   setFirstPerson(firstPerson: boolean): void;
@@ -86,7 +83,6 @@ function createCharacterMaterials(): CharacterMaterials {
     boot: std(0x322419, 0.76),
     belt: std(0x2c1f16, 0.68),
     glove: std(0x40301f, 0.85),
-    bandana: std(0x99432f, 0.95),
     hat: std(0x52402c, 0.9),
     hatBand: std(0x241a12, 0.9),
     gunmetal: std(0x45484d, 0.38, 0.85),
@@ -211,11 +207,8 @@ export function createCharacterModel(): CharacterModel {
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.16, -0.112, true);
   mesh(chest, materials.brass, 0.02, 0.02, 0.012, -0.03, 0.06, -0.112, true);
 
-  // --- Neck + bandana -------------------------------------------------------
-  // The bandana is a TIGHT ring around the neck — a classic western
-  // neckerchief with nothing hanging from it (no knot, no chest drop).
+  // --- Neck -----------------------------------------------------------------
   cylinder(neck, materials.skin, 0.052, 0.058, 0.09, 0, 0.02, 0, false, 8);
-  cylinder(neck, materials.bandana, 0.082, 0.082, 0.06, 0, -0.025, 0, false, 10);
 
   // --- Head, hair, face, hat ------------------------------------------------
   mesh(head, materials.skin, P.headWidth, P.headHeight, P.headDepth, 0, 0.115, 0);
@@ -289,7 +282,7 @@ export function createCharacterModel(): CharacterModel {
       if (headJoint) headJoint.visible = visible;
     },
     setFirstPerson(firstPerson: boolean): void {
-      // Head (with hat/hair/face) AND the neck+bandana stub hide in first
+      // Head (with hat/hair/face) AND the neck stub hide in first
       // person: both sit exactly at/under the camera eye line and would
       // otherwise read as the camera hanging at the collar.
       if (headJoint) headJoint.visible = !firstPerson;

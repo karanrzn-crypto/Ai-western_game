@@ -14,6 +14,7 @@ export type GameAction =
   | 'crouch'
   | 'interact'
   | 'cameraToggle'
+  | 'creativeToggle'
   | 'respawn'
   | 'debugDamage'
   | 'debugHeal';
@@ -36,6 +37,10 @@ export const DEFAULT_KEY_BINDINGS: Readonly<Record<GameAction, readonly string[]
   crouch: ['ControlLeft', 'ControlRight', 'KeyC'],
   interact: ['KeyE'],
   cameraToggle: ['KeyV'],
+  // Development-mode fly camera toggle. F is free in play mode (in EDIT mode
+  // the InputBindings are disabled entirely and F belongs to the editor's
+  // rotate shortcut), so there is no binding conflict.
+  creativeToggle: ['KeyF'],
   respawn: ['KeyR'],
   // Debug hooks for exercising Health/Death without combat (Part 2).
   debugDamage: ['KeyH'],

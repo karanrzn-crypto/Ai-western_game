@@ -76,14 +76,14 @@ test('REGRESSION: A/D alone turn the body in place — fast ramp, constant cappe
   }
   assert.ok(steps[0] > 0 && steps[0] < 0.05, 'the first frame eases into the turn (no snap)');
   assert.ok(steps[steps.length - 1] > steps[0] * 2, 'the spin ramps up to full speed');
-  for (const s of steps) assert.ok(s <= 4.5 / 60 + 1e-9, `step ${s.toFixed(4)} exceeds the 4.5 rad/s cap`);
+  for (const s of steps) assert.ok(s <= 3.7 / 60 + 1e-9, `step ${s.toFixed(4)} exceeds the 3.7 rad/s cap`);
 
   // Sustained hold: constant capped rate — no runaway acceleration.
   let worstDeviation = 0;
   previous = controller.getBodyYaw();
   for (let i = 0; i < 120; i += 1) {
     controller.update(1 / 60, { left: true });
-    worstDeviation = Math.max(worstDeviation, Math.abs(controller.getBodyYaw() - previous - 4.5 / 60));
+    worstDeviation = Math.max(worstDeviation, Math.abs(controller.getBodyYaw() - previous - 3.7 / 60));
     previous = controller.getBodyYaw();
   }
   assert.ok(worstDeviation < 0.01, `sustained spin deviated ${worstDeviation.toFixed(4)} rad/frame from the constant rate`);
@@ -99,7 +99,7 @@ test('REGRESSION: A/D alone turn the body in place — fast ramp, constant cappe
 
 test('REGRESSION: forward-dominant turns are a continuous sweep — no frame jumps beyond the angular cap', () => {
   const controller = thirdPerson();
-  controller.look(-400, 0); // camera +0.88 off the body
+  controller.look(-489, 0); // camera +0.88 off the body
   let previous = controller.getBodyYaw();
   let worst = 0;
   for (let i = 0; i < 120; i += 1) {
@@ -135,10 +135,10 @@ test('REGRESSION: W+A converges the body onto the diagonal (forward-dominant cha
 test('REGRESSION: RMB orbit never rotates the body and stays within the offset bound', () => {
   const controller = thirdPerson();
 
-  controller.look(-400, 0); // 0.88 rad < 1.9 bound (yaw -= dx·sens)
+  controller.look(-400, 0); // 0.72 rad < 1.9 bound (yaw -= dx·sens)
   for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
   assert.equal(controller.getBodyYaw(), 0, 'body stays put while the camera orbits');
-  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.88) < 1e-9, 'offset matches the mouse drag');
+  assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.72) < 1e-9, 'offset matches the mouse drag');
 
   // A huge drag clamps at the bound instead of separating the camera forever.
   controller.look(-5000, 0);
@@ -166,7 +166,7 @@ test('REGRESSION: the orbit offset closes only when the body chases the camera (
   const controller = thirdPerson();
 
   // Idle: the offset persists (no camera motion after stopping).
-  controller.look(-270, 0); // +0.594 rad
+  controller.look(-330, 0); // +0.594 rad
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
   assert.ok(Math.abs(controller.getCameraOrbitOffset() - 0.594) < 1e-9, 'idle never closes the offset');
 
@@ -183,7 +183,7 @@ test('REGRESSION: the orbit offset closes only when the body chases the camera (
   assert.ok(Math.abs(wrap(controller.getYaw() - cameraBefore)) < 1e-9, 'the camera itself never moved');
 
   // While dragging mid-run the body still chases the live camera heading.
-  controller.look(-400, 0); // flick +0.88 while W is held
+  controller.look(-489, 0); // flick +0.88 while W is held
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
   assert.ok(
     Math.abs(wrap(controller.getBodyYaw() - controller.getYaw())) < 0.05,
@@ -263,7 +263,7 @@ test('REGRESSION: held lateral input (S+D) converges to a straight line — no p
 
 test('REGRESSION: a fresh W press uses the rotated camera basis immediately', () => {
   const controller = thirdPerson();
-  controller.look(-100, 0); // camera yaw now +0.22 relative to the body
+  controller.look(-100, 0); // camera yaw now +0.18 relative to the body
   const p0 = controller.getPosition();
   for (let i = 0; i < 10; i += 1) controller.update(1 / 60, { forward: true });
   const heading = Math.atan2(

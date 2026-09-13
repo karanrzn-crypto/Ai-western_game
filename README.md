@@ -183,8 +183,11 @@ npm run dev
 Serves the playable western map (`index.html` → `game/playable-map.ts`):
 third-person character with WASD movement, RMB mouse look, sprint/jump/
 crouch, vitals (HP/SP), a continuous day/night cycle, object interaction
-(E), and an edit mode (TAB) with a transform gizmo whose changes persist
-to localStorage.
+(E), an edit mode (TAB) with a transform gizmo whose changes persist
+to localStorage, and a Creative Mode (F) — an independent Development
+fly camera (WASD + Space up / Ctrl down / Shift fast, no gravity or
+collision) that freezes the player in place and reconnects the normal
+third-person camera on exit without teleporting anyone.
 
 ### Run the production build
 

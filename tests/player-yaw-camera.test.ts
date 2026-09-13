@@ -54,10 +54,10 @@ test('CONTRACT: RMB orbit rotates the camera in real time, bounded around the bo
   const controller = thirdPerson();
 
   // A long drag saturates the bound instead of orbiting forever.
-  controller.look(900, 0); // yaw -= dx·sens → camera swings to the - bound
+  controller.look(1100, 0); // yaw -= dx·sens → −1.98 rad → clamps to the - bound
   assert.equal(controller.getCameraOrbitOffset(), -1.9);
   // Dragging back the other way recovers and saturates at the opposite bound.
-  for (let i = 0; i < 900; i += 1) controller.look(-6, 0); // ≈ +11.9 rad total
+  for (let i = 0; i < 900; i += 1) controller.look(-6, 0); // ≈ +9.7 rad total
   assert.equal(controller.getCameraOrbitOffset(), 1.9);
   assert.equal(controller.getBodyYaw(), 0, 'the mouse never spun the character');
 
@@ -110,7 +110,7 @@ test('CONTRACT: third-person look() alone never rotates the body (mouse moves th
 
 test('CONTRACT: W after rotating the camera moves along the NEW camera forward immediately', () => {
   const controller = thirdPerson();
-  controller.look(-400, 0); // camera yaw now +0.88 rad relative to the body
+  controller.look(-489, 0); // camera yaw now +0.88 rad relative to the body
 
   // From rest, the very first movement frames head along the rotated view.
   const p0 = controller.getPosition();
@@ -134,7 +134,7 @@ test('CONTRACT: holding W while dragging the camera bends the run continuously (
 
   // Rotate the camera ~55° right WHILE W stays held.
   for (let i = 0; i < 42; i += 1) {
-    controller.look(-12, 0); // ≈ 0.0264 rad per frame
+    controller.look(-12, 0); // ≈ 0.0216 rad per frame
     controller.update(1 / 60, { forward: true });
   }
   const after = controller.getPosition();
@@ -150,7 +150,7 @@ test('CONTRACT: holding W while dragging the camera bends the run continuously (
   const mid = controller.getPosition();
   for (let i = 0; i < 30; i += 1) controller.update(1 / 60, { forward: true });
   const settled = travelHeading(mid, controller.getPosition());
-  const draggedYaw = 42 * 12 * 0.0022; // ≈ 1.109 rad of camera sweep
+  const draggedYaw = 42 * 12 * 0.0018; // ≈ 0.907 rad of camera sweep
   assert.ok(Math.abs(wrap(settled - draggedYaw)) < 0.12, `post-drag heading ${settled.toFixed(3)} ≈ camera forward`);
 });
 
@@ -176,7 +176,7 @@ test('CONTRACT: diagonals run the exact normalized camera-relative heading', () 
 
 test('CONTRACT: forward-dominant movement turns the body smoothly toward the heading (capped, no snap)', () => {
   const controller = thirdPerson();
-  controller.look(-400, 0); // camera +0.88 off the body
+  controller.look(-489, 0); // camera +0.88 off the body
 
   let previous = controller.getBodyYaw();
   let worst = 0;
@@ -200,9 +200,9 @@ test('CONTRACT: A/D alone spin the body in place — continuous, capped, zero tr
   assert.ok(firstA > 0 && firstA < 0.05, `first A frame eased into the turn (${firstA.toFixed(4)} rad — not a step)`);
   const p0 = controller.getPosition();
   for (let i = 0; i < 119; i += 1) controller.update(1 / 60, { left: true });
-  // bodyYaw accumulates UNWRAPPED — 2 s at 4.5 rad/s minus the ramp ≈ 8.72 rad.
+  // bodyYaw accumulates UNWRAPPED — 2 s at 3.7 rad/s minus the ramp ≈ 7.17 rad.
   const swept = controller.getBodyYaw();
-  assert.ok(swept > 8.4 && swept < 9.0, `2s of A swept ${swept.toFixed(2)} rad (expected ≈ 8.7)`);
+  assert.ok(swept > 6.9 && swept < 7.5, `2s of A swept ${swept.toFixed(2)} rad (expected ≈ 7.2)`);
   const p1 = controller.getPosition();
   assert.ok(Math.abs(p1.x - p0.x) < 1e-9 && Math.abs(p1.z - p0.z) < 1e-9, 'turn-in-place never translates');
 
@@ -224,7 +224,7 @@ test('CONTRACT: turn-in-place is dt-driven — no fixed-degree step exists', () 
     previous = controller.getBodyYaw();
   }
   assert.ok(steps[4] > steps[0] * 2, `later steps (${steps[4].toFixed(4)}) exceed early ones (${steps[0].toFixed(4)}) — velocity-driven`);
-  for (const s of steps) assert.ok(s <= 4.5 / 60 + 1e-9, `step ${s.toFixed(4)} rad exceeds the 4.5 rad/s cap`);
+  for (const s of steps) assert.ok(s <= 3.7 / 60 + 1e-9, `step ${s.toFixed(4)} rad exceeds the 3.7 rad/s cap`);
 
   // Repeated press/release cycles accumulate only while held (+ short
   // smooth tail) — never a constant per-press chunk.
@@ -235,7 +235,7 @@ test('CONTRACT: turn-in-place is dt-driven — no fixed-degree step exists', () 
   }
   const held = thirdPerson();
   for (let i = 0; i < 60; i += 1) held.update(1 / 60, { left: true });
-  // Both accumulate ≈ 4.2–4.5 rad unwrapped (well apart from the ±π cut).
+  // Both accumulate ≈ 3.3–3.5 rad unwrapped (well apart from the ±π cut).
   assert.ok(
     Math.abs(held.getBodyYaw() - taps.getBodyYaw()) < 0.5,
     `cycled input (${taps.getBodyYaw().toFixed(2)}) ≈ continuously-held (${held.getBodyYaw().toFixed(2)}) — no per-press bonus`,
@@ -275,7 +275,7 @@ test('CONTRACT: the camera follows turn-in-place synchronously and ends behind t
   // From a behind start the offset stays exactly zero while both rotate.
   let previousBody = controller.getBodyYaw();
   let previousCamera = controller.getYaw();
-  for (let i = 0; i < 120; i += 1) {
+  for (let i = 0; i < 150; i += 1) {
     controller.update(1 / 60, { left: true });
     assert.ok(
       Math.abs((controller.getBodyYaw() - previousBody) - (controller.getYaw() - previousCamera)) < 1e-9,
@@ -290,7 +290,7 @@ test('CONTRACT: the camera follows turn-in-place synchronously and ends behind t
   // A pre-existing orbit offset eases toward zero: the camera swings behind
   // DURING the turn (never as a post-stop snap).
   const orbited = thirdPerson();
-  orbited.look(-273, 0); // ≈ +0.6 rad offset
+  orbited.look(-334, 0); // ≈ +0.6 rad offset
   for (let i = 0; i < 240; i += 1) orbited.update(1 / 60, { left: true });
   assert.ok(
     Math.abs(orbited.getCameraOrbitOffset()) < 0.05,
@@ -357,7 +357,7 @@ test('CONTRACT: backpedaling (S) slides the body — smooth W→S reversal throu
 
 test('CONTRACT: the body realigns with the camera during forward runs — idle, strafe and backpedal never move anything', () => {
   const controller = thirdPerson();
-  controller.look(-270, 0); // +0.594 rad offset
+  controller.look(-330, 0); // +0.594 rad offset
 
   // Idle: nothing moves.
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
@@ -383,7 +383,7 @@ test('CONTRACT: the body realigns with the camera during forward runs — idle, 
 
   // While dragging mid-run, the body still chases the live camera heading.
   const bodyBefore = controller.getBodyYaw();
-  controller.look(-400, 0); // flick the camera +0.88 while W is held
+  controller.look(-489, 0); // flick the camera +0.88 while W is held
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, { forward: true });
   assert.ok(
     Math.abs(wrap(controller.getBodyYaw() - controller.getYaw())) < 0.05,
@@ -439,24 +439,24 @@ test('CONTRACT: the head tracks the camera, clamped and smoothed', () => {
   const controller = thirdPerson();
 
   // Orbit well past the head bound: the gaze clamps at maxHeadYaw.
-  controller.look(-900, 0); // offset → +1.9 rad, head clamps at 1.0
+  controller.look(-900, 0); // offset → +1.62 rad, head clamps at 1.0
   for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
   assert.ok(Math.abs(controller.getHeadLookYaw() - 1.0) < 1e-3, `head clamped at ±1.0 (got ${controller.getHeadLookYaw().toFixed(3)})`);
 
   // The approach is smoothed — no single-frame jump reaches the target.
   const smooth = thirdPerson();
-  smooth.look(-400, 0); // target 0.88
+  smooth.look(-400, 0); // target 0.72
   smooth.update(1 / 60, {});
   assert.ok(smooth.getHeadLookYaw() > 0.01 && smooth.getHeadLookYaw() < 0.88, 'head eased toward the target, not snapped');
 
   // A moderate orbit converges to exactly the camera-minus-body offset.
   const moderate = thirdPerson();
-  moderate.look(-270, 0); // +0.594
+  moderate.look(-270, 0); // +0.486
   for (let i = 0; i < 120; i += 1) moderate.update(1 / 60, {});
-  assert.ok(Math.abs(moderate.getHeadLookYaw() - 0.594) < 1e-3, 'head converged on the orbit offset');
+  assert.ok(Math.abs(moderate.getHeadLookYaw() - 0.486) < 1e-3, 'head converged on the orbit offset');
 
   // Camera pitch bleeds into the head pitch (clamped fraction).
-  moderate.look(0, -600); // pitch += 600·0.0022 ≈ 1.32 → ×0.55 = 0.726 → clamp 0.6
+  moderate.look(0, -700); // pitch += 700·0.0018 ≈ 1.26 → ×0.55 = 0.693 → clamp 0.6
   for (let i = 0; i < 120; i += 1) moderate.update(1 / 60, {});
   assert.ok(
     Math.abs(moderate.getHeadLookPitch() - 0.6) < 1e-3,
@@ -491,7 +491,7 @@ test('CONTRACT: first-person look and movement keep classic behaviour', () => {
     yaw: 0,
     cameraMode: 'first_person',
   });
-  controller.look(-Math.PI / 2 / 0.0022, 0); // turn the view 90° left
+  controller.look(-Math.PI / 2 / 0.0018, 0); // turn the view 90° left
   assert.equal(controller.getBodyYaw(), controller.getYaw(), 'body IS the camera in FP');
   for (let i = 0; i < 30; i += 1) controller.update(1 / 60, { forward: true });
   const p = controller.getPosition();

@@ -72,7 +72,7 @@ test('character rig is a proper joint hierarchy', () => {
 test('character materials are natural and distinguishable', () => {
   const { model } = build();
   const mats = Object.values(model.materials);
-  assert.equal(mats.length, 15);
+  assert.equal(mats.length, 14);
   const signatures = new Set(mats.map((m) => `${m.color.getHexString()}:${m.roughness.toFixed(2)}:${m.metalness.toFixed(2)}`));
   assert.equal(signatures.size, mats.length, 'every material family must be visually distinct');
   // Realism guards: skin is matte (not plastic/metal), leather is rough, gun is metallic.

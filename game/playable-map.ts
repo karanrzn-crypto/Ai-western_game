@@ -28,6 +28,7 @@ import {
   InteractionSystem,
   ThirdPersonCamera,
   MouseLookController,
+  CreativeFlightController,
   findSafeSpawnPosition,
 } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -78,7 +79,7 @@ const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);
 scene.add(hemisphere);
 
 // --- The main character ("The Ranger") ----------------------------------
-// Procedural western gunslinger: hat + duster + bandana + gun belt silhouette.
+// Procedural western gunslinger: hat + vest + gun belt silhouette.
 // Built once, animated procedurally, LOD'd, synced to the controller below.
 const character = createCharacterModel();
 scene.add(character.root);
@@ -302,7 +303,11 @@ function updateEditorHud(): void {
     const selectedUuid = editor.getSelectedUuid();
     selected.textContent = selectedUuid ? manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid : 'None';
   }
-  if (cameraLabel) cameraLabel.textContent = playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
+  if (cameraLabel) {
+    cameraLabel.textContent = creativeActive
+      ? 'CREATIVE FLIGHT'
+      : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
+  }
 }
 
 function updateControlHint(): void {
@@ -312,7 +317,7 @@ function updateControlHint(): void {
     hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
-  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · H/J damage/heal (debug) · R respawn · TAB edit';
+  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact · V camera · F creative fly · H/J damage/heal (debug) · R respawn · TAB edit';
 }
 
 function updateSelectionPanel(): void {
@@ -393,6 +398,36 @@ function loadSavedScene(): void {
   updateSaveStatus();
 }
 
+// --- Creative Mode (Development fly camera, F key) ------------------------
+// A separate, self-contained Development mode: the CreativeFlightController
+// owns ONLY the camera while active. The player stays exactly where he is
+// (position/velocity/animation untouched, gravity + collision off because
+// PlayerController.update simply isn't called) and the third-person rig is
+// disconnected so nothing else can move the camera either. Exiting just
+// reconnects the normal Third Person system — the player is NEVER teleported
+// to the camera or vice versa.
+const creativeFlight = new CreativeFlightController({ speed: 12 });
+let creativeActive = false;
+
+function setCreativeMode(active: boolean): void {
+  if (active === creativeActive) return;
+  creativeActive = active;
+  if (active) {
+    playerController.freezeMotion(); // stop in place: no run-in-place pose
+    creativeFlight.begin(camera, playerController.getYaw(), playerController.getPitch());
+    showStatusMessage('Creative mode: WASD fly · Space up · Ctrl down · Shift fast · F exit');
+  } else {
+    creativeFlight.end();
+    // Reconnect the camera the player's mode already uses — without moving
+    // the player. Third person re-snaps behind the character; first person
+    // re-derives the eye from the untouched player state.
+    playerController.setCameraMode(playerController.getCameraMode());
+    showStatusMessage('Back to normal third person.');
+  }
+  updateEditorHud();
+  updateControlHint();
+}
+
 /**
  * Mode wiring — the ONE place that mirrors the game mode into the input
  * systems. Boot and every Tab toggle go through this, so the character can
@@ -403,6 +438,7 @@ function applyModeState(): void {
   const editMode = editor.isEditMode();
   input.setEnabled(!editMode); // character controls only live in play mode
   debugAxes.visible = editMode;
+  if (editMode && creativeActive) setCreativeMode(false); // editor owns the keyboard
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
   updateEditorHud();
   updateControlHint();
@@ -517,7 +553,9 @@ window.addEventListener('pointerup', () => {
 });
 
 function updatePlayer(delta: number): void {
-  if (editor.isEditMode()) return;
+  // Creative mode: the player is frozen in place — no update means no
+  // movement, no gravity and no collision. The fly camera owns the frame.
+  if (editor.isEditMode() || creativeActive) return;
   playerController.update(delta, input.getMoveInput());
 }
 
@@ -572,7 +610,9 @@ function syncCharacter(delta: number, previousBodyYaw: number): void {
   // Stamina only drains while actually sprinting forward.
   stamina.update(delta, playerController.isSprinting() && speed > 0.5 && playerController.isGrounded());
   // Camera: the rig owns third person; the controller keeps first person.
-  if (playerController.getCameraMode() === 'third_person') {
+  // In creative mode neither runs — the fly camera owns the frame and the
+  // character keeps its last pose (frozen in place).
+  if (!creativeActive && playerController.getCameraMode() === 'third_person') {
     // Crouch factor from the CONTROLLER's own eye metrics (single source) —
     // 1 = standing, 0 = fully crouched.
     const standEye = playerController.getStandingEyeHeight();
@@ -587,7 +627,7 @@ function syncCharacter(delta: number, previousBodyYaw: number): void {
       deltaSeconds: delta,
     });
   }
-  // First person hides the head AND the neck/bandana stub under the camera.
+  // First person hides the head AND the neck stub under the camera.
   character.setFirstPerson(playerController.getCameraMode() === 'first_person');
   character.updateLOD(camera.position);
 }
@@ -633,11 +673,24 @@ function animate(): void {
   // before the player updates, so movement and the camera agree this frame.
   const lookDelta = mouseLook.consumeLookDelta();
   if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
-    playerController.look(lookDelta.x, lookDelta.y);
+    if (creativeActive) creativeFlight.look(lookDelta.x, lookDelta.y);
+    else playerController.look(lookDelta.x, lookDelta.y);
   }
   updatePlayer(delta);
+  // F toggles the Development fly camera (edge action, consumed once).
+  if (input.consumePressed('creativeToggle')) setCreativeMode(!creativeActive);
   // Edge-triggered play actions (death gates everything but respawn).
-  if (!editor.isEditMode()) {
+  if (creativeActive) {
+    // Creative owns the movement keys: discard the play edges so nothing
+    // (jump queue, crouch, camera toggle…) leaks in or out of the mode.
+    input.consumePressed('jump');
+    input.consumePressed('crouch');
+    input.consumePressed('interact');
+    input.consumePressed('cameraToggle');
+    input.consumePressed('debugDamage');
+    input.consumePressed('debugHeal');
+    input.consumePressed('respawn');
+  } else if (!editor.isEditMode()) {
     const dead = playerController.isDead();
     if (!dead && input.consumePressed('jump')) playerController.requestJump();
     if (!dead && input.consumePressed('crouch')) playerController.toggleCrouch();
@@ -658,6 +711,20 @@ function animate(): void {
       const element = document.getElementById('status-message');
       if (element) element.textContent = '';
     }
+  }
+  // Fly the creative camera AFTER the (skipped) player update: Space/Ctrl
+  // drive vertical motion, Shift doubles the speed.
+  if (creativeActive) {
+    const move = input.getMoveInput();
+    creativeFlight.update(delta, {
+      forward: move.forward,
+      backward: move.backward,
+      left: move.left,
+      right: move.right,
+      up: input.isDown('jump'),
+      down: input.isDown('crouch'),
+      fast: move.sprint,
+    }, camera);
   }
   syncCharacter(delta, previousBodyYaw);
   previousBodyYaw = playerController.getBodyYaw();

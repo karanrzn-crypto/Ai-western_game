@@ -303,7 +303,7 @@ test('Movement and camera stay coupled: WASD follows the RMB-rotated camera', ()
   controller.look(-100, 0); // RMB drag of 100px to the right...
   controller.update(0.25, { forward: true }); // ...W on the same frame
   const pos = controller.getPosition();
-  // yaw -= 100 * 0.0022 => yaw = -0.22 => forward turns toward -X side.
+  // yaw -= 100 * 0.0018 => yaw = -0.18 => forward turns toward -X side.
   assert.ok(pos.x < -0.05, `W follows the freshly rotated camera (x=${pos.x.toFixed(3)})`);
   assert.ok(pos.z < 0, 'and still moves forward');
 });

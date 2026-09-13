@@ -175,6 +175,37 @@ test('InputBindings maps keys to actions with edges and remapping', () => {
   assert.equal(input.isEnabled(), false);
 });
 
+test('InputBindings: disabling drops held keys AND pending edges — the mode-switch guard', () => {
+  // The playable-map wiring relies on this for the Creative↔Edit priority
+  // contract: entering Edit Mode (TAB) disables the bindings, which must
+  // also drop any just-pressed edge (e.g. F in the same frame) so no play
+  // action leaks into the editor frame, and releasing/dropping held keys
+  // (e.g. a fly-camera W) leaves no stale down-state behind.
+  const target = new FakeKeyTarget();
+  const input = new InputBindings(target as never);
+  input.attach();
+  input.setEnabled(true);
+
+  target.press('KeyF');
+  target.press('KeyW');
+  assert.equal(input.consumePressed('creativeToggle'), true, 'F edge pending while enabled');
+
+  // Re-arm an edge, then flip to "edit mode": both the edge and the
+  // held-key state must vanish.
+  target.press('KeyF');
+  target.press('Space');
+  input.setEnabled(false);
+  assert.equal(input.consumePressed('creativeToggle'), false, 'pending F edge dropped by disable');
+  assert.equal(input.isDown('jump'), false, 'held Space dropped by disable');
+  assert.equal(input.getMoveInput().forward, false, 'held W dropped by disable');
+
+  // While disabled, new key events are ignored entirely.
+  target.press('KeyF');
+  target.release('KeyF');
+  input.setEnabled(true);
+  assert.equal(input.consumePressed('creativeToggle'), false, 'no edge survived the disabled window');
+});
+
 // --- InteractionSystem ----------------------------------------------------------
 
 test('InteractionSystem picks the best candidate in range and dispatches', () => {

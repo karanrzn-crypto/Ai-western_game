@@ -4,9 +4,11 @@
  *   1. CAMERA — an independent view yaw, kept within a bounded orbit offset
  *      of the body. RMB drags rotate it in real time and NEVER rotate the
  *      character; the offset can never exceed the bound.
- *   2. MOVEMENT — recomputed EVERY frame from the CURRENT camera basis.
- *      Rotating the camera changes where W/A/S/D carry the player on the
- *      very next frame. Nothing is latched, cached or held until a stop.
+ *   2. MOVEMENT — the world-space heading is sampled from the camera basis
+ *      when the movement starts, when the key set changes, or when RMB
+ *      rotates the camera mid-run (a drag still bends the path). Between
+ *      those events the heading is world-fixed, which is what lets the
+ *      camera follow the turning body without a perpetual chase.
  *   3. BODY — A/D held ALONE (no W/S) spin the body in place: dt-driven,
  *      continuous rotation with a fast exponential ramp-up, a constant
  *      capped rate and a smooth exponential release (no per-press step,
@@ -15,10 +17,13 @@
  *      heading (exponential + angular-speed cap); S±A/D slide the body
  *      without rotating it. Velocity always blends (accel/brake), never
  *      snaps — W→S passes through zero smoothly.
- *   4. FOLLOW — during pure-forward runs with the mouse hands-off the
- *      camera eases back behind the body DURING the movement. Idle frames
- *      and lateral/backward moves never rotate anything, so a stop can
- *      never start a camera swing.
+ *   4. FOLLOW — during forward-dominant runs the camera tracks the body's
+ *      rotation 1:1 and the residual orbit offset eases behind, so W+A/W+D
+ *      diagonals end with the camera settled behind the character DURING
+ *      the run. With the equal-rate pairing a pure-W realign leaves the
+ *      camera exactly where it was (the body does the whole turn). Idle
+ *      frames and lateral/backward moves never rotate anything, and a stop
+ *      can never start a camera swing.
  *   5. HEAD — the gaze layer: clamp(normalizeAngle(cameraYaw - bodyYaw),
  *      ±maxHeadYaw) and a clamped fraction of the camera pitch, smoothed
  *      every frame. 0 in first person and while dead.
@@ -353,7 +358,101 @@ test('CONTRACT: backpedaling (S) slides the body — smooth W→S reversal throu
   assert.ok(controller.getPosition().z > 1, 'character moved camera-backward');
 });
 
-// --- 4. Realignment: the body chases the camera, never the reverse -------------
+// --- 4. Realignment: the body chases the heading, the camera follows ---------
+
+test('CONTRACT: W+A turns the body onto the diagonal AND the camera settles behind during the run', () => {
+  const controller = thirdPerson();
+  const cameraYawBefore = controller.getYaw();
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, left: true });
+
+  const body = wrap(controller.getBodyYaw());
+  assert.ok(Math.abs(body - Math.PI / 4) < 0.03, `body settled on the W+A diagonal (${body.toFixed(3)})`);
+  // The camera rotated WITH the body (it did not stay off to the side) and
+  // ends exactly behind the character.
+  assert.ok(
+    Math.abs(wrap(controller.getYaw() - cameraYawBefore - Math.PI / 4)) < 0.03,
+    `camera followed the body rotation (${wrap(controller.getYaw() - cameraYawBefore).toFixed(3)})`,
+  );
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, `camera behind the body (${controller.getCameraOrbitOffset().toFixed(3)})`);
+
+  // The travelled path stays on the latched diagonal — the camera follow
+  // must never curve the run (the movement heading is world-fixed).
+  const p = controller.getPosition();
+  const dirAngle = Math.atan2(-p.x, -p.z);
+  assert.ok(Math.abs(wrap(dirAngle - Math.PI / 4)) < 0.05, 'travelled along the exact diagonal');
+});
+
+test('CONTRACT: W+D mirrors W+A — camera follows right and settles behind', () => {
+  const controller = thirdPerson();
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, right: true });
+  assert.ok(Math.abs(wrap(controller.getBodyYaw()) + Math.PI / 4) < 0.03, 'body settled on the W+D diagonal');
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, `camera behind the body (${controller.getCameraOrbitOffset().toFixed(3)})`);
+  const p = controller.getPosition();
+  assert.ok(Math.abs(wrap(Math.atan2(-p.x, -p.z) + Math.PI / 4)) < 0.05, 'travelled along the exact diagonal');
+});
+
+test('CONTRACT: a W+A run started with a residual orbit offset ends with the camera behind', () => {
+  const controller = thirdPerson();
+  controller.look(-334, 0); // ≈ +0.6 rad offset
+  const headingBefore = controller.getYaw();
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, left: true });
+
+  // The heading was latched from the ORBITED camera: body and camera both
+  // converge onto heading + π/4, offset closed.
+  assert.ok(
+    Math.abs(wrap(controller.getBodyYaw() - headingBefore - Math.PI / 4)) < 0.03,
+    'body arrived at the orbited diagonal heading',
+  );
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, `camera settled behind (${controller.getCameraOrbitOffset().toFixed(3)})`);
+});
+
+test('CONTRACT: a long W+A run converges to a straight line with the camera at rest — no perpetual spin', () => {
+  const controller = thirdPerson();
+  for (let i = 0; i < 300; i += 1) controller.update(1 / 60, { forward: true, left: true });
+  let totalCameraRotation = 0;
+  let totalBodyRotation = 0;
+  let previousCamera = controller.getYaw();
+  let previousBody = controller.getBodyYaw();
+  for (let i = 0; i < 120; i += 1) {
+    controller.update(1 / 60, { forward: true, left: true });
+    totalCameraRotation += Math.abs(wrap(controller.getYaw() - previousCamera));
+    totalBodyRotation += Math.abs(wrap(controller.getBodyYaw() - previousBody));
+    previousCamera = controller.getYaw();
+    previousBody = controller.getBodyYaw();
+  }
+  assert.ok(totalBodyRotation < 1e-3, `body rotated ${totalBodyRotation.toFixed(5)} rad in the last 2s — chase loop`);
+  assert.ok(totalCameraRotation < 1e-3, `camera rotated ${totalCameraRotation.toFixed(5)} rad in the last 2s — chase loop`);
+});
+
+test('CONTRACT: after a W+A stop the camera and body stay frozen (no post-run catch-up)', () => {
+  const controller = thirdPerson();
+  controller.look(-300, 0); // give the follow something to settle
+  for (let i = 0; i < 40; i += 1) controller.update(1 / 60, { forward: true, left: true });
+  // W+A never engages the turn-in-place spin, so the stop is immediate.
+  for (let i = 0; i < 10; i += 1) controller.update(1 / 60, {});
+  const c = controller.getYaw();
+  const b = controller.getBodyYaw();
+  for (let i = 0; i < 120; i += 1) controller.update(1 / 60, {});
+  assert.equal(controller.getYaw(), c, 'camera exactly frozen after a W+A stop');
+  assert.equal(controller.getBodyYaw(), b, 'body exactly frozen after a W+A stop');
+});
+
+test('CONTRACT: a mid-run RMB drag during W+A re-samples the diagonal from the dragged camera', () => {
+  const controller = thirdPerson();
+  // Fully settle a W+A run first: body = camera = π/4, offset 0.
+  for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, left: true });
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 1e-6, 'pre-drag state settled');
+
+  controller.look(-500, 0); // orbit ≈ +0.9 rad while W+A stays held
+  for (let i = 0; i < 150; i += 1) controller.update(1 / 60, { forward: true, left: true });
+  const dragged = 500 * 0.0018;
+  // The heading re-sampled from the DRAGGED camera: new diagonal = π/4 + drag + π/4.
+  assert.ok(
+    Math.abs(wrap(controller.getBodyYaw() - Math.PI / 2 - dragged)) < 0.05,
+    `body took the NEW diagonal (${wrap(controller.getBodyYaw()).toFixed(3)})`,
+  );
+  assert.ok(Math.abs(controller.getCameraOrbitOffset()) < 0.05, 'camera settled behind on the new heading');
+});
 
 test('CONTRACT: the body realigns with the camera during forward runs — idle, strafe and backpedal never move anything', () => {
   const controller = thirdPerson();

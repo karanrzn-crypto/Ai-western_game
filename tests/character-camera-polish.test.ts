@@ -124,7 +124,8 @@ test('REGRESSION: W+A converges the body onto the diagonal (forward-dominant cha
   for (let i = 0; i < 240; i += 1) controller.update(1 / 60, { forward: true, left: true });
   const body = wrap(controller.getBodyYaw());
   assert.ok(Math.abs(body - Math.PI / 4) < 0.03, `body settled on the W+A diagonal (${body.toFixed(3)})`);
-  // The travelled path runs along the same diagonal (camera stayed put).
+  // The travelled path runs along the same diagonal (world-fixed heading —
+  // the camera follow must never curve the run).
   const p = controller.getPosition();
   const dirAngle = Math.atan2(-p.x, -p.z);
   assert.ok(Math.abs(wrap(dirAngle - Math.PI / 4)) < 0.05, 'travelled along the diagonal heading');

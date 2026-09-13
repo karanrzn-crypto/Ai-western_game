@@ -433,6 +433,15 @@ function setCreativeMode(active: boolean): void {
  * systems. Boot and every Tab toggle go through this, so the character can
  * never sit in play mode with a dead keyboard again (the original movement
  * bug: input stayed disabled until the player pressed Tab twice).
+ *
+ * MODE PRIORITY CONTRACT: Edit Mode owns the keyboard/camera above
+ * gameplay AND creative. TAB while Creative is active therefore ends
+ * creative (setCreativeMode(false) reconnects the gameplay camera without
+ * moving the player) and enters the editor normally; leaving Edit Mode
+ * returns to normal Play Mode — creative is never auto-restored. F only
+ * toggles creative during normal Play Mode: in Edit Mode the bindings are
+ * disabled (edges dropped below) so F can never re-enter creative, and F
+ * keeps its editor rotate-shortcut role.
  */
 function applyModeState(): void {
   const editMode = editor.isEditMode();

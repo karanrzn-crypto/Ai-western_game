@@ -435,9 +435,11 @@ function setCreativeMode(active: boolean): void {
  * bug: input stayed disabled until the player pressed Tab twice).
  *
  * MODE PRIORITY CONTRACT: Edit Mode owns the keyboard/camera above
- * gameplay AND creative. TAB while Creative is active therefore ends
- * creative (setCreativeMode(false) reconnects the gameplay camera without
- * moving the player) and enters the editor normally; leaving Edit Mode
+ * gameplay AND creative. This function only MIRRORS the current mode into
+ * the input systems — it never performs mode transitions itself. The
+ * Creative→Edit transition (terminate creative FIRST, then enter the
+ * editor) lives explicitly in the TAB handler below, so the two modes
+ * never fight over the camera in the same call. Leaving Edit Mode
  * returns to normal Play Mode — creative is never auto-restored. F only
  * toggles creative during normal Play Mode: in Edit Mode the bindings are
  * disabled (edges dropped below) so F can never re-enter creative, and F
@@ -447,7 +449,6 @@ function applyModeState(): void {
   const editMode = editor.isEditMode();
   input.setEnabled(!editMode); // character controls only live in play mode
   debugAxes.visible = editMode;
-  if (editMode && creativeActive) setCreativeMode(false); // editor owns the keyboard
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
   updateEditorHud();
   updateControlHint();
@@ -462,7 +463,21 @@ window.addEventListener('keydown', (event) => {
 
   if (event.code === 'Tab') {
     event.preventDefault();
-    editor.toggleEditMode();
+
+    if (!editor.isEditMode()) {
+      // Entering Edit Mode (from Play OR Creative):
+      // terminate Creative FIRST, then enter Edit Mode. The order matters —
+      // setCreativeMode(false) reconnects the gameplay camera without moving
+      // the player, and only then does the editor take over keyboard+camera.
+      if (creativeActive) setCreativeMode(false);
+
+      editor.setEditMode(true);
+    } else {
+      // Leaving Edit Mode always returns to normal Play Mode.
+      // Never re-enter Creative automatically.
+      editor.setEditMode(false);
+    }
+
     applyModeState();
     refreshSelectionHelper();
     return;

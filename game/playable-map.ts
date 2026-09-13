@@ -304,9 +304,13 @@ function updateEditorHud(): void {
     selected.textContent = selectedUuid ? manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid : 'None';
   }
   if (cameraLabel) {
-    cameraLabel.textContent = creativeActive
-      ? 'CREATIVE FLIGHT'
-      : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
+    // Edit owns the camera whenever it is open (it may sit anywhere a
+    // Creative session left it) — reflect ownership, not the player's mode.
+    cameraLabel.textContent = editor.isEditMode()
+      ? 'EDIT CAMERA'
+      : creativeActive
+        ? 'CREATIVE FLIGHT'
+        : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
   }
 }
 
@@ -437,13 +441,12 @@ function setCreativeMode(active: boolean): void {
  * MODE PRIORITY CONTRACT: Edit Mode owns the keyboard/camera above
  * gameplay AND creative. This function only MIRRORS the current mode into
  * the input systems — it never performs mode transitions itself. The
- * Creative→Edit transition (terminate creative FIRST, then enter the
- * editor) lives explicitly in the TAB handler below, so the two modes
- * never fight over the camera in the same call. Leaving Edit Mode
- * returns to normal Play Mode — creative is never auto-restored. F only
- * toggles creative during normal Play Mode: in Edit Mode the bindings are
- * disabled (edges dropped below) so F can never re-enter creative, and F
- * keeps its editor rotate-shortcut role.
+ * transitions live explicitly in the TAB handler below: Creative→Edit
+ * stops the flight WITHOUT touching the camera (the editor inherits the
+ * fly camera's exact transform), while Edit→Play reconnects the gameplay
+ * camera. F only toggles creative during normal Play Mode: in Edit Mode
+ * the bindings are disabled (edges dropped below) so F can never re-enter
+ * creative, and F keeps its editor rotate-shortcut role.
  */
 function applyModeState(): void {
   const editMode = editor.isEditMode();
@@ -465,17 +468,26 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
 
     if (!editor.isEditMode()) {
-      // Entering Edit Mode (from Play OR Creative):
-      // terminate Creative FIRST, then enter Edit Mode. The order matters —
-      // setCreativeMode(false) reconnects the gameplay camera without moving
-      // the player, and only then does the editor take over keyboard+camera.
-      if (creativeActive) setCreativeMode(false);
+      // Entering Edit Mode (from Play OR Creative).
+      // From Creative: stop the flight/input ownership but do NOT reconnect
+      // or snap the gameplay camera — Edit Mode inherits the camera exactly
+      // where the fly camera left it (same position AND rotation), so the
+      // user can select/edit whatever they flew to. Only the F-exit path
+      // (setCreativeMode(false)) reconnects the gameplay camera.
+      if (creativeActive) {
+        creativeFlight.end();
+        creativeActive = false;
+      }
 
       editor.setEditMode(true);
     } else {
-      // Leaving Edit Mode always returns to normal Play Mode.
-      // Never re-enter Creative automatically.
+      // Leaving Edit Mode always returns to normal Play Mode — never
+      // re-enter Creative automatically. Reconnect the normal gameplay
+      // camera: third person re-snaps behind the character, first person
+      // re-derives the eye — the camera must not stay parked where a
+      // Creative session left it.
       editor.setEditMode(false);
+      playerController.setCameraMode(playerController.getCameraMode());
     }
 
     applyModeState();
@@ -634,9 +646,11 @@ function syncCharacter(delta: number, previousBodyYaw: number): void {
   // Stamina only drains while actually sprinting forward.
   stamina.update(delta, playerController.isSprinting() && speed > 0.5 && playerController.isGrounded());
   // Camera: the rig owns third person; the controller keeps first person.
-  // In creative mode neither runs — the fly camera owns the frame and the
-  // character keeps its last pose (frozen in place).
-  if (!creativeActive && playerController.getCameraMode() === 'third_person') {
+  // In creative mode neither runs — the fly camera owns the frame. In edit
+  // mode neither runs either: the editor keeps whatever camera transform it
+  // inherited (gameplay framing from play, or the fly camera's framing from
+  // a Creative session) and must never be dragged back to the player.
+  if (!creativeActive && !editor.isEditMode() && playerController.getCameraMode() === 'third_person') {
     // Crouch factor from the CONTROLLER's own eye metrics (single source) —
     // 1 = standing, 0 = fully crouched.
     const standEye = playerController.getStandingEyeHeight();

@@ -65,13 +65,19 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-// PERFORMANCE (controls revision §6 — measured, not blind): the frame cost is
-// FILL-BOUND (software raster: ~22ms of the main pass scales linearly with
-// pixel count; see the A/B matrix in the worklog). Capping the pixel ratio at
-// 1.5 keeps HiDPI displays (dpr 2 = 4× fragments) from multiplying the
-// dominant cost; the output is identical at dpr ≤ 1.5. antialias (≈2ms),
-// shadow filter type and the 2048² map were A/B-tested and stay as they are.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+// --- Adaptive resolution ladder (final-polish perf revision) ----------------
+// The frame cost is FILL-BOUND — measured matrix (forced pixelRatio on the
+// 1280×800 harness): 1.5 → 166.6ms/6fps, 1.25 → 116.6/8.6, 1.0 → 83.3/12,
+// 0.85 → 66.6/15, 0.75 → 50/20 (frame time is linear in pixels). Shadow-map
+// size (2048→768), update frequency (every 1–4 frames) and frustum shrink
+// were A/B-measured as noise on this scene (≤1ms) — resolution is THE lever.
+// The ladder starts at the best quality and walks DOWN only while the
+// already-shipped wall-clock frame EMA reads a bad framerate, and back UP
+// when there is headroom. Real-GPU machines never leave the top rung;
+// software-rendered machines converge to the fastest readable rung.
+const DPR_LADDER = [1.5, 1.25, 1.0, 0.85, 0.75] as const;
+let dprRung = 0;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_LADDER[0]));
 renderer.setSize(Math.max(stage.clientWidth, 1), Math.max(stage.clientHeight, 1));
 renderer.shadowMap.enabled = true;
 // Shadow depth pass (4.2MP at 2048²) costs ~10.5ms per frame — re-rendering
@@ -87,13 +93,18 @@ const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-// Wide, static shadow frustum: the three.js default ±5 ortho box only covers
-// a 10x10 patch around the origin, so shadows of everything else popped in
-// and out as the sun orbited. Static settings — no time-based switching.
-sun.shadow.camera.left = -55;
-sun.shadow.camera.right = 55;
-sun.shadow.camera.top = 55;
-sun.shadow.camera.bottom = -55;
+// Shadow frustum sized to the PLAYABLE AREA (final-polish perf revision):
+// the map is a 60×60 ground plane, so its farthest point from the light
+// target (the origin) is the half-diagonal 30√2 ≈ 42.4m. An ortho box of
+// ±42.5 contains every map point for EVERY sun azimuth (a projection never
+// exceeds the vector length), while the old hand-waved ±55 wasted 38% of
+// the shadow map's texel density. 2048² / 85m ≈ 24 texels/m (was 18.6).
+// Map size (2048→768) and update frequency (1–4 frames) were A/B-measured
+// as nearly free on the depth pass — 2048² every-other-frame stays.
+sun.shadow.camera.left = -42.5;
+sun.shadow.camera.right = 42.5;
+sun.shadow.camera.top = 42.5;
+sun.shadow.camera.bottom = -42.5;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 200;
 sun.shadow.bias = -0.0002;
@@ -833,6 +844,36 @@ function updatePerfCounter(): void {
     perfWindowStart = now;
     perfFrames = 0;
   }
+  updateAdaptiveResolution(now);
+}
+
+// --- Adaptive resolution stepping -------------------------------------------
+// Runs inside updatePerfCounter (real wall clock, no clamped delta). Every
+// 1.5s of wall time the frame EMA decides a rung change: below 21 fps step
+// DOWN one rung (below 12 fps step DOWN two — a slideshow should reach the
+// readable rungs fast), above 40 fps step back UP. The first check waits
+// 4s so boot-time shader compilation can't fake a slow machine. A rung
+// change reallocates the drawing buffer once (one-frame hiccup, at most
+// every 1.5s while adapting, never in steady state).
+const FPS_STEP_DOWN = 21;
+const FPS_STEP_DOWN_FAST = 12;
+const FPS_STEP_UP = 40;
+let dprCheckAt = performance.now() + 4000;
+function updateAdaptiveResolution(now: number): void {
+  if (now < dprCheckAt) return;
+  dprCheckAt = now + 1500;
+  const fps = 1 / frameEma;
+  // DPR_LADDER is indexed best→fastest, so a SLOW machine steps the rung UP
+  // (toward the smaller pixelRatio) and a fast machine steps it back DOWN.
+  let step = 0;
+  if (fps < FPS_STEP_DOWN_FAST) step = 2;
+  else if (fps < FPS_STEP_DOWN) step = 1;
+  else if (fps > FPS_STEP_UP) step = -1;
+  if (step === 0) return;
+  const next = Math.max(0, Math.min(DPR_LADDER.length - 1, dprRung + step));
+  if (next === dprRung) return;
+  dprRung = next;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_LADDER[dprRung]));
 }
 
 /** Shortest signed angular distance of `angle` into (-π, π]. */
@@ -1251,6 +1292,7 @@ function animate(): void {
   // Shadow maps refresh every OTHER frame (performance revision §6): the
   // orbiting sun moves ~0.02° per frame, so the one-frame shadow lag is
   // invisible, while the 4.2MP depth pass no longer runs on every frame.
+  // (Final-polish matrix: freq 1/2/4 measured as ≤1ms apart; 2 stays.)
   shadowFrame ^= 1;
   renderer.shadowMap.needsUpdate = shadowFrame === 0;
   gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());

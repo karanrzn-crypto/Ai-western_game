@@ -155,8 +155,10 @@ export const HORSE_STAMINA = {
  *  autonomously follows the player (controls revision §1). AI distances are
  *  PLAYER-space gameplay radii — deliberately NOT scaled. */
 export const HORSE_AI = {
-  /** Summon arrives at this distance. */
-  summonArrive: 3.0,
+  /** Summon arrives at this distance — inside the 2.6m mount range so a
+   *  summon can always be answered with an immediate mount (final-polish
+   *  revision: closes the long-noted 2.7-vs-2.6 arrival gap). */
+  summonArrive: 2.4,
   /** Whistle cooldown. */
   summonCooldown: 3,
   /** Flee duration after a scare. */

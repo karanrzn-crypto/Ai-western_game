@@ -913,17 +913,15 @@ const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getColli
 });
 let rideYaw = horse.getYaw();
 let ridePitch = 0;
-// Mount animation: a staged, weighty choreography — approach (polar arc,
-// procedural walk) → orient → reach (the HAND leads) → grip (a real hold on
-// the seat edge) → foot (boot finds the stirrup) → push (anticipation dip) →
-// climb (hips rise, body passes over, leg swings across) → settle (a
-// controlled drop into the saddle). The whole thing lives in
-// src/horse/MountChoreography.ts — the single authority that
-// scripts/mount-solver.mjs imports to run the full-timeline swept-clearance
-// verification, so the game and the verifier can never drift apart. Every
-// mount constant derives from HORSE_PROPORTIONS, so the horse scale
-// rescales the choreography automatically; the timeline is built from the
-// rider's ACTUAL approach arc (a longer walk never stretches the fixed beats).
+// Mount animation: a SHORT, simple 5-beat sequence — approach walk (polar
+// arc) → the left hand grips the seat edge → the body rises and turns while
+// both legs fold up-and-back OUTBOARD of the flank → the rider slides
+// inboard above the saddle and folds down onto the seat → settle onto the
+// riding pose. The whole thing lives in src/horse/MountChoreography.ts as
+// plain hand-authored keyframes — NO runtime IK, NO solver, NO tables — and
+// scripts/mount-solver.mjs re-verifies the swept clearance (0 violations)
+// against the real meshes on every change. Every mount constant derives from
+// HORSE_PROPORTIONS, so the horse scale rescales the choreography.
 //
 // The character root is attached to the saddle socket immediately (the horse
 // stands still for the whole timeline via mount lock), and the animation is

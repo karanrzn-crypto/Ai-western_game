@@ -12,8 +12,11 @@
  * beyond the declared-contact tolerance fails the sweep.
  *
  * Designed contacts (NOT violations):
- *   - grip hand ON the seat edge during grip/foot/push/climb (≥ −6mm)
+ *   - grip hand ON the seat edge from the reach landing until the climb
+ *     release (≥ −5mm)
  *   - seated pelvis ON the seat, seated boots ON the treads (≥ −3mm)
+ *   - the descending legs graze the blanket/skirt/fender leather through the
+ *     wide-splay drop (≥ −6mm)
  *   - blanket/skirt over the barrel top (saddle stack, no rider involved)
  *   - hooves ON the ground (≥ −3mm)
  */
@@ -151,70 +154,62 @@ function capsuleBoxDist(cap, box) {
 // --- Contact policy -------------------------------------------------------------
 // Pair-classifier: designed contacts return a tolerance, everything else 0.
 // Designed contacts (riding a horse puts the leg ON the leather):
-//   handL ON the seat edge from the reach landing until the slide release
-//   thigh/shin resting against the saddle leather (seat/pommel/cantle/skirt)
+//   handL ON the seat edge from the reach landing until the climb release
+//   the descending legs grazing the blanket/skirt/fender through the drop
 //   seated pelvis ON the seat, seated boots ON the treads
-const HAND = new THREE.Vector3();
 const SADDLE_LEATHER = new Set(['seat', 'pommel', 'horn', 'cantle', 'cantle-rim', 'skirt', 'horn-cap']);
-function toleranceFor(capName, colName, t, handWorld) {
-  // The hand grips until the arm fully extends mid-rise (the release at lift
-  // ≈ 0.42-0.64 of the 1.066m rise), then DRAGS free — a designed sliding
-  // contact until the release.
-  const gripUntil = lerp(timeline.pushEnd, timeline.riseEnd, 0.55);
+function toleranceFor(capName, colName, t) {
+  // The hand grips from the reach landing until the climb release blend
+  // (kClimb 0.35→0.7 — the arm extends and slides off the seat edge).
+  const gripUntil = lerp(timeline.reachEnd, timeline.climbEnd, 0.7);
   const gripPhase = t >= timeline.reachEnd - 0.09 && t <= gripUntil;
-  if (capName === 'handL' && gripPhase && (colName === 'seat' || colName === 'blanket' || colName === 'skirt') ||
-      (capName === 'armL-fore' && gripPhase && (colName === 'seat' || colName === 'blanket' || colName === 'skirt'))) {
-    handWorld && HAND.copy(handWorld);
+  if (gripPhase && (capName === 'handL' || capName === 'armL-fore') &&
+      (colName === 'seat' || colName === 'blanket' || colName === 'skirt')) {
     return -0.05; // grip hand/forearm rest and PRESS on the seat edge (the
                   // r=0.05 ball sinks into the seat slab; the real meshes
                   // rest on top — designed contact)
   }
-  if ((capName === 'thighL' || capName === 'thighR') && (colName === 'seat' || colName === 'skirt') && t >= 0.89) {
+  // The drop: from the wide-splay descent on, the legs sweep down past the
+  // blanket/skirt/fender leather into the stirrups (a real rider's leg
+  // slides along the fender identically). Designed graze.
+  const dropFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.35);
+  if ((capName.startsWith('boot') || capName.startsWith('shin') || capName.startsWith('thigh')) &&
+      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('skirt-tie')) && t >= dropFrom) {
+    return -0.06;
+  }
+  if ((capName.startsWith('shin') || capName.startsWith('thigh')) &&
+      (colName.startsWith('blanket') || colName.startsWith('skirt')) && t >= dropFrom) {
+    return -0.03;
+  }
+  if ((capName.startsWith('boot') || capName.startsWith('shin')) &&
+      colName.startsWith('stirrup') && t >= lerp(timeline.seatEnd, 1, 0.45)) return -0.06;
+  // Seated/settling contacts (phase-relative: the legs blend onto the saddle
+  // from kSeatL's start, the pelvis folds in from kSeatIn's start).
+  const legsSeatFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.55);
+  const pelvisSeatFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.45);
+  if ((capName === 'thighL' || capName === 'thighR') && (colName === 'seat' || colName === 'skirt') && t >= legsSeatFrom) {
     // Seated/settling thigh drapes over the seat slab's edge (the FINAL pose
     // rests on it — a real saddle's rolled edge contacts identically).
     return -0.06;
   }
-  if ((capName === 'thighL' || capName === 'thighR') && SADDLE_LEATHER.has(colName) && t >= 0.9) {
+  if ((capName === 'thighL' || capName === 'thighR') && SADDLE_LEATHER.has(colName) && t >= legsSeatFrom) {
     return -0.004; // seated thighs drape over the saddle leather
   }
-  if ((capName === 'pelvis' || capName === 'torso') && t >= 0.885 && colName === 'seat') {
+  if ((capName === 'pelvis' || capName === 'torso') && t >= pelvisSeatFrom && colName === 'seat') {
     // Seated pelvis ON the seat: the pelvis MESH bottom rests exactly on the
-    // seat top (hipsY solved for it — see the seated diagnostics), but a
+    // seat top (hipsY constant for it — see the seated diagnostics), but a
     // capsule's hemispherical hip-end dips ~3cm below that. Designed contact.
     return -0.045;
   }
-  if ((capName === 'pelvis' || capName === 'torso') && t >= 0.94 && SADDLE_LEATHER.has(colName)) return -0.003;
-  // The hanging fender/strap hangs DIRECTLY above the stirrup tread: any leg
-  // that seats a boot onto the tread must pass through (and push aside) the
-  // loose leather — and from the stirrup step ON the left boot RIDES the
-  // tread beside it. Whole-leg fender/strap graze from the stirrup step on —
-  // designed. (This branch MUST precede the stirrup-tread branch: the loose
-  // straps swing wider than the tread contact tolerance.)
-  const stirrupStep = timeline.stirrupEnd - 0.05;
-  if ((capName.startsWith('boot') || capName.startsWith('shin') || capName.startsWith('thigh')) &&
-      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('skirt-tie')) && t >= stirrupStep) {
-    return -0.06;
-  }
-  // The supporting leg rides beside the saddle for half the timeline: the
-  // thigh/shin GRAZE the blanket's outer edge band (a real rider's leg rests
-  // against the blanket edge identically). Designed contact.
-  if ((capName.startsWith('shin') || capName.startsWith('thigh')) &&
-      (colName.startsWith('blanket') || colName.startsWith('skirt')) && t >= stirrupStep) {
-    return -0.02;
-  }
-  if (capName.startsWith('boot') && colName.startsWith('stirrup') && t >= stirrupStep) return -0.06;
-  // From the stirrup step ON the left boot RIDES the tread inside the ring —
-  // the shin rests against the ring's upper arc (a real stirrup's leather
-  // touches the shin identically). Designed contact.
-  if (capName.startsWith('shin') && colName.startsWith('stirrup') && t >= stirrupStep) return -0.06;
-  if (capName.startsWith('boot') && t >= 0.96 && SADDLE_LEATHER.has(colName)) return -0.003;
+  if ((capName === 'pelvis' || capName === 'torso') && t >= lerp(timeline.seatEnd, 1, 0.5) && SADDLE_LEATHER.has(colName)) return -0.003;
+  if (capName.startsWith('boot') && t >= lerp(timeline.seatEnd, 1, 0.7) && SADDLE_LEATHER.has(colName)) return -0.003;
   return 0;
 }
 function lerp(a, b, k) { return a + (b - a) * k; }
 
 // --- Sweep -----------------------------------------------------------------------
 const timeline = buildMountTimeline(1.35); // typical mid-size arc
-console.log(`timeline: total ${timeline.total.toFixed(2)}s  walk ${timeline.walkEnd.toFixed(3)} orient ${timeline.orientEnd.toFixed(3)} reach ${timeline.reachEnd.toFixed(3)} grip ${timeline.gripEnd.toFixed(3)} stirrup ${timeline.stirrupEnd.toFixed(3)} load ${timeline.loadEnd.toFixed(3)} push ${timeline.pushEnd.toFixed(3)} rise ${timeline.riseEnd.toFixed(3)} balance ${timeline.balanceEnd.toFixed(3)} swing ${timeline.swingEnd.toFixed(3)} cross ${timeline.crossEnd.toFixed(3)} turn ${timeline.turnEnd.toFixed(3)} land ${timeline.landEnd.toFixed(3)}`);
+console.log(`timeline: total ${timeline.total.toFixed(2)}s  walk ${timeline.walkEnd.toFixed(3)} reach ${timeline.reachEnd.toFixed(3)} climb ${timeline.climbEnd.toFixed(3)} seat ${timeline.seatEnd.toFixed(3)}`);
 
 const startState = {
   startPhi: Math.PI * 0.95, // a demanding start: far side, requires a long arc
@@ -252,7 +247,7 @@ for (let step = 1; step <= 300; step += 1) {
   for (const cap of caps) {
     for (const col of colliders) {
       const d = capsuleBoxDist(cap, col.box);
-      const tol = toleranceFor(cap.name, col.name, t, cap.name === 'handL' ? cap.a : null);
+      const tol = toleranceFor(cap.name, col.name, t);
       const allowed = tol;
       if (d < allowed - 0.0005) {
         violations += 1;
@@ -265,13 +260,12 @@ for (let step = 1; step <= 300; step += 1) {
       if (!prev || d < prev.d) worst.set(key, { d, t });
     }
   }
-  // Grip contact quality.
+  // Grip contact quality (the hold window: from the grip landing until the
+  // climb release).
   const handL = j.handL.getWorldPosition(new THREE.Vector3());
   const gripWorld = socket.localToWorld(new THREE.Vector3(MOUNT_GRIP.x, MOUNT_GRIP.y, MOUNT_GRIP.z));
-  // Grip contact quality (the hold window: from the grip landing until the
-  // mid-rise arm release).
   const gripFrom = timeline.reachEnd - 0.05;
-  const gripTo = lerp(timeline.pushEnd, timeline.riseEnd, 0.55);
+  const gripTo = lerp(timeline.reachEnd, timeline.climbEnd, 0.7);
   if (t >= gripFrom && t <= gripTo) minGripGap = Math.min(minGripGap, handL.distanceTo(gripWorld));
   // Seated contact diagnostics.
   if (t >= 0.999) {

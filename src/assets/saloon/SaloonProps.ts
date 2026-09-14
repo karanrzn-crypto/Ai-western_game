@@ -24,6 +24,18 @@
 
 import * as THREE from 'three';
 import { createSaloonMaterials, type SaloonMaterials } from './SaloonMaterials.js';
+import {
+  buildSaloonBottle,
+  buildDecanter,
+  buildCarafe,
+  buildTumbler,
+  buildTallGlass,
+  buildWineGlass,
+  buildShotGlass,
+  buildInvertedTumbler,
+  createGlasswareGeoCache,
+  type BottleKind,
+} from './SaloonGlassware.js';
 
 /** Geometric helpers ------------------------------------------------------- */
 
@@ -125,7 +137,13 @@ export interface PropSizeOptions {
 
 /**
  * Long wooden bar counter: slab body, overhanging countertop, raised back
- * lip, brass foot rail on brackets, vertical front slats. Front = +Z.
+ * lip, brass foot rail on brackets, vertical front slats — plus a NATURAL
+ * used-bar dressing on top (task §9): cash register, a labelled whiskey
+ * bottle pair on a tray, decanter, drinking glasses, folded towel,
+ * coasters, cork scatter, tin and a service bell. Roughly 40–50 % of the
+ * counter top stays deliberately empty; items are grouped in clusters
+ * (register / bottles+glasses / towel+coasters / tin+bell), never scattered.
+ * Front = +Z.
  */
 export function buildBarCounter(opts: PropSizeOptions = {}): THREE.Group {
   const M = createSaloonMaterials();
@@ -161,69 +179,255 @@ export function buildBarCounter(opts: PropSizeOptions = {}): THREE.Group {
     box(g, M.woodDark, 0.04, height * 0.7, 0.02, t * (length - 0.1), height * 0.42, depth / 2 + 0.01, `bar-slat-${i}`);
   }
 
+  // --- Counter-top dressing (task §9) ----------------------------------------
+  // Everything stands ON the countertop top face (y = height + 0.06);
+  // the back lip (z ∈ [-0.41, -0.35]) stays clear. The customer-facing
+  // strips between clusters stay EMPTY on purpose.
+  const topY = height + 0.06;
+  const G = createGlasswareGeoCache();
+
+  // Cluster 1 — cash register, west end.
+  const register = buildCashRegister(M);
+  register.position.set(-length / 2 + 0.4, topY, -0.05);
+  g.add(register);
+
+  // Cluster 2 — whiskey bottle pair on a tray + decanter + glasses.
+  const tray = new THREE.Group();
+  tray.name = 'bar-bottle-tray';
+  box(tray, M.woodDark, 0.36, 0.018, 0.18, 0, 0.009, 0, 'tray-board');
+  box(tray, M.woodDark, 0.36, 0.025, 0.012, 0, 0.0305, 0.084, 'tray-rail-front');
+  box(tray, M.woodDark, 0.36, 0.025, 0.012, 0, 0.0305, -0.084, 'tray-rail-back');
+  tray.position.set(-0.7, topY, -0.22);
+  g.add(tray);
+  const cb1 = buildSaloonBottle('whiskey', M, G, { label: 'cream' });
+  cb1.position.set(-0.09, 0, 0);
+  const cb2 = buildSaloonBottle('whiskey', M, G, { label: 'band' });
+  cb2.position.set(0.09, 0, 0);
+  tray.add(cb1, cb2);
+  const cd = buildDecanter(M, G);
+  cd.position.set(-0.32, topY, -0.18);
+  g.add(cd);
+  const cg1 = buildTallGlass(M, G);
+  cg1.position.set(-0.45, topY, 0.05);
+  g.add(cg1);
+  const cg2 = buildTumbler(M, G, { whiskey: true });
+  cg2.position.set(-0.18, topY, 0.08);
+  g.add(cg2);
+
+  // Cluster 3 — folded towel + coasters.
+  box(g, M.paper, 0.22, 0.03, 0.16, 0.5, topY + 0.015, 0.1, 'bar-towel', { cast: false });
+  cyl(g, M.woodDark, 0.045, 0.045, 0.006, 10, 0.95, topY + 0.003, 0.02, 'bar-coaster-1', { cast: false });
+  cyl(g, M.paper, 0.045, 0.045, 0.006, 10, 1.05, topY + 0.003, 0.1, 'bar-coaster-2', { cast: false });
+
+  // Cork scatter between the clusters.
+  for (const [i, [cx, cz]] of [[-0.05, 0.18], [0.06, 0.22], [0.13, 0.15]].entries()) {
+    cyl(g, M.cork, 0.011, 0.011, 0.02, 6, cx, topY + 0.01, cz, `bar-cork-${i}`, { cast: false, rz: 0.4 * i });
+  }
+
+  // Cluster 4 — tin + brass service bell, east end.
+  cyl(g, M.iron, 0.05, 0.05, 0.07, 10, 1.45, topY + 0.035, -0.25, 'bar-tin');
+  cyl(g, M.brass, 0.028, 0.028, 0.008, 10, 1.75, topY + 0.004, -0.1, 'bar-bell-base');
+  const bellDome = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 8), M.brass);
+  bellDome.name = 'bar-bell-dome';
+  bellDome.position.set(1.75, topY + 0.016, -0.1);
+  bellDome.castShadow = false;
+  g.add(bellDome);
+  const bellKnob = new THREE.Mesh(new THREE.SphereGeometry(0.006, 6, 6), M.brass);
+  bellKnob.name = 'bar-bell-knob';
+  bellKnob.position.set(1.75, topY + 0.044, -0.1);
+  bellKnob.castShadow = false;
+  g.add(bellKnob);
+
   return g;
 }
 
 /**
- * Shelving unit behind the bar: dark frame, proud mirror panel, three
- * shelves with rows of opaque bottles and a row of glasses. Front = +Z.
+ * Old-style cash register (origin = base center): dark metal body with a
+ * raised back block, brass drawer, ivory key slab, side crank and a paper
+ * roll. Used on BOTH the bar counter and the back-bar countertop.
+ */
+function buildCashRegister(M: SaloonMaterials): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'saloon-cash-register';
+
+  box(g, M.iron, 0.3, 0.16, 0.24, 0, 0.08, 0, 'register-body');
+  // Raised back block: stacked on the body top, back-aligned with it.
+  box(g, M.iron, 0.3, 0.07, 0.12, 0, 0.195, -0.06, 'register-top');
+  // Drawer slides out of the front face (back-to-back contact).
+  box(g, M.brass, 0.24, 0.05, 0.03, 0, 0.055, 0.135, 'register-drawer');
+  // Key slab stacked on the body top, in front of the raised block.
+  box(g, M.paper, 0.24, 0.012, 0.07, 0, 0.166, 0.055, 'register-keys');
+  // Side crank + paper roll.
+  cyl(g, M.brass, 0.007, 0.007, 0.05, 8, 0.165, 0.19, 0.02, 'register-crank', { rz: Math.PI / 2 });
+  cyl(g, M.paper, 0.022, 0.022, 0.05, 8, 0, 0.255, -0.06, 'register-roll', { cast: false });
+
+  return g;
+}
+
+/** Small mantle clock (origin = base center) for the back-bar countertop. */
+function buildMantleClock(M: SaloonMaterials): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'saloon-mantle-clock';
+
+  box(g, M.woodDark, 0.12, 0.03, 0.06, 0, 0.015, 0, 'clock-base');
+  // Face disc standing upright (axis rotated onto Z), bottom on the base.
+  cyl(g, M.paper, 0.06, 0.06, 0.025, 14, 0, 0.09, 0, 'clock-face', { rx: Math.PI / 2 });
+  torus(g, M.brass, 0.06, 0.008, 16, 0, 0.09, 0.014, 'clock-ring', { cast: false });
+  box(g, M.ink, 0.006, 0.03, 0.004, 0, 0.098, 0.014, 'clock-hand-hour', { cast: false });
+  box(g, M.ink, 0.005, 0.04, 0.004, 0.008, 0.105, 0.016, 'clock-hand-minute', { cast: false, rz: 2.1 });
+
+  return g;
+}
+
+/**
+ * Shelving unit behind the bar — OPEN-SHELF construction (task §3).
+ *
+ * The previous build was a SOLID full-depth frame slab; its bottles and
+ * glasses were placed at depths INSIDE that solid volume, so the frame's
+ * own front face hid them — the root cause of the invisible glassware.
+ * The required customer-side layering is:
+ *
+ *   BACK WALL → MIRROR/REAR PANEL → SHELVES → BOTTLES → GLASSWARE →
+ *   FRONT SHELF EDGE → CUSTOMER SPACE
+ *
+ * so the unit is now: thin back panel + proud mirror + solid base cabinet
+ * + OPEN shelves that project forward. Bottles stand on the shelf BACK
+ * half, several cm clear of the mirror face; glassware stands on the
+ * shelf FRONT edge, fully in front of the bottles; the countertop carries
+ * the hero row (decanter, carafe, wine glasses, whiskey tumbler) plus a
+ * cash register and a mantle clock. NO renderOrder / depthTest tricks —
+ * the fix is purely geometric. Front = +Z.
  */
 export function buildBackBar(opts: PropSizeOptions = {}): THREE.Group {
   const M = createSaloonMaterials();
+  const G = createGlasswareGeoCache();
   const g = new THREE.Group();
   g.name = 'saloon-back-bar';
 
   const width = opts.backBarWidth ?? 3.6;
-  const height = 2.4;
-  const depth = 0.35;
+  const depth = 0.42;
+  const panelH = 2.6; // panel + side panels; crown caps at 2.74
+  const shelfTops = [1.44, 1.9, 2.34]; // spacing fits a 0.40 m tall bottle + slab
 
-  box(g, M.woodDark, width, height, depth, 0, height / 2, 0, 'backbar-frame');
-  // Crown caps the frame: stacked on its top face, proud on all sides.
-  box(g, M.woodDark, width + 0.1, 0.12, depth + 0.05, 0, height + 0.06, 0, 'backbar-crown');
-  // Mirror: a THIN BOX standing 1.5 cm proud of the frame front (a coplanar
-  // plane at the frame face would flicker against the wood).
-  box(g, M.mirror, width * 0.7, 0.95, 0.03, 0, 1.55, depth / 2 + 0.015, 'backbar-mirror', { cast: false });
-  // Mirror frame trim: four slim strips surrounding the mirror, standing
-  // 1 cm PROUD of the mirror front.
-  const mw = width * 0.7;
-  const mz = depth / 2 + 0.04;
-  box(g, M.woodLight, mw + 0.08, 0.05, 0.02, 0, 1.55 + 0.5, mz, 'backbar-mirror-trim-top', { cast: false });
-  box(g, M.woodLight, mw + 0.08, 0.05, 0.02, 0, 1.55 - 0.5, mz, 'backbar-mirror-trim-bottom', { cast: false });
-  box(g, M.woodLight, 0.05, 1.05, 0.02, -mw / 2 - 0.015, 1.55, mz, 'backbar-mirror-trim-left', { cast: false });
-  box(g, M.woodLight, 0.05, 1.05, 0.02, mw / 2 + 0.015, 1.55, mz, 'backbar-mirror-trim-right', { cast: false });
+  // Back panel: THIN — nothing lives behind the mirror plane.
+  box(g, M.woodDark, width, panelH, 0.04, 0, panelH / 2, -depth / 2 + 0.02, 'backbar-back-panel');
 
-  const shelfYs = [height * 0.28, height * 0.42, height * 0.56];
-  const bottleColors = [0x2e5a3d, 0x3a2f6b, 0x7a1f1f, 0x1f3a5f, 0x6b4a1f];
-  const bottleMats = bottleColors.map(
-    (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.25, metalness: 0.1 }),
-  );
+  // Base cabinet (solid, below the shelves) + plank fronts + brass band.
+  box(g, M.woodDark, width, 0.92, depth, 0, 0.46, 0, 'backbar-base-cabinet');
+  const plankW = (width - 0.3) / 3;
+  for (let i = 0; i < 3; i += 1) {
+    const px = -width / 2 + 0.15 + plankW * (i + 0.5);
+    box(g, M.woodMed, plankW - 0.02, 0.7, 0.02, px, 0.41, depth / 2 + 0.01, `backbar-plank-${i}`);
+    cyl(g, M.brass, 0.012, 0.012, 0.02, 8, px, 0.72, depth / 2 + 0.03, `backbar-knob-${i}`, { rx: Math.PI / 2 });
+  }
+  box(g, M.brass, width, 0.03, 0.02, 0, 0.875, depth / 2 + 0.01, 'backbar-brass-band');
 
-  shelfYs.forEach((y, shelfIdx) => {
-    // Shelf board: front edge 2 cm proud of the frame front so bottles sit
-    // clearly ON it; back buried inside the frame.
-    box(g, M.woodMed, width * 0.92, 0.03, 0.3, 0, y, 0.045, `backbar-shelf-${shelfIdx}`);
+  // Countertop: stacked on the cabinet top, overhanging front + sides.
+  box(g, M.woodLight, width + 0.1, 0.05, depth + 0.08, 0, 0.945, 0.02, 'backbar-countertop');
+  const counterY = 0.97; // countertop top face
 
-    const bottleCount = 7 + shelfIdx;
-    for (let i = 0; i < bottleCount; i += 1) {
-      const t = (i + 0.5) / bottleCount - 0.5;
-      const bh = 0.16 + (i % 3) * 0.02;
-      const mat = bottleMats[(i + shelfIdx) % bottleMats.length];
-      const bottle = new THREE.Group();
-      bottle.name = `backbar-bottle-${shelfIdx}-${i}`;
-      cyl(bottle, mat, 0.02, 0.025, bh, 8, 0, bh / 2, 0, 'bottle-body', { cast: false });
-      cyl(bottle, mat, 0.008, 0.012, 0.05, 8, 0, bh + 0.024, 0, 'bottle-neck', { cast: false });
-      bottle.position.set(t * width * 0.86, y + 0.015, 0.02);
-      g.add(bottle);
-    }
+  // Side panels: open-shelf uprights above the countertop.
+  for (const side of [-1, 1]) {
+    box(
+      g, M.woodDark, 0.06, panelH - 0.97, depth,
+      side * (width / 2 - 0.03), 0.97 + (panelH - 0.97) / 2, 0,
+      `backbar-side-panel-${side < 0 ? 'l' : 'r'}`,
+    );
+  }
+
+  // Mirror: stacked ON the back panel's front face (back-to-back), BEHIND
+  // every bottle and glass.
+  box(g, M.mirror, 2.4, 1.05, 0.03, 0, 1.95, -depth / 2 + 0.055, 'backbar-mirror', { cast: false });
+  // Mirror trim: embedded 1 cm into the mirror, fronts 1.5 cm proud.
+  const mz = -depth / 2 + 0.065;
+  box(g, M.woodLight, 2.56, 0.05, 0.02, 0, 2.5, mz, 'backbar-mirror-trim-top', { cast: false });
+  box(g, M.woodLight, 2.56, 0.05, 0.02, 0, 1.4, mz, 'backbar-mirror-trim-bottom', { cast: false });
+  box(g, M.woodLight, 0.05, 1.05, 0.02, -1.225, 1.95, mz, 'backbar-mirror-trim-left', { cast: false });
+  box(g, M.woodLight, 0.05, 1.05, 0.02, 1.225, 1.95, mz, 'backbar-mirror-trim-right', { cast: false });
+
+  // Shelves project FORWARD from the back panel — back edge 3 cm clear of
+  // the mirror's front face, front edge standing proud as the visible lip.
+  shelfTops.forEach((top, i) => {
+    box(g, M.woodMed, width - 0.12, 0.035, 0.3, 0, top - 0.0175, 0.04, `backbar-shelf-${i}`);
+    // Brass edge strip riding the shelf's front-top edge (stacked on the
+    // shelf top, front 1.5 cm proud of the slab face).
+    box(g, M.brass, width - 0.12, 0.025, 0.04, 0, top + 0.0125, 0.185, `backbar-shelf-strip-${i}`);
   });
 
-  // Glasses on the lowest shelf (opaque — cheap and readable).
-  for (let i = 0; i < 6; i += 1) {
-    const t = (i + 0.5) / 6 - 0.5;
-    cyl(g, M.glassDark, 0.016, 0.012, 0.05, 8, t * width * 0.5, shelfYs[0] + 0.04, 0.12, `backbar-glass-${i}`, {
-      cast: false,
-    });
+  // Crown caps panel + side panels; proud on every side.
+  box(g, M.woodDark, width + 0.12, 0.14, depth + 0.06, 0, panelH + 0.07, -0.01, 'backbar-crown');
+
+  // Small placards on the back-panel flanks, between shelves 1 and 2.
+  for (const side of [-1, 1]) {
+    const px = side * 1.5;
+    box(g, M.paper, 0.28, 0.36, 0.015, px, 1.63, -depth / 2 + 0.035, `backbar-placard-${side < 0 ? 'l' : 'r'}`, { cast: false });
+    box(g, M.ink, 0.2, 0.02, 0.01, px, 1.72, -depth / 2 + 0.042, `backbar-placard-line-${side < 0 ? 'l' : 'r'}-0`, { cast: false });
+    box(g, M.ink, 0.16, 0.02, 0.01, px, 1.63, -depth / 2 + 0.042, `backbar-placard-line-${side < 0 ? 'l' : 'r'}-1`, { cast: false });
+    box(g, M.ink, 0.18, 0.02, 0.01, px, 1.54, -depth / 2 + 0.042, `backbar-placard-line-${side < 0 ? 'l' : 'r'}-2`, { cast: false });
   }
+
+  // Cash register (west) + mantle clock (east) on the countertop.
+  const register = buildCashRegister(M);
+  register.position.set(-1.35, counterY, 0);
+  g.add(register);
+  const clock = buildMantleClock(M);
+  clock.position.set(1.35, counterY, 0);
+  g.add(clock);
+
+  // --- Shelf BOTTLES: back row, clear of the mirror --------------------------
+  const shelfPlan: Array<Array<{ kind: BottleKind; label?: 'cream' | 'band' }>> = [
+    [{ kind: 'whiskey', label: 'cream' }, { kind: 'whiskey' }, { kind: 'tall' }, { kind: 'short' }, { kind: 'tall', label: 'band' }, { kind: 'whiskey' }],
+    [{ kind: 'tall' }, { kind: 'short', label: 'cream' }, { kind: 'tall' }, { kind: 'whiskey', label: 'band' }, { kind: 'short' }, { kind: 'tall' }],
+    [{ kind: 'short' }, { kind: 'short' }, { kind: 'short' }, { kind: 'short' }, { kind: 'short' }],
+  ];
+  const shelfXs = [
+    [-1.5, -1.12, -0.4, 0.02, 0.85, 1.5],
+    [-1.52, -1.15, -0.12, 0.35, 1.05, 1.5],
+    [-1.5, -1.05, 0.25, 1.1, 1.5],
+  ];
+  shelfPlan.forEach((row, si) => {
+    row.forEach((b, bi) => {
+      const bottle = buildSaloonBottle(b.kind, M, G, { label: b.label });
+      bottle.name = `backbar-bottle-${si}-${bi}`;
+      bottle.position.set(shelfXs[si][bi], shelfTops[si], -0.045);
+      g.add(bottle);
+    });
+  });
+
+  // --- Countertop hero row: decanter, carafe, wine, whiskey ------------------
+  const dec = buildDecanter(M, G);
+  dec.position.set(0.55, counterY, 0.02);
+  g.add(dec);
+  const car = buildCarafe(M, G);
+  car.position.set(0.85, counterY, 0.06);
+  g.add(car);
+  const w1 = buildWineGlass(M, G, 'half');
+  w1.position.set(0.15, counterY, 0.08);
+  g.add(w1);
+  const w2 = buildWineGlass(M, G, 'full');
+  w2.position.set(0.32, counterY, 0.04);
+  g.add(w2);
+  const wt = buildTumbler(M, G, { whiskey: true });
+  wt.position.set(0.02, counterY, 0.05);
+  g.add(wt);
+
+  // --- Shelf GLASSWARE: front row — fully visible, in front of bottles ------
+  const shelfGlass = (item: THREE.Group, x: number, top: number, i: number): void => {
+    item.name = `backbar-glassware-${i}`;
+    item.position.set(x, top, 0.1);
+    g.add(item);
+  };
+  shelfGlass(buildTumbler(M, G), -0.75, shelfTops[0], 0);
+  shelfGlass(buildTumbler(M, G, { whiskey: true }), -0.6, shelfTops[0], 1);
+  shelfGlass(buildTumbler(M, G), 0.6, shelfTops[0], 2);
+  shelfGlass(buildShotGlass(M, G), 0.75, shelfTops[0], 3);
+  shelfGlass(buildShotGlass(M, G), 0.85, shelfTops[0], 4);
+  shelfGlass(buildWineGlass(M, G, 'empty'), -0.7, shelfTops[1], 5);
+  shelfGlass(buildWineGlass(M, G, 'half'), 0.6, shelfTops[1], 6);
+  shelfGlass(buildWineGlass(M, G, 'full'), 0.75, shelfTops[1], 7);
+  shelfGlass(buildInvertedTumbler(M, G), -0.65, shelfTops[2], 8);
+  shelfGlass(buildInvertedTumbler(M, G), 0.6, shelfTops[2], 9);
+  shelfGlass(buildInvertedTumbler(M, G), 0.75, shelfTops[2], 10);
 
   return g;
 }
@@ -562,14 +766,23 @@ export function buildChandelier(opts: ChandelierOptions = {}): THREE.Group {
   return g;
 }
 
-/** Small brass spittoon (origin at floor center). */
+/**
+ * Brass spittoon (origin at floor center) — broad bowl, narrower foot, thick
+ * upper rim, and a darker recessed interior (task §10).
+ */
 export function buildSpittoon(): THREE.Group {
   const M = createSaloonMaterials();
   const g = new THREE.Group();
   g.name = 'saloon-spittoon';
 
-  cyl(g, M.brass, 0.08, 0.1, 0.12, 12, 0, 0.06, 0, 'spittoon-base');
-  torus(g, M.brass, 0.09, 0.015, 12, 0, 0.12, 0, 'spittoon-rim', { rx: Math.PI / 2 });
+  // Narrow foot.
+  cyl(g, M.brass, 0.05, 0.042, 0.035, 12, 0, 0.0175, 0, 'spittoon-base');
+  // Broad flared bowl stacked on the foot.
+  cyl(g, M.brass, 0.09, 0.055, 0.083, 12, 0, 0.0765, 0, 'spittoon-bowl');
+  // Darker interior disc sitting on the bowl's top face.
+  cyl(g, M.brassDark, 0.082, 0.075, 0.014, 12, 0, 0.125, 0, 'spittoon-interior', { cast: false });
+  // Thick upper rim wrapping the interior's top edge.
+  torus(g, M.brass, 0.088, 0.016, 14, 0, 0.132, 0, 'spittoon-rim', { rx: Math.PI / 2 });
 
   return g;
 }

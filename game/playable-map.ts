@@ -73,6 +73,16 @@ const camera = new THREE.PerspectiveCamera(
   120,
 );
 
+// Dev verification hook (read-only): headless check scripts read the live
+// camera pose to servo the creative-fly camera. Never written by the game.
+(window as unknown as Record<string, unknown>).__westDebug = () => {
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  return {
+    cam: [camera.position.x, camera.position.y, camera.position.z],
+    view: [dir.x, dir.y, dir.z],
+  };
+};
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 // --- Render governor (weak-laptop revision) --------------------------------
 // Measured bottleneck matrix (1280×800 software harness + the user's laptop):
@@ -179,10 +189,11 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 };
 
 const persistence = new PersistenceManager();
-// Storage key v6: the default map gained the SALOON (enterable bar building
-// + its interior props), so old v5 saves (without it) must not shadow the
-// renamed default map.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v6' });
+// Storage key v7: the saloon layout was re-baked from the player's finalized
+// Object-panel positions (counter/stools/piano/chairs moved, back bar back on
+// the floor) and the back bar was rebuilt as open shelving — old v6 saves
+// would resurrect stale positions and the old buried-glass geometry.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v7' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {

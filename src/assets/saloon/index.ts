@@ -9,6 +9,21 @@ export { SALOON_LAYOUT, SALOON_SITE, SALOON_OBJECT_IDS, frontWallSegments, build
 export { SALOON_PALETTE, createSaloonMaterials } from './SaloonMaterials.js';
 export type { SaloonMaterials } from './SaloonMaterials.js';
 export {
+  buildSaloonBottle,
+  buildDecanter,
+  buildCarafe,
+  buildTumbler,
+  buildTallGlass,
+  buildWineGlass,
+  buildShotGlass,
+  buildInvertedTumbler,
+  createGlasswareGeoCache,
+  type BottleKind,
+  type BottleOptions,
+  type WineFill,
+  type GlasswareGeoCache,
+} from './SaloonGlassware.js';
+export {
   buildBarCounter,
   buildBackBar,
   buildBarStool,

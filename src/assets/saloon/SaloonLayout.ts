@@ -206,18 +206,33 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   });
 
   // --- Bar corner (rear of the interior, facing the entrance) ----------------
-  push(SALOON_OBJECT_IDS.barCounter, 'saloon-bar-counter', 'سالون — پیشخوان بار', at(0, floorY, -2.6), {
+  // Bar-corner placements are the player's finalized in-game arrangement
+  // (baked from the Object panel FINAL states of the 2026-09 play session):
+  // counter pulled toward the entrance, stools spread wider + scaled up.
+  push(SALOON_OBJECT_IDS.barCounter, 'saloon-bar-counter', 'سالون — پیشخوان بار', at(0, floorY, -2.186), {
     collider: true,
   });
-  push(SALOON_OBJECT_IDS.backBar, 'saloon-back-bar', 'سالون — قفسه پشت بار', at(0, floorY, -3.675), {
+  // Back bar stands ON the floor slab (y = floorY). The saved scene had it
+  // raised to y ≈ 1.0 — a workaround for the glassware being buried INSIDE
+  // the old solid frame; the builder is now open-shelved, so it belongs on
+  // the floor again (raised it also clipped the crown through the roof).
+  push(SALOON_OBJECT_IDS.backBar, 'saloon-back-bar', 'سالون — قفسه پشت بار', at(0, floorY, -3.65), {
     collider: true,
   });
-  const stoolXs = [-1.2, -0.4, 0.4, 1.2];
-  stoolXs.forEach((sx, i) => {
+  // User-finalized stool placement (positions + scales from the Object panel).
+  const stoolPlacements: Array<{ x: number; y: number; z: number; s: [number, number, number] }> = [
+    { x: -1.656, y: 0.05, z: -1.22, s: [1.25, 1.1, 1.1] },
+    { x: -0.643, y: 0.049, z: -1.193, s: [1.25, 1.1, 1.25] },
+    { x: 0.527, y: 0.05, z: -1.231, s: [1.25, 1.1, 1.25] },
+    { x: 1.595, y: 0.05, z: -1.218, s: [1.25, 1.1, 1.25] },
+  ];
+  stoolPlacements.forEach((p, i) => {
     const key = `stool${i + 1}` as 'stool1';
-    push(SALOON_OBJECT_IDS[key], 'saloon-bar-stool', `سالون — چهارپایه بار ${i + 1}`, at(sx, floorY, -2.05), {
-      collider: false,
-    });
+    push(SALOON_OBJECT_IDS[key], 'saloon-bar-stool', `سالون — چهارپایه بار ${i + 1}`, {
+      position: { x: originX + p.x, y: p.y, z: originZ + p.z },
+      rotation: identity(),
+      scale: { x: p.s[0], y: p.s[1], z: p.s[2] },
+    }, { collider: false });
   });
 
   // --- Poker corner (east side) ----------------------------------------------
@@ -225,33 +240,48 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   push(SALOON_OBJECT_IDS.pokerTable, 'saloon-poker-table', 'سالون — میز پوکر', at(tableLocal.x, floorY, tableLocal.z), {
     collider: true,
   });
-  // Chairs face the table: for a chair whose built-in "front" is +Z and that
-  // sits at polar angle θ around the table, facing the table is rotY = θ−180°.
+  // Chairs face the table. The built-in chair front is +Z, so a chair at
+  // polar angle θ around the table faces the table with rotY = θ (the old
+  // θ−180° rule faced them AWAY — the player flipped chairs 2/4 in-game to
+  // fix it, and those exact Final transforms are baked below).
   // Orbit radius 1.15 keeps the ladder-back seats (0.4 m wide) clear of the
   // 0.88 m-radius table's leather armrest.
-  const chairAngles = [45, 135, 225, 315];
-  chairAngles.forEach((thetaDeg, i) => {
-    const theta = (thetaDeg * Math.PI) / 180;
-    const radius = 1.15;
-    const cx = tableLocal.x + Math.cos(theta) * radius;
-    const cz = tableLocal.z + Math.sin(theta) * radius;
+  const radius = 1.15;
+  const atPolar = (thetaDeg: number): { x: number; z: number } => ({
+    x: tableLocal.x + Math.cos((thetaDeg * Math.PI) / 180) * radius,
+    z: tableLocal.z + Math.sin((thetaDeg * Math.PI) / 180) * radius,
+  });
+  const p1 = atPolar(45);
+  const p3 = atPolar(225);
+  const chairPlacements: Array<{ pos: { x: number; y: number; z: number }; rot: { x: number; y: number; z: number } }> = [
+    { pos: { x: p1.x, y: floorY, z: p1.z }, rot: { x: deg, y: 45, z: deg } },
+    // Chair 2 = player's exact Final state (position incl. y = 0.000 and the
+    // gimbal-euler (-180, 46, 180), which renders upright facing the table).
+    { pos: { x: 2.686, y: 0.0, z: 1.7 }, rot: { x: -180, y: 46, z: 180 } },
+    { pos: { x: p3.x, y: floorY, z: p3.z }, rot: { x: deg, y: 225, z: deg } },
+    // Chair 4 = player's exact Final state.
+    { pos: { x: 4.213, y: floorY, z: 0.078 }, rot: { x: deg, y: 318, z: deg } },
+  ];
+  chairPlacements.forEach((c, i) => {
     const key = `chair${i + 1}` as 'chair1';
     push(SALOON_OBJECT_IDS[key], 'saloon-chair', `سالون — صندلی پوکر ${i + 1}`, {
-      position: { x: originX + cx, y: floorY, z: originZ + cz },
-      rotation: { x: deg, y: thetaDeg - 180, z: deg },
+      position: { x: originX + c.pos.x, y: c.pos.y, z: originZ + c.pos.z },
+      rotation: c.rot,
       scale: unitScale(),
     }, { collider: false });
   });
 
   // --- Music corner (west side, facing into the room) ------------------------
+  // Piano x = player's finalized position (tucked to 2.5 cm off the wall).
   push(SALOON_OBJECT_IDS.piano, 'saloon-piano', 'سالون — پیانو', {
-    position: { x: originX - 4.25, y: floorY, z: originZ + 0.8 },
+    position: { x: originX - 4.5, y: floorY, z: originZ + 0.8 },
     rotation: { x: deg, y: 90, z: deg },
     scale: unitScale(),
   }, { collider: true });
   // Stool stands in front of the keyboard (the piano's local +Z keybed faces
   // east after its 90° yaw), just off the keys, clear of the poker corner.
-  push(SALOON_OBJECT_IDS.pianoStool, 'saloon-piano-stool', 'سالون — چهارپایه پیانو', at(-3.35, floorY, 0.8), {
+  // x = player's finalized position.
+  push(SALOON_OBJECT_IDS.pianoStool, 'saloon-piano-stool', 'سالون — چهارپایه پیانو', at(-3.525, floorY, 0.8), {
     collider: false,
   });
 
@@ -275,7 +305,9 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   push(SALOON_OBJECT_IDS.barrel3, 'saloon-whiskey-barrel', 'سالون — بشکه ویسکی ۳', at(4.35, floorY, -3.35), {
     collider: true,
   });
-  push(SALOON_OBJECT_IDS.spittoon1, 'saloon-spittoon', 'سالون — تف‌دان ۱', at(1.1, floorY, -2.1), {
+  // Spittoon 1 moved east of the bar: at its old (1.1, −2.1) it now lands
+  // INSIDE the counter body, which the player pulled south to z = −2.186.
+  push(SALOON_OBJECT_IDS.spittoon1, 'saloon-spittoon', 'سالون — تف‌دان ۱', at(2.45, floorY, -2.05), {
     collider: false,
   });
   push(SALOON_OBJECT_IDS.spittoon2, 'saloon-spittoon', 'سالون — تف‌دان ۲', at(2.35, floorY, -0.4), {

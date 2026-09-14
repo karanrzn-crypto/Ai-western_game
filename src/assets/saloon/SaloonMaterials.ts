@@ -37,6 +37,17 @@ export const SALOON_PALETTE = Object.freeze({
   leatherDark: 0x3a2318,
   silk: 0x7a1f2b,
   amber: 0xa8642a,
+  /** Burgundy table wine (opaque liquid inside wine glasses). */
+  wine: 0x5a1420,
+  /** Bottle-glass colours — OPAQUE so bottles never vanish. */
+  bottleGreen: 0x24402c,
+  bottleBrown: 0x3a2416,
+  bottleAmber: 0x7a4a20,
+  bottleOlive: 0x4a4a2a,
+  /** Cork stoppers. */
+  cork: 0x9a7040,
+  /** Darker brass (spittoon interiors, shaded trim). */
+  brassDark: 0x6b5526,
 });
 
 export interface SaloonMaterials {
@@ -64,12 +75,32 @@ export interface SaloonMaterials {
   silk: THREE.MeshStandardMaterial;
   /** Amber whiskey inside the glass. */
   amber: THREE.MeshStandardMaterial;
+  /** Burgundy wine liquid (opaque). */
+  wine: THREE.MeshStandardMaterial;
+  /** Opaque bottle glass — dark green (tall bottles). */
+  bottleGreen: THREE.MeshStandardMaterial;
+  /** Opaque bottle glass — dark brown (whiskey bottles). */
+  bottleBrown: THREE.MeshStandardMaterial;
+  /** Opaque bottle glass — amber (bourbon bottles). */
+  bottleAmber: THREE.MeshStandardMaterial;
+  /** Opaque bottle glass — brown/olive (old squat bottles). */
+  bottleOlive: THREE.MeshStandardMaterial;
+  /** Cork stoppers. */
+  cork: THREE.MeshStandardMaterial;
+  /** Darker brass for recessed interiors. */
+  brassDark: THREE.MeshStandardMaterial;
   /**
-   * The ONE genuinely transparent material in the saloon: the whiskey glass
-   * on the poker table must show the amber liquid inside it. depthWrite is
-   * disabled so the opaque whiskey renders through the transparent shell.
+   * The whiskey glass on the poker table: the saloon's original transparent
+   * material (depthWrite:false so the amber liquid renders through).
    */
   whiskeyGlass: THREE.MeshStandardMaterial;
+  /**
+   * Bar glassware shell (tumblers, wine bowls, decanter): genuinely
+   * transparent so liquids INSIDE render through it. depthWrite:false,
+   * DoubleSide (the wine bowl is an open shell). This and whiskeyGlass are
+   * the ONLY transparent materials in the saloon.
+   */
+  glass: THREE.MeshStandardMaterial;
 }
 
 const wood = (color: number): THREE.MeshStandardMaterial =>
@@ -133,6 +164,15 @@ export function createSaloonMaterials(): SaloonMaterials {
     leatherDark: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.leatherDark, roughness: 0.75, metalness: 0.05 }),
     silk: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.silk, roughness: 0.6, metalness: 0.05 }),
     amber: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.amber, roughness: 0.3, metalness: 0.05 }),
+    wine: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.wine, roughness: 0.35, metalness: 0.05 }),
+    // Opaque "glass" for bottles: glossy enough to read as glass, but never
+    // transparent — a bottle must never vanish against the mirror behind it.
+    bottleGreen: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.bottleGreen, roughness: 0.25, metalness: 0.15 }),
+    bottleBrown: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.bottleBrown, roughness: 0.25, metalness: 0.15 }),
+    bottleAmber: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.bottleAmber, roughness: 0.25, metalness: 0.15 }),
+    bottleOlive: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.bottleOlive, roughness: 0.3, metalness: 0.12 }),
+    cork: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.cork, roughness: 0.9, metalness: 0 }),
+    brassDark: metal(0x6b5526, 0.5),
     whiskeyGlass: new THREE.MeshStandardMaterial({
       color: 0xaaccd8,
       roughness: 0.12,
@@ -140,6 +180,15 @@ export function createSaloonMaterials(): SaloonMaterials {
       transparent: true,
       opacity: 0.32,
       depthWrite: false,
+    }),
+    glass: new THREE.MeshStandardMaterial({
+      color: 0xc9d6d2,
+      roughness: 0.08,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     }),
   };
 }

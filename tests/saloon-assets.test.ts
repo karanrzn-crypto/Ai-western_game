@@ -20,6 +20,14 @@
  *  8. GEOMETRY — no two axis-aligned boxes with different materials expose
  *     coplanar same-normal overlapping faces anywhere in the saloon
  *     (the z-fighting class of bug).
+ *  9. BACK BAR LAYERING — open-shelf construction: the mirror sits BEHIND
+ *     every bottle, every glass sits IN FRONT of every bottle, and the old
+ *     solid full-depth frame (which buried the glassware inside its own
+ *     volume) is gone.
+ * 10. BOTTLE/Glass SILHOUETTES — bottles carry base/body/shoulder/neck/lip/
+ *     cork in stair-step order; wine glasses carry bowl/stem/foot with the
+ *     liquid INSIDE the bowl and BELOW the rim; decanter liquid below the
+ *     shoulder; the whole saloon keeps a 2-PointLight budget.
  */
 
 import assert from 'node:assert/strict';
@@ -35,8 +43,22 @@ import {
   SALOON_SITE,
   buildSaloonMapObjects,
   frontWallSegments,
+  buildSaloonBottle,
+  buildDecanter,
+  buildCarafe,
+  buildTumbler,
+  buildWineGlass,
+  buildShotGlass,
+  buildInvertedTumbler,
+  createSaloonMaterials,
 } from '../src/index.js';
 import type { ObjectDefinition } from '../src/index.js';
+
+/** World-box helper for builder-local geometry assertions. */
+function box3of(o: THREE.Object3D): THREE.Box3 {
+  o.updateWorldMatrix(true, true);
+  return new THREE.Box3().setFromObject(o);
+}
 
 function makeRegistry(): AssetRegistry {
   const registry = new AssetRegistry();
@@ -294,6 +316,191 @@ test('SALOON PIANO STOOL: registered, creatable, placed in front of the keyboard
     Math.abs(stools[0]!.transform.position.z - piano.transform.position.z) < 0.3,
     'stool must be aligned with the keyboard',
   );
+});
+
+/* ---- Back bar layering (glassware visibility root fix) ------------------- */
+
+test('SALOON BACK BAR: open-shelf layering — mirror behind bottles, glassware in front', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-back-bar' }))) as THREE.Group;
+
+  // The old SOLID full-depth frame (which buried every bottle and glass
+  // inside its own volume) is gone — replaced by named open-shelf parts.
+  assert.ok(!obj.getObjectByName('backbar-frame'), 'solid frame slab must be gone');
+  for (const name of [
+    'backbar-back-panel', 'backbar-mirror', 'backbar-base-cabinet',
+    'backbar-countertop', 'backbar-shelf-0', 'backbar-shelf-1',
+    'backbar-shelf-2', 'backbar-crown',
+  ]) {
+    assert.ok(obj.getObjectByName(name), `back bar must contain "${name}"`);
+  }
+
+  const mirrorBox = box3of(obj.getObjectByName('backbar-mirror')!);
+
+  // Bottles: 17 across three shelves, every one standing clear IN FRONT of
+  // the mirror, base exactly on a shelf top.
+  const shelfTops = [1.44, 1.9, 2.34];
+  const bottles = obj.children.filter((c) => c.name.startsWith('backbar-bottle-'));
+  assert.equal(bottles.length, 17, '17 bottles across the three shelves');
+  let maxBottleFrontZ = -Infinity;
+  for (const b of bottles) {
+    const bb = box3of(b);
+    assert.ok(
+      bb.min.z > mirrorBox.max.z + 0.004,
+      `${b.name} must stand clear in front of the mirror (min z ${bb.min.z.toFixed(3)} vs mirror ${mirrorBox.max.z.toFixed(3)})`,
+    );
+    assert.ok(
+      shelfTops.some((t) => Math.abs(bb.min.y - t) < 0.002),
+      `${b.name} must sit exactly on a shelf top (base y ${bb.min.y.toFixed(3)})`,
+    );
+    maxBottleFrontZ = Math.max(maxBottleFrontZ, bb.max.z);
+  }
+
+  // Glassware: 11 items on the shelf FRONT edges — in front of every bottle.
+  const glasses = obj.children.filter((c) => c.name.startsWith('backbar-glassware-'));
+  assert.equal(glasses.length, 11, '11 glassware items on the shelf fronts');
+  for (const gl of glasses) {
+    const gb = box3of(gl);
+    assert.ok(gb.min.z > maxBottleFrontZ, `${gl.name} must sit fully in front of the bottle row`);
+    assert.ok(gb.min.z > mirrorBox.max.z, `${gl.name} must stand clear of the mirror`);
+  }
+
+  // Countertop hero row: decanter, carafe, wine glasses, whiskey tumbler,
+  // register and mantle clock — all ON the countertop (y = 0.97).
+  for (const name of ['saloon-decanter', 'saloon-carafe', 'saloon-wine-glass', 'saloon-tumbler', 'saloon-cash-register', 'saloon-mantle-clock']) {
+    const item = obj.getObjectByName(name);
+    assert.ok(item, `back-bar countertop must carry "${name}"`);
+    const ib = box3of(item);
+    assert.ok(Math.abs(ib.min.y - 0.97) < 0.01, `${name} must rest on the countertop (base y ${ib.min.y.toFixed(3)})`);
+  }
+});
+
+/* ---- Bottle / glassware silhouettes --------------------------------------- */
+
+test('SALOON BOTTLES: real silhouette — base/body/shoulder/neck/lip/cork in stair-step order', () => {
+  const M = createSaloonMaterials();
+  const heights: Record<string, number> = {};
+  for (const kind of ['whiskey', 'tall', 'short'] as const) {
+    const b = buildSaloonBottle(kind, M);
+    for (const part of ['bottle-base', 'bottle-body', 'bottle-shoulder', 'bottle-neck', 'bottle-lip', 'bottle-cork']) {
+      assert.ok(b.getObjectByName(part), `${kind} bottle must contain "${part}"`);
+    }
+    const minY = (part: string): number => box3of(b.getObjectByName(part)!).min.y;
+    assert.ok(minY('bottle-body') < minY('bottle-shoulder'), `${kind}: shoulder above body`);
+    assert.ok(minY('bottle-shoulder') < minY('bottle-neck'), `${kind}: neck above shoulder`);
+    assert.ok(minY('bottle-neck') < minY('bottle-lip'), `${kind}: lip above neck`);
+    assert.ok(minY('bottle-lip') < minY('bottle-cork'), `${kind}: cork on top`);
+    const bb = box3of(b);
+    heights[kind] = bb.max.y - bb.min.y;
+  }
+  // Three genuinely different silhouettes.
+  assert.ok(heights.tall! > heights.whiskey!, 'tall bottle taller than whiskey');
+  assert.ok(heights.whiskey! > heights.short!, 'whiskey taller than short squat bottle');
+
+  const labeled = buildSaloonBottle('whiskey', M, undefined, { label: 'band' });
+  assert.ok(labeled.getObjectByName('bottle-label'), 'labelled bottle carries a label');
+  assert.ok(labeled.getObjectByName('bottle-label-band'), 'band variant carries the ink band');
+});
+
+test('SALOON WINE GLASS: bowl/stem/foot, liquid INSIDE the bowl and BELOW the rim', () => {
+  const M = createSaloonMaterials();
+  for (const fill of ['empty', 'half', 'full'] as const) {
+    const g = buildWineGlass(M, undefined, fill);
+    for (const part of ['glass-bowl', 'glass-stem', 'glass-foot']) {
+      assert.ok(g.getObjectByName(part), `wine glass must contain "${part}"`);
+    }
+    const liquid = g.getObjectByName('wine-liquid');
+    if (fill === 'empty') {
+      assert.ok(!liquid, 'empty glass carries no liquid');
+      continue;
+    }
+    assert.ok(liquid, `${fill} glass must carry wine`);
+    const lb = box3of(liquid!);
+    const bowlB = box3of(g.getObjectByName('glass-bowl')!);
+    assert.ok(lb.min.y >= bowlB.min.y - 1e-6, 'liquid starts inside the bowl');
+    assert.ok(lb.max.y < bowlB.max.y - 0.005, 'liquid surface sits below the rim');
+    assert.ok(
+      lb.max.x - lb.min.x < bowlB.max.x - bowlB.min.x,
+      'liquid fits inside the bowl walls',
+    );
+  }
+  const half = box3of(buildWineGlass(M, undefined, 'half').getObjectByName('wine-liquid')!);
+  const full = box3of(buildWineGlass(M, undefined, 'full').getObjectByName('wine-liquid')!);
+  assert.ok(full.max.y > half.max.y, 'fuller glass has a higher liquid surface');
+});
+
+test('SALOON GLASSWARE: decanter below-shoulder liquid, carafe, tumbler, shot, inverted tumbler', () => {
+  const M = createSaloonMaterials();
+
+  const dec = buildDecanter(M);
+  for (const part of ['decanter-body', 'decanter-liquid', 'decanter-shoulder', 'decanter-neck', 'decanter-stopper']) {
+    assert.ok(dec.getObjectByName(part), `decanter must contain "${part}"`);
+  }
+  const decL = box3of(dec.getObjectByName('decanter-liquid')!);
+  const decS = box3of(dec.getObjectByName('decanter-shoulder')!);
+  assert.ok(decL.max.y < decS.min.y, 'decanter liquid surface below the shoulder');
+
+  const car = buildCarafe(M);
+  assert.ok(car.getObjectByName('carafe-body'), 'carafe has a body');
+  assert.ok(car.getObjectByName('carafe-liquid'), 'carafe carries liquid');
+
+  const tum = buildTumbler(M, undefined, { whiskey: true });
+  assert.ok(tum.getObjectByName('glass-shell'), 'tumbler has a shell');
+  const liq = box3of(tum.getObjectByName('glass-liquid')!);
+  const shell = box3of(tum.getObjectByName('glass-shell')!);
+  assert.ok(liq.max.y < shell.max.y - 0.005, 'whiskey surface below the tumbler rim');
+
+  assert.ok(buildShotGlass(M).getObjectByName('glass-shell'), 'shot glass builds');
+
+  const inv = buildInvertedTumbler(M);
+  const ib = box3of(inv);
+  assert.ok(ib.min.y > -0.005 && ib.max.y <= 0.085, 'inverted tumbler stays anchored at its base');
+});
+
+/* ---- Counter dressing ------------------------------------------------------ */
+
+test('SALOON BAR COUNTER: dressed in clusters with a deliberately empty strip', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-bar-counter' }))) as THREE.Group;
+
+  for (const name of ['saloon-cash-register', 'bar-bottle-tray', 'bar-towel', 'bar-coaster-1', 'bar-cork-2', 'bar-tin', 'bar-bell-dome']) {
+    assert.ok(obj.getObjectByName(name), `counter dressing must include "${name}"`);
+  }
+  // Bottles on the tray carry the full silhouette.
+  const tray = obj.getObjectByName('bar-bottle-tray')!;
+  const trayBottles = tray.children.filter((c) => c.name.startsWith('saloon-bottle-'));
+  assert.equal(trayBottles.length, 2, 'two whiskey bottles on the tray');
+  assert.ok(trayBottles[0]!.getObjectByName('bottle-shoulder'), 'tray bottles are full-silhouette bottles');
+
+  // ~40-50 % of the counter stays empty: NOTHING may occupy the x strip
+  // [1.12, 1.42] above the countertop (y > 1.17, i.e. above the back lip's
+  // bottom edge at 1.16) — a deliberate clear gap between the coaster
+  // cluster and the tin+bell cluster.
+  const TOP = 1.17;
+  const intruders: string[] = [];
+  obj.traverse((c) => {
+    const mesh = c as THREE.Mesh;
+    if (!(mesh as unknown as { isMesh?: boolean }).isMesh) return;
+    const bb = box3of(mesh);
+    if (bb.min.y <= TOP) return;
+    if (bb.max.x > 1.12 && bb.min.x < 1.42) intruders.push(mesh.name);
+  });
+  assert.deepEqual(intruders, [], `counter strip [1.12, 1.42] must stay empty (found: ${intruders.join(', ')})`);
+});
+
+/* ---- Light budget ----------------------------------------------------------- */
+
+test('SALOON LIGHT BUDGET: exactly 2 real PointLights across the whole saloon', async () => {
+  const registry = makeRegistry();
+  const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
+  let lights = 0;
+  for (const def of defs) {
+    const obj = await registry.create(def);
+    obj.traverse((c) => {
+      if ((c as THREE.PointLight).isPointLight) lights += 1;
+    });
+  }
+  assert.equal(lights, 2, 'only the two chandeliers may carry real PointLights');
 });
 
 /* ---- Collision ----------------------------------------------------------- */

@@ -49,6 +49,9 @@ import {
   buildDismountTimeline,
   dismountRootPose,
   poseDismountRider,
+  registerSaloonFactories,
+  buildSaloonMapObjects,
+  SALOON_SITE,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -149,6 +152,7 @@ scene.add(debugAxes);
 
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
+registerSaloonFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -175,9 +179,10 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 };
 
 const persistence = new PersistenceManager();
-// Storage key v5: the default map gained the enterable BUILDING, so old v4
-// saves (without it) must not shadow the renamed default map.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v5' });
+// Storage key v6: the default map gained the SALOON (enterable bar building
+// + its interior props), so old v5 saves (without it) must not shadow the
+// renamed default map.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v6' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -367,6 +372,17 @@ addBuildingPart('10000000-0000-4000-a000-000000000032', 'ساختمان - دیو
 // Roof — one slab with a slight overhang; its collider also stops re-entry
 // from above.
 addBuildingPart('10000000-0000-4000-a000-000000000036', 'ساختمان - سقف', BUILDING.x, BUILDING.h + 0.15, BUILDING.z, BUILDING.w + 0.7, 0.3, BUILDING.d + 0.7);
+
+// --- The SALOON (enterable western bar) -------------------------------------
+// A full enterable saloon on the west side of the spawn street, mirroring the
+// simple BUILDING across it: false-front facade + SALOON sign + porch face
+// south toward the spawn, the doorway gap is the real entrance, and the
+// interior carries bar / poker / piano corners as individually managed
+// objects (own UUIDs, own colliders). All placement data comes from the
+// saloon layout module — the SAME list the saloon tests assert against.
+for (const saloonDef of buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z)) {
+  manager.registerObject(saloonDef);
+}
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();

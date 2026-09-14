@@ -85,6 +85,7 @@ export const SALOON_OBJECT_IDS = Object.freeze({
   chair3: saloonUuid('51'),
   chair4: saloonUuid('52'),
   piano: saloonUuid('53'),
+  pianoStool: saloonUuid('5c'),
   chandelierWest: saloonUuid('54'),
   chandelierEast: saloonUuid('55'),
   barrel1: saloonUuid('56'),
@@ -226,10 +227,12 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   });
   // Chairs face the table: for a chair whose built-in "front" is +Z and that
   // sits at polar angle θ around the table, facing the table is rotY = θ−180°.
+  // Orbit radius 1.15 keeps the ladder-back seats (0.4 m wide) clear of the
+  // 0.88 m-radius table's leather armrest.
   const chairAngles = [45, 135, 225, 315];
   chairAngles.forEach((thetaDeg, i) => {
     const theta = (thetaDeg * Math.PI) / 180;
-    const radius = 0.95;
+    const radius = 1.15;
     const cx = tableLocal.x + Math.cos(theta) * radius;
     const cz = tableLocal.z + Math.sin(theta) * radius;
     const key = `chair${i + 1}` as 'chair1';
@@ -246,6 +249,11 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
     rotation: { x: deg, y: 90, z: deg },
     scale: unitScale(),
   }, { collider: true });
+  // Stool stands in front of the keyboard (the piano's local +Z keybed faces
+  // east after its 90° yaw), just off the keys, clear of the poker corner.
+  push(SALOON_OBJECT_IDS.pianoStool, 'saloon-piano-stool', 'سالون — چهارپایه پیانو', at(-3.35, floorY, 0.8), {
+    collider: false,
+  });
 
   // --- Hanging lights (2 real PointLights total — perf budget) ---------------
   push(SALOON_OBJECT_IDS.chandelierWest, 'saloon-chandelier', 'سالون — لوستر ۱', at(-1.9, 2.72, -0.6), {

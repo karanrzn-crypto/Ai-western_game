@@ -15,6 +15,7 @@ export {
   buildPokerTable,
   buildSaloonChair,
   buildPiano,
+  buildPianoStool,
   buildSwingingDoors,
   buildChandelier,
   buildSpittoon,

@@ -248,21 +248,77 @@ export function buildBarStool(): THREE.Group {
 /* Poker corner                                                               */
 /* ========================================================================== */
 
-/** Round felt poker table (origin at floor center). */
+/**
+ * Round felt poker table (origin at floor center).
+ *
+ * Full prop fidelity per the task: pedestal base, turned column with collar
+ * rings, wooden tabletop, green baize, leather armrest, brass studs, cards,
+ * deck, dealer button, chip stacks, whiskey glass and ashtray. All the
+ * "sitting on the felt" props embed 2–3 mm into the baize top (no floating
+ * props, no coplanar faces). FELT_TOP is the baize surface every prop seats
+ * against.
+ */
 export function buildPokerTable(): THREE.Group {
   const M = createSaloonMaterials();
   const g = new THREE.Group();
   g.name = 'saloon-poker-table';
 
-  const h = 0.75;
-  const radius = 0.6;
+  const radius = 0.88;
+  const FELT_TOP = 0.72;
 
-  cyl(g, M.felt, radius, radius, 0.05, 24, 0, h, 0, 'poker-felt');
-  // Wood rim intersects the felt edge (never coplanar) and pokes 5 mm above.
-  torus(g, M.woodDark, radius, 0.03, 24, 0, h, 0, 'poker-rim', { rx: Math.PI / 2 });
-  // Leg top embeds into the felt slab; base is stacked on the ground plane.
-  cyl(g, M.woodDark, 0.05, 0.05, h, 10, 0, h / 2, 0, 'poker-leg');
-  cyl(g, M.woodDark, 0.28, 0.28, 0.03, 16, 0, 0.015, 0, 'poker-base');
+  // --- Pedestal base (two tiers, stacked back-to-back) -----------------------
+  cyl(g, M.woodDark, 0.37, 0.42, 0.09, 14, 0, 0.045, 0, 'poker-pedestal-lower');
+  cyl(g, M.woodMed, 0.29, 0.345, 0.06, 12, 0, 0.12, 0, 'poker-pedestal-upper');
+
+  // --- Turned column: shaft + two collar rings + capital ----------------------
+  cyl(g, M.woodMed, 0.1, 0.12, 0.42, 10, 0, 0.34, 0, 'poker-column');
+  cyl(g, M.woodDark, 0.14, 0.16, 0.06, 10, 0, 0.23, 0, 'poker-collar-low');
+  cyl(g, M.woodDark, 0.14, 0.16, 0.06, 10, 0, 0.52, 0, 'poker-collar-high');
+  cyl(g, M.woodMed, 0.19, 0.21, 0.09, 10, 0, 0.59, 0, 'poker-capital');
+
+  // --- Tabletop + green baize --------------------------------------------------
+  // Top slab sits ON the capital (stacked contact at 0.635); baize embeds
+  // 8 mm into the slab so its top stands 1 cm proud of the wood.
+  cyl(g, M.woodMed, radius, radius, 0.075, 24, 0, 0.6725, 0, 'poker-tabletop');
+  cyl(g, M.felt, radius - 0.08, radius - 0.08, 0.018, 24, 0, 0.711, 0, 'poker-baize');
+
+  // --- Leather armrest riding the rim + brass studs on its inner edge ---------
+  torus(g, M.leather, radius - 0.045, 0.055, 24, 0, FELT_TOP, 0, 'poker-armrest', { rx: Math.PI / 2 });
+  for (let i = 0; i < 24; i += 1) {
+    const angle = (i / 24) * Math.PI * 2;
+    const r = radius - 0.108;
+    cyl(g, M.brass, 0.012, 0.012, 0.018, 8, Math.cos(angle) * r, FELT_TOP + 0.006, Math.sin(angle) * r, `poker-stud-${i}`);
+  }
+
+  // --- Cards fanned near the center (each rotated slightly) --------------------
+  for (let i = 0; i < 5; i += 1) {
+    box(g, M.ivory, 0.12, 0.008, 0.18, -0.3 + i * 0.15, FELT_TOP + 0.003, 0.02, `poker-card-${i}`, {
+      ry: (i - 2) * 0.05,
+      cast: false,
+    });
+  }
+
+  // --- Deck, dealer button, chip stacks ----------------------------------------
+  box(g, M.leatherDark, 0.11, 0.028, 0.16, -0.52, FELT_TOP + 0.011, -0.25, 'poker-deck', { cast: false });
+  cyl(g, M.ivory, 0.055, 0.055, 0.018, 12, 0.52, FELT_TOP + 0.006, -0.25, 'poker-dealer-button', { cast: false });
+
+  const stacks = [
+    { x: 0.28, z: 0.32, count: 8, mat: M.brass },
+    { x: 0.44, z: 0.28, count: 6, mat: M.iron },
+    { x: 0.15, z: 0.43, count: 10, mat: M.ivory },
+  ];
+  for (const [si, stack] of stacks.entries()) {
+    for (let i = 0; i < stack.count; i += 1) {
+      cyl(g, stack.mat, 0.042, 0.042, 0.011, 10, stack.x, FELT_TOP + 0.0025 + 0.0055 + i * 0.011, stack.z, `poker-chip-${si}-${i}`, { cast: false });
+    }
+  }
+
+  // --- Whiskey glass (transparent shell + amber liquid inside) -----------------
+  cyl(g, M.whiskeyGlass, 0.052, 0.047, 0.09, 10, -0.62, FELT_TOP + 0.043, 0.28, 'poker-whiskey-glass', { cast: false });
+  cyl(g, M.amber, 0.042, 0.046, 0.055, 10, -0.62, FELT_TOP + 0.0255, 0.28, 'poker-whiskey', { cast: false });
+
+  // --- Ashtray -------------------------------------------------------------------
+  cyl(g, M.iron, 0.07, 0.065, 0.018, 10, 0.62, FELT_TOP + 0.007, 0.34, 'poker-ashtray', { cast: false });
 
   return g;
 }
@@ -310,33 +366,105 @@ export function buildSaloonChair(): THREE.Group {
 /* ========================================================================== */
 
 /**
- * Upright saloon piano with keybed, white/black keys and twin brass candle
- * sconces with emissive flames (NO real lights). Front (player side) = +Z.
+ * Upright saloon piano (origin at floor center, player side = +Z).
+ *
+ * Full furniture fidelity per the task: multi-layer cabinet (bottom board →
+ * cabinet → top band → lid), side pilasters, red silk decorative panel with a
+ * wooden lattice over it, fallboard, keybed, 21 individual white keys, black
+ * keys in octave pattern, music desk with sheet paper, pedal lyre with three
+ * brass pedals — plus twin brass candle sconces with emissive flames (no
+ * real lights). Every front-mounted part is embedded into its host solid by
+ * ≥ 5 mm; stacked contacts are back-to-back; nothing floats.
  */
 export function buildPiano(): THREE.Group {
   const M = createSaloonMaterials();
   const g = new THREE.Group();
   g.name = 'saloon-piano';
 
-  box(g, M.woodDark, 1.3, 1.1, 0.55, 0, 0.55, 0, 'piano-body');
-  // Lid: stacked on the body top, front edge 5 mm proud of the body front.
-  box(g, M.woodDark, 1.34, 0.05, 0.6, 0, 1.125, -0.02, 'piano-lid');
-  // Keybed slab protrudes from the body front; its back half is buried.
-  box(g, M.woodDark, 1.25, 0.07, 0.24, 0, 0.735, 0.3, 'piano-keybed');
-  // White key strip sits on the keybed top, front recessed 2 cm from the
-  // keybed's own front edge.
-  box(g, M.paper, 1.2, 0.03, 0.19, 0, 0.785, 0.305, 'piano-keys-white', { cast: false });
-  // Black keys: bottoms buried inside the white strip, tops 14 mm proud,
-  // fronts recessed 5 cm — the classic keyboard silhouette.
-  for (let i = 0; i < 14; i += 1) {
-    const x = -0.55 + (i * 1.1) / 13;
-    box(g, M.ink, 0.045, 0.028, 0.11, x, 0.8, 0.295, `piano-key-black-${i}`, { cast: false });
+  const w = 1.52;
+  const d = 0.65;
+
+  // --- Multi-layer cabinet -----------------------------------------------------
+  // Bottom board → main cabinet → top band → lid, each layer proud of the
+  // one below in width/depth so the silhouette reads as stacked cabinetry.
+  box(g, M.woodDark, w, 0.12, 0.5, 0, 0.06, -0.075, 'piano-bottom-board');
+  box(g, M.woodMed, w - 0.04, 0.92, 0.5, 0, 0.58, -0.075, 'piano-cabinet');
+  box(g, M.woodDark, w, 0.24, 0.52, 0, 1.16, -0.06, 'piano-top-band');
+  // Lid: stacked ON the band top (1.28), overhanging on all sides.
+  box(g, M.woodDark, w + 0.05, 0.06, d + 0.05, 0, 1.31, 0, 'piano-lid');
+
+  // --- Side pilasters: full-height strips proud of cabinet + band fronts ------
+  for (const side of [-1, 1]) {
+    box(g, M.woodLight, 0.09, 1.18, 0.54, side * 0.68, 0.69, -0.055, `piano-pilaster-${side < 0 ? 'l' : 'r'}`);
   }
-  // Twin brass candle sconces on the front + emissive flame chips.
-  for (const x of [-0.4, 0.4]) {
-    cyl(g, M.brass, 0.02, 0.02, 0.12, 8, x, 0.93, 0.29, 'piano-sconce');
-    box(g, M.flame, 0.02, 0.05, 0.02, x, 1.015, 0.29, 'piano-flame', { cast: false });
+
+  // --- Red silk decorative panel + wooden lattice on the top-band front -------
+  // Silk back is embedded 1 cm into the band front; lattice slats stack
+  // back-to-back ON the silk front.
+  box(g, M.silk, w - 0.22, 0.22, 0.03, 0, 1.16, 0.205, 'piano-silk-panel', { cast: false });
+  for (let i = 0; i < 9; i += 1) {
+    box(g, M.woodLight, 0.025, 0.18, 0.025, -0.47 + i * 0.118, 1.16, 0.2325, `piano-lattice-${i}`, { cast: false });
   }
+
+  // --- Fallboard + keybed + keyboard --------------------------------------------
+  // Fallboard: deep slab whose back embeds 1.5 cm into the cabinet front.
+  box(g, M.woodLight, w - 0.16, 0.15, 0.1, 0, 0.84, 0.21, 'piano-fallboard');
+  // Keybed: protrudes forward; back half buried in the cabinet.
+  box(g, M.woodDark, w - 0.02, 0.13, 0.28, 0, 0.66, 0.31, 'piano-keybed');
+  // 21 individual white keys, bottoms embedded 2.5 mm into the keybed top,
+  // fronts cantilevering past the keybed edge like real keys.
+  const keyW = (w - 0.2) / 21;
+  for (let i = 0; i < 21; i += 1) {
+    const x = -w / 2 + 0.1 + keyW * (i + 0.5);
+    box(g, M.ivory, keyW * 0.9, 0.025, 0.17, x, 0.735, 0.43, `piano-key-white-${i}`, { cast: false });
+  }
+  // Black keys in octave pattern (C D EF G A B), bottoms buried in the white
+  // strip, fronts recessed 3 cm — the classic keyboard silhouette.
+  const pattern = [0, 1, 3, 4, 5];
+  for (let octave = 0; octave < 3; octave += 1) {
+    for (const offset of pattern) {
+      const index = octave * 7 + offset;
+      if (index >= 20) continue;
+      const x = -w / 2 + 0.1 + keyW * (index + 1);
+      box(g, M.ink, keyW * 0.55, 0.03, 0.11, x, 0.76, 0.4, `piano-key-black-${index}`, { cast: false });
+    }
+  }
+
+  // --- Music desk with sheet paper (shelf above the fallboard) ------------------
+  box(g, M.woodLight, 0.95, 0.035, 0.22, 0, 0.99, 0.28, 'piano-music-desk');
+  plane(g, M.paper, 0.38, 0.21, 0, 1.09, 0.3, 'piano-music-paper');
+
+  // --- Pedal lyre: two legs to the floor + three brass pedals --------------------
+  for (const side of [-1, 1]) {
+    box(g, M.woodDark, 0.06, 0.49, 0.05, side * 0.11, 0.245, 0.2, `piano-lyre-leg-${side < 0 ? 'l' : 'r'}`);
+  }
+  for (const [i, x] of [-0.055, 0, 0.055].entries()) {
+    cyl(g, M.brass, 0.022, 0.022, 0.13, 8, x, 0.11, 0.2, `piano-pedal-${i}`);
+  }
+
+  // --- Twin brass candle sconces on the pilasters + emissive flames --------------
+  for (const side of [-1, 1]) {
+    const x = side * 0.7;
+    cyl(g, M.brass, 0.02, 0.02, 0.17, 8, x, 0.945, 0.22, `piano-sconce-${side < 0 ? 'l' : 'r'}`);
+    box(g, M.flame, 0.02, 0.05, 0.02, x, 1.055, 0.22, `piano-flame-${side < 0 ? 'l' : 'r'}`, { cast: false });
+  }
+
+  return g;
+}
+
+/**
+ * Round piano stool (origin at floor center): leather-padded seat on a
+ * turned wooden pole with a flat iron foot. The pole embeds into both the
+ * seat and the foot so nothing floats.
+ */
+export function buildPianoStool(): THREE.Group {
+  const M = createSaloonMaterials();
+  const g = new THREE.Group();
+  g.name = 'saloon-piano-stool';
+
+  cyl(g, M.leather, 0.2, 0.2, 0.07, 14, 0, 0.525, 0, 'pianostool-seat');
+  cyl(g, M.woodMed, 0.055, 0.065, 0.5, 10, 0, 0.28, 0, 'pianostool-pole');
+  cyl(g, M.iron, 0.16, 0.16, 0.025, 12, 0, 0.0125, 0, 'pianostool-foot');
 
   return g;
 }

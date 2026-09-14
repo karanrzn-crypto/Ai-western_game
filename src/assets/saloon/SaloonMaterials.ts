@@ -32,6 +32,11 @@ export const SALOON_PALETTE = Object.freeze({
   paper: 0xe8dcc0,
   ink: 0x2a2016,
   flame: 0xffb066,
+  ivory: 0xf0ead6,
+  leather: 0x5d3a24,
+  leatherDark: 0x3a2318,
+  silk: 0x7a1f2b,
+  amber: 0xa8642a,
 });
 
 export interface SaloonMaterials {
@@ -49,6 +54,22 @@ export interface SaloonMaterials {
   flame: THREE.MeshStandardMaterial;
   /** Dark lamp glass for lantern bodies. */
   lampGlass: THREE.MeshStandardMaterial;
+  /** Ivory key/cards/chips surface. */
+  ivory: THREE.MeshStandardMaterial;
+  /** Upholstery leather (armrest, stool tops). */
+  leather: THREE.MeshStandardMaterial;
+  /** Dark leather (card deck box). */
+  leatherDark: THREE.MeshStandardMaterial;
+  /** Red silk decorative panel. */
+  silk: THREE.MeshStandardMaterial;
+  /** Amber whiskey inside the glass. */
+  amber: THREE.MeshStandardMaterial;
+  /**
+   * The ONE genuinely transparent material in the saloon: the whiskey glass
+   * on the poker table must show the amber liquid inside it. depthWrite is
+   * disabled so the opaque whiskey renders through the transparent shell.
+   */
+  whiskeyGlass: THREE.MeshStandardMaterial;
 }
 
 const wood = (color: number): THREE.MeshStandardMaterial =>
@@ -106,6 +127,19 @@ export function createSaloonMaterials(): SaloonMaterials {
       emissiveIntensity: 0.55,
       roughness: 0.3,
       metalness: 0.2,
+    }),
+    ivory: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.ivory, roughness: 0.55, metalness: 0.02 }),
+    leather: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.leather, roughness: 0.7, metalness: 0.05 }),
+    leatherDark: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.leatherDark, roughness: 0.75, metalness: 0.05 }),
+    silk: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.silk, roughness: 0.6, metalness: 0.05 }),
+    amber: new THREE.MeshStandardMaterial({ color: SALOON_PALETTE.amber, roughness: 0.3, metalness: 0.05 }),
+    whiskeyGlass: new THREE.MeshStandardMaterial({
+      color: 0xaaccd8,
+      roughness: 0.12,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
     }),
   };
 }

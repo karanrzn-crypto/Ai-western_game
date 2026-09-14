@@ -198,6 +198,104 @@ test('SALOON CHANDELIER: real-light budget is at most one PointLight', async () 
   assert.equal(darkLights.length, 0, 'lights:0 chandelier must be mesh-only');
 });
 
+test('SALOON POKER TABLE: full prop fidelity — nothing simplified to a plain table', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-poker-table' }))) as THREE.Group;
+
+  // Structure: pedestal tiers, turned column with collars + capital.
+  for (const name of [
+    'poker-pedestal-lower', 'poker-pedestal-upper', 'poker-column',
+    'poker-collar-low', 'poker-collar-high', 'poker-capital',
+    'poker-tabletop', 'poker-baize', 'poker-armrest',
+  ]) {
+    assert.ok(obj.getObjectByName(name), `poker table must contain "${name}"`);
+  }
+  // 24 brass studs around the rim.
+  for (const name of ['poker-stud-0', 'poker-stud-11', 'poker-stud-23']) {
+    assert.ok(obj.getObjectByName(name), `armrest must carry stud "${name}"`);
+  }
+  // 5 fanned cards + deck + dealer button.
+  for (const name of ['poker-card-0', 'poker-card-4', 'poker-deck', 'poker-dealer-button']) {
+    assert.ok(obj.getObjectByName(name), `table must carry "${name}"`);
+  }
+  // 3 chip stacks of 8/6/10 chips = 24 chips.
+  for (const name of ['poker-chip-0-0', 'poker-chip-0-7', 'poker-chip-1-5', 'poker-chip-2-9']) {
+    assert.ok(obj.getObjectByName(name), `chip stacks must include "${name}"`);
+  }
+  // Whiskey glass + liquid + ashtray; and NO real lights on the table.
+  for (const name of ['poker-whiskey-glass', 'poker-whiskey', 'poker-ashtray']) {
+    assert.ok(obj.getObjectByName(name), `table must carry "${name}"`);
+  }
+  const lights: THREE.Object3D[] = [];
+  obj.traverse((c) => { if ((c as THREE.PointLight).isPointLight) lights.push(c); });
+  assert.equal(lights.length, 0, 'poker table must not add lights');
+});
+
+test('SALOON PIANO: full furniture fidelity — cabinet, pilasters, silk, lattice, keyboard, lyre', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-piano' }))) as THREE.Group;
+
+  // Multi-layer cabinet + lid + pilasters.
+  for (const name of [
+    'piano-bottom-board', 'piano-cabinet', 'piano-top-band', 'piano-lid',
+    'piano-pilaster-l', 'piano-pilaster-r',
+  ]) {
+    assert.ok(obj.getObjectByName(name), `piano must contain "${name}"`);
+  }
+  // Silk panel + 9 lattice slats over it.
+  assert.ok(obj.getObjectByName('piano-silk-panel'), 'piano must have the silk panel');
+  for (const name of ['piano-lattice-0', 'piano-lattice-4', 'piano-lattice-8']) {
+    assert.ok(obj.getObjectByName(name), `lattice must include "${name}"`);
+  }
+  // Fallboard, keybed, 21 white keys, black keys in octave pattern (< 20 → 15).
+  for (const name of ['piano-fallboard', 'piano-keybed']) {
+    assert.ok(obj.getObjectByName(name), `piano must contain "${name}"`);
+  }
+  const whiteKeys = obj.children.filter((c) => c.name.startsWith('piano-key-white-'));
+  assert.equal(whiteKeys.length, 21, 'keyboard must have 21 individual white keys');
+  const blackKeys = obj.children.filter((c) => c.name.startsWith('piano-key-black-'));
+  assert.equal(blackKeys.length, 15, 'black keys must follow the octave pattern (15 keys)');
+  // Music desk + paper, pedal lyre (2 legs + 3 pedals), sconces with flames.
+  for (const name of [
+    'piano-music-desk', 'piano-music-paper',
+    'piano-lyre-leg-l', 'piano-lyre-leg-r', 'piano-pedal-0', 'piano-pedal-2',
+    'piano-sconce-l', 'piano-flame-r',
+  ]) {
+    assert.ok(obj.getObjectByName(name), `piano must contain "${name}"`);
+  }
+  const lights: THREE.Object3D[] = [];
+  obj.traverse((c) => { if ((c as THREE.PointLight).isPointLight) lights.push(c); });
+  assert.equal(lights.length, 0, 'piano flames must be emissive mesh, not real lights');
+});
+
+test('SALOON PIANO STOOL: registered, creatable, placed in front of the keyboard, non-collider', async () => {
+  assert.ok(
+    (SALOON_ASSET_TYPES as readonly string[]).includes('saloon-piano-stool'),
+    'saloon-piano-stool must be a registered asset type',
+  );
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-piano-stool' }))) as THREE.Group;
+  for (const name of ['pianostool-seat', 'pianostool-pole', 'pianostool-foot']) {
+    assert.ok(obj.getObjectByName(name), `piano stool must contain "${name}"`);
+  }
+
+  // Layout: exactly one stool, standing EAST of the piano (the keybed side).
+  const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
+  const stools = defs.filter((d) => d.assetType === 'saloon-piano-stool');
+  assert.equal(stools.length, 1, 'layout must place exactly one piano stool');
+  assert.equal(stools[0]!.uuid, SALOON_OBJECT_IDS.pianoStool, 'stool uuid must come from the saloon block');
+  assert.equal(stools[0]!.metadata.collider, false, 'stool is a seat, not a collider');
+  const piano = defs.find((d) => d.assetType === 'saloon-piano')!;
+  assert.ok(
+    stools[0]!.transform.position.x > piano.transform.position.x,
+    'stool must sit in front of the keyboard (east of the west-wall piano)',
+  );
+  assert.ok(
+    Math.abs(stools[0]!.transform.position.z - piano.transform.position.z) < 0.3,
+    'stool must be aligned with the keyboard',
+  );
+});
+
 /* ---- Collision ----------------------------------------------------------- */
 
 test('SALOON COLLISION: walls carry colliders, decor does not', () => {
@@ -216,6 +314,7 @@ test('SALOON COLLISION: walls carry colliders, decor does not', () => {
     SALOON_OBJECT_IDS.building, SALOON_OBJECT_IDS.swingingDoors,
     SALOON_OBJECT_IDS.stool1, SALOON_OBJECT_IDS.stool4,
     SALOON_OBJECT_IDS.chair1, SALOON_OBJECT_IDS.chair4,
+    SALOON_OBJECT_IDS.pianoStool,
     SALOON_OBJECT_IDS.chandelierWest, SALOON_OBJECT_IDS.chandelierEast,
     SALOON_OBJECT_IDS.spittoon1, SALOON_OBJECT_IDS.spittoon2,
     SALOON_OBJECT_IDS.wantedPoster,

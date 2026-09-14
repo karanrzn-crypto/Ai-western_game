@@ -31,6 +31,7 @@ import {
   buildPokerTable,
   buildSaloonChair,
   buildPiano,
+  buildPianoStool,
   buildSwingingDoors,
   buildChandelier,
   buildSpittoon,
@@ -286,6 +287,12 @@ export class SaloonPianoFactory implements IAssetFactory {
   }
 }
 
+export class SaloonPianoStoolFactory implements IAssetFactory {
+  create(_definition: ObjectDefinition): THREE.Object3D {
+    return buildPianoStool();
+  }
+}
+
 export class SaloonSwingingDoorsFactory implements IAssetFactory {
   create(_definition: ObjectDefinition): THREE.Object3D {
     return buildSwingingDoors();
@@ -333,6 +340,7 @@ export const SALOON_ASSET_TYPES = Object.freeze([
   'saloon-poker-table',
   'saloon-chair',
   'saloon-piano',
+  'saloon-piano-stool',
   'saloon-chandelier',
   'saloon-spittoon',
   'saloon-whiskey-barrel',
@@ -356,6 +364,7 @@ export function registerSaloonFactories(registry: AssetRegistry): void {
   registry.register('saloon-poker-table', new SaloonPokerTableFactory(), 'Saloon Poker Table');
   registry.register('saloon-chair', new SaloonChairFactory(), 'Saloon Chair');
   registry.register('saloon-piano', new SaloonPianoFactory(), 'Saloon Piano');
+  registry.register('saloon-piano-stool', new SaloonPianoStoolFactory(), 'Saloon Piano Stool');
   registry.register('saloon-chandelier', new SaloonChandelierFactory(), 'Saloon Chandelier');
   registry.register('saloon-spittoon', new SaloonSpittoonFactory(), 'Saloon Spittoon');
   registry.register('saloon-whiskey-barrel', new SaloonWhiskeyBarrelFactory(), 'Saloon Whiskey Barrel');

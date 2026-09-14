@@ -135,3 +135,6 @@ $RECYCLE.BIN/
 #   models/ → would silently ignore future 3D model folders
 #   *.glb / *.gltf / *.fbx → these are legitimate game assets
 # ============================================================
+
+# Browser-verification screenshot artifacts (agent sessions)
+shots-*/

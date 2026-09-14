@@ -156,15 +156,21 @@ const manager = new SceneStateManager({ renderer: adapter });
 // --- Last-object-change log (TEST panel, bottom-right) ---------------------
 // Every transform mutation in the game flows through ONE funnel —
 // SceneStateManager.updateObjectTransform (gizmo drags, arrow keys, rotation
-// shortcuts and the numeric panel all land here). Wrapping that funnel gives
-// the debug panel the exact last change per object: name, which transform
-// group changed, the new values and a timestamp — formatted so the text can
-// be pasted to another AI to reproduce the change 1:1. Read-only debug: the
-// wrapper never alters what the manager does.
+// shortcuts and the numeric panel all land here). Wrapping that funnel lets
+// the debug panel show the EXACT before/after of the last mutation: the
+// Before state is a real snapshot pulled from the manager BEFORE the raw
+// update runs (never inferred from the patch), and the After state is the
+// manager's returned transform. Read-only debug: the wrapper never alters
+// what the manager does.
 const rawUpdateObjectTransform = manager.updateObjectTransform.bind(manager);
 manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
+  // Real pre-mutation snapshot: getObject deep-clones, so this transform is
+  // fully detached from the registry entry the raw update is about to replace.
+  const beforeDefinition = manager.getObject(uuid);
   const next = rawUpdateObjectTransform(uuid, patch);
-  noteObjectChange(uuid, patch, next);
+  if (beforeDefinition) {
+    noteObjectChange(uuid, beforeDefinition.metadata.name, beforeDefinition.transform, next);
+  }
   return next;
 };
 
@@ -510,45 +516,87 @@ function updateSaveStatus(): void {
 }
 
 // --- Last-object-change panel (TEST panel, bottom-right) --------------------
-// Populated by the updateObjectTransform wrapper above. Machine-friendly
-// format: the user can copy the panel text and hand it to another AI to
-// re-apply the exact same change elsewhere.
+// Populated by the updateObjectTransform wrapper above. The panel shows ONLY
+// what is needed to reconstruct the object's exact state across the last
+// mutation: Name, UUID, the full Initial transform (before the mutation) and
+// the full Final transform (after it) — position, rotation and scale in full,
+// even when the patch touched just one group. No change/action line, no
+// timestamp. The COPY button places the panel's entire visible content in the
+// clipboard (same strings, same fixed 3-decimal precision), so the text can
+// be handed to another AI to reproduce the change 1:1.
+interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
 interface ObjectChangeRecord {
   name: string;
   uuid: string;
-  action: string;
-  position: { x: number; y: number; z: number };
-  rotation: { x: number; y: number; z: number };
-  scale: { x: number; y: number; z: number };
-  time: string;
+  before: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like };
+  after: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like };
 }
 let lastObjectChange: ObjectChangeRecord | null = null;
-const vecText = (v: { x: number; y: number; z: number }): string =>
-  `x=${v.x.toFixed(2)} y=${v.y.toFixed(2)} z=${v.z.toFixed(2)}`;
-const rotText = (v: { x: number; y: number; z: number }): string =>
-  `x=${Math.round(v.x)}° y=${Math.round(v.y)}° z=${Math.round(v.z)}°`;
+
+/** Fixed 3-decimal formatting — stable for display AND clipboard round-trips. */
+const vecText = (v: Vec3Like): string => `x=${v.x.toFixed(3)} y=${v.y.toFixed(3)} z=${v.z.toFixed(3)}`;
+const rotText = (v: Vec3Like): string => `x=${v.x.toFixed(3)}° y=${v.y.toFixed(3)}° z=${v.z.toFixed(3)}°`;
+
+const sameVec3 = (a: Vec3Like, b: Vec3Like): boolean =>
+  a.x === b.x && a.y === b.y && a.z === b.z;
+const sameTransform = (
+  a: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like },
+  b: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like },
+): boolean =>
+  sameVec3(a.position, b.position) && sameVec3(a.rotation, b.rotation) && sameVec3(a.scale, b.scale);
 
 function noteObjectChange(
   uuid: string,
-  patch: PartialTransform,
-  transform: Readonly<{ position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number }; scale: { x: number; y: number; z: number } }>,
+  name: string,
+  before: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>,
+  after: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>,
 ): void {
-  const definition = manager.getObject(uuid);
-  if (!definition) return;
-  const groups: string[] = [];
-  if (patch.position) groups.push('position');
-  if (patch.rotation) groups.push('rotation');
-  if (patch.scale) groups.push('scale');
+  // The wrapper hands us the manager's own snapshots, so `before` is the
+  // transform BEFORE the mutation and `after` the one AFTER it. A deduped
+  // no-op call (before === after) is not a mutation — keep the panel as-is.
+  if (sameTransform(before, after)) return;
+  // The record must survive the call — re-clone so later mutations of the
+  // registry can never rewrite the panel's history.
+  const cloneVec = (v: Vec3Like): Vec3Like => ({ x: v.x, y: v.y, z: v.z });
+  const cloneState = (t: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>) => ({
+    position: cloneVec(t.position),
+    rotation: cloneVec(t.rotation),
+    scale: cloneVec(t.scale),
+  });
   lastObjectChange = {
-    name: definition.metadata.name,
+    name,
     uuid,
-    action: groups.length === 1 ? groups[0] : groups.length > 1 ? groups.join('+') : 'update',
-    position: { ...transform.position },
-    rotation: { ...transform.rotation },
-    scale: { ...transform.scale },
-    time: new Date().toLocaleTimeString(),
+    before: cloneState(before),
+    after: cloneState(after),
   };
   updateObjectLogPanel();
+}
+
+/**
+ * The panel's visible content, as plain text. This ONE formatter feeds both
+ * the DOM rows and the clipboard, so what the user sees is byte-for-byte
+ * what gets copied — nothing invisible is ever added, nothing visible is
+ * ever left out.
+ */
+function formatObjectLogText(record: ObjectChangeRecord): string {
+  const block = (label: string, t: ObjectChangeRecord['before']): string[] => [
+    `${label}:`,
+    `Position: ${vecText(t.position)}`,
+    `Rotation: ${rotText(t.rotation)}`,
+    `Scale: ${vecText(t.scale)}`,
+  ];
+  return [
+    `Name: ${record.name}`,
+    `UUID: ${record.uuid}`,
+    '',
+    ...block('Initial', record.before),
+    '',
+    ...block('Final', record.after),
+  ].join('\n');
 }
 
 function updateObjectLogPanel(): void {
@@ -564,12 +612,64 @@ function updateObjectLogPanel(): void {
   };
   set('objlog-name', record.name);
   set('objlog-uuid', record.uuid);
-  set('objlog-action', record.action);
-  set('objlog-pos', vecText(record.position));
-  set('objlog-rot', rotText(record.rotation));
-  set('objlog-scl', vecText(record.scale));
-  set('objlog-time', record.time);
+  set('objlog-ipos', vecText(record.before.position));
+  set('objlog-irot', rotText(record.before.rotation));
+  set('objlog-iscl', vecText(record.before.scale));
+  set('objlog-fpos', vecText(record.after.position));
+  set('objlog-frot', rotText(record.after.rotation));
+  set('objlog-fscl', vecText(record.after.scale));
 }
+
+// COPY button: places the panel's ENTIRE visible content (Name, UUID, Initial
+// block, Final block) on the clipboard via the async Clipboard API, with a
+// textarea/execCommand fallback for non-secure contexts. Button text flashes
+// "COPIED ✓" so the click is confirmed without a console.
+const objLogCopyButton = document.getElementById('objlog-copy') as HTMLButtonElement | null;
+let objLogCopyResetTimer = 0;
+function flashCopyFeedback(): void {
+  if (!objLogCopyButton) return;
+  objLogCopyButton.textContent = 'COPIED ✓';
+  objLogCopyButton.classList.add('copied');
+  window.clearTimeout(objLogCopyResetTimer);
+  objLogCopyResetTimer = window.setTimeout(() => {
+    objLogCopyButton.textContent = 'COPY';
+    objLogCopyButton.classList.remove('copied');
+  }, 1400);
+}
+function copyObjectLogFallback(text: string): boolean {
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  return ok;
+}
+objLogCopyButton?.addEventListener('click', () => {
+  const record = lastObjectChange;
+  if (!record || !objLogCopyButton) return;
+  const text = formatObjectLogText(record);
+  const done = (ok: boolean): void => {
+    if (ok) flashCopyFeedback();
+    else objLogCopyButton.textContent = 'COPY FAILED';
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => done(true))
+      .catch(() => done(copyObjectLogFallback(text)));
+  } else {
+    done(copyObjectLogFallback(text));
+  }
+});
 
 function loadSavedScene(): void {
   try {
@@ -629,6 +729,14 @@ const modes = new GameModeController({
  */
 function applyModeState(): void {
   const editMode = modes.isEdit();
+  // Mirror the mode into the editor controller too: without this, the
+  // editor's own editMode flag stays false forever and EVERY gizmo-less
+  // edit path (arrow keys, rotation shortcuts, numeric panel inputs)
+  // silently dead-checks in setSelectedTransform/moveSelected. Regression
+  // from the camera-ownership refactor, which dropped the explicit
+  // setEditMode calls from the TAB handler — the mirror belongs HERE, the
+  // one funnel every transition flows through.
+  editor.setEditMode(editMode);
   input.setEnabled(!editMode); // gameplay + creative controls live outside edit
   debugAxes.visible = editMode;
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch

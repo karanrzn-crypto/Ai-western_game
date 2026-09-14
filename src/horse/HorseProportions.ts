@@ -58,14 +58,13 @@ export const HORSE_PROPORTIONS = {
   headWidth: 0.26 * HORSE_SCALE,
   earHeight: 0.16 * HORSE_SCALE,
   // --- Tail -----------------------------------------------------------------
-  // Tail-offset revision: the old base (y 1.5, z 0.82) sat at/inside the
-  // hindquarters' rear face (z ≈ 0.697·scale at the barrel's rear plane), so
-  // the dock and the upper tail were buried IN the body mesh. The base now
-  // sits HIGHER on the croup and clearly BEHIND the rear plane — the tail
-  // visibly grows out of the back of the body (the animator's small backward
-  // rest drape completes the fix).
+  // Tail-attachment revision: the tail root is no longer placed by a
+  // hand-tuned z offset. The anchor is DERIVED in HorseModel from the actual
+  // hindquarters box (its rear face minus a small, intentional root overlap —
+  // see HINDQUARTERS / TAIL_ROOT_OVERLAP / tailAnchorZ there), so the dock
+  // always crosses the body's rear surface: no visible gap, never buried.
+  // Only the croup HEIGHT stays a proportion here.
   tailBaseY: 1.56 * HORSE_SCALE,
-  tailBaseZ: 0.94 * HORSE_SCALE,
   tailLength: 0.85 * HORSE_SCALE,
   // --- Rider socket ----------------------------------------------------------
   /**

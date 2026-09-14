@@ -138,6 +138,26 @@ export function createHorseModel(): HorseModel {
     return m;
   };
 
+  // --- Hindquarters anchor geometry ------------------------------------------
+  // The tail attachment is DERIVED from the actual hindquarters box, not a
+  // hand-tuned offset: the box is declared ONCE here, the hindquarters mesh
+  // and the tail joint both read it, and the tail root is sunk a small,
+  // intentional overlap into the box's rear face. Result: no visible gap
+  // between dock and rump, the dock is never swallowed by the body, and the
+  // root cannot drift when the proportions change — the anchor follows the
+  // geometry by construction.
+  const HINDQUARTERS = {
+    width: P.bodyWidth * 0.96,
+    height: P.bodyHeight * 0.92,
+    depth: L(0.5),
+    y: L(0.03),
+    z: L(0.58),
+  } as const;
+  /** How deep the tail root disk sits INSIDE the hindquarters' rear face. */
+  const TAIL_ROOT_OVERLAP = L(0.035);
+  /** Root-space z of the tail joint: rear face minus the deliberate overlap. */
+  const tailAnchorZ = HINDQUARTERS.z + HINDQUARTERS.depth / 2 - TAIL_ROOT_OVERLAP;
+
   // --- Rig skeleton ---------------------------------------------------------
   // `body` is the whole-torso joint (bob / pitch / roll of the barrel).
   const body = group('body', root, 0, P.bodyCenterY, 0);
@@ -145,7 +165,7 @@ export function createHorseModel(): HorseModel {
   const head = group('head', neck, 0, L(0.62), L(-0.12));
   const earL = group('earL', head, L(-0.09), L(0.14), L(0.02));
   const earR = group('earR', head, L(0.09), L(0.14), L(0.02));
-  const tail = group('tail', root, 0, P.tailBaseY, P.tailBaseZ);
+  const tail = group('tail', root, 0, P.tailBaseY, tailAnchorZ);
   const legFL = group('legFL', root, -P.legHalfWidth, P.frontLegY, P.frontLegZ);
   const legFR = group('legFR', root, P.legHalfWidth, P.frontLegY, P.frontLegZ);
   const legBL = group('legBL', root, -P.legHalfWidth, P.hindLegY, P.hindLegZ);
@@ -162,9 +182,15 @@ export function createHorseModel(): HorseModel {
   // not a draft animal) — the slim silhouette lives in these multipliers.
   mesh(body, materials.coat, P.bodyWidth, P.bodyHeight * 0.94, L(0.7), 0, L(0.02), L(-0.42), false, 'chest');   // chest
   mesh(body, materials.coat, P.bodyWidth, P.bodyHeight, L(0.62), 0, 0, L(0.12), false, 'barrel');             // barrel
-  mesh(body, materials.coat, P.bodyWidth * 0.96, P.bodyHeight * 0.92, L(0.5), 0, L(0.03), L(0.58), false, 'hindquarters'); // hindquarters
+  mesh(body, materials.coat, HINDQUARTERS.width, HINDQUARTERS.height, HINDQUARTERS.depth, 0, HINDQUARTERS.y, HINDQUARTERS.z, false, 'hindquarters'); // hindquarters
   // Belly shading + shoulder/haunch muscle masses.
-  mesh(body, materials.coatDark, P.bodyWidth * 1.0, L(0.16), L(1.2), 0, -P.bodyHeight * 0.44, L(0.05), false, 'belly-shade');
+  // The shade slab is deliberately NARROWER than the barrel/chest (which are
+  // both exactly P.bodyWidth wide): an exactly-flush side face would be
+  // coplanar with their side faces (same normals, overlapping area) and
+  // z-fight between the bay and dark-bay materials. Inset sides stay strictly
+  // inside the barrel; the shade still reads from below — its bottom pokes
+  // ~3cm beneath the barrel's bottom face (non-coplanar planes).
+  mesh(body, materials.coatDark, P.bodyWidth * 0.98, L(0.16), L(1.2), 0, -P.bodyHeight * 0.44, L(0.05), false, 'belly-shade');
   mesh(body, materials.coat, P.bodyWidth * 1.03, L(0.3), L(0.32), 0, L(0.1), L(-0.5), false, 'shoulder-mass');
   mesh(body, materials.coat, P.bodyWidth * 1.02, L(0.32), L(0.34), 0, L(0.12), L(0.62), false, 'haunch-mass');
 
@@ -185,8 +211,13 @@ export function createHorseModel(): HorseModel {
   const saddleY = P.saddleTopY - P.bodyCenterY; // seat top, body-local
   // 1) Saddle blanket: slab over the back + short rear side flaps (the flaps
   //    stop well behind the rider's knee zone so nothing can clip the leg).
+  //    The woven stripe rides just above the blanket's bottom edge and is
+  //    slightly WIDER than the blanket: flush side faces z-fought
+  //    red↔cream, and the leather skirt buries the blanket's top face, so a
+  //    top-face stripe would be invisible — the lower edge is the one place
+  //    the band stays visible on both sides.
   mesh(body, materials.blanket, L(0.70), L(0.04), L(0.70), 0, saddleY - L(0.115), L(0.05), false, 'blanket');
-  mesh(body, materials.blanketStripe, L(0.70), L(0.014), L(0.12), 0, saddleY - L(0.118), L(0.05), true, 'blanket-stripe');
+  mesh(body, materials.blanketStripe, L(0.72), L(0.014), L(0.12), 0, saddleY - L(0.125), L(0.05), true, 'blanket-stripe');
   mesh(body, materials.blanket, L(0.02), L(0.24), L(0.28), -L(0.335), saddleY - L(0.26), L(0.24), false, 'blanket-flap-l');
   mesh(body, materials.blanket, L(0.02), L(0.24), L(0.28), L(0.335), saddleY - L(0.26), L(0.24), false, 'blanket-flap-r');
   // 2) Leather skirt — the wide base slab that carries the whole saddle.
@@ -201,18 +232,24 @@ export function createHorseModel(): HorseModel {
   const horn = cylinder(body, materials.leatherDark, L(0.028), L(0.05), L(0.12), 0, saddleY + L(0.165), L(-0.165), false, 8, 'horn');
   horn.rotation.x = -0.22;
   cylinder(body, materials.brass, L(0.032), L(0.032), L(0.03), 0, saddleY + L(0.215), L(-0.172), true, 8, 'horn-cap'); // horn cap
-  // 6) Cantle (rear rise) — taller than the pommel, with a brass rim.
+  // 6) Cantle (rear rise) — taller than the pommel, with a brass rim. The rim
+  //    is slightly WIDER than the leather: flush side faces z-fought
+  //    leather↔brass; a proud rim reads as a wrapped brass edging.
   mesh(body, materials.leatherDark, L(0.40), L(0.13), L(0.11), 0, saddleY + L(0.065), L(0.30), false, 'cantle');
-  mesh(body, materials.brass, L(0.40), L(0.03), L(0.115), 0, saddleY + L(0.13), L(0.30), true, 'cantle-rim');
+  mesh(body, materials.brass, L(0.42), L(0.03), L(0.115), 0, saddleY + L(0.13), L(0.30), true, 'cantle-rim');
   // 7) Fenders hang from the skirt's outer edge straight down (clear of the
-  //    barrel; behind the rider's ankle). Each stirrup = two side straps
-  //    straddling the boot + the tread bar whose TOP face is exactly the
-  //    seated boot bottoms (riderFeetY + 0.0225·scale).
-  mesh(body, materials.leatherDark, L(0.09), L(0.41), L(0.05), -L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-l');
-  mesh(body, materials.leatherDark, L(0.09), L(0.41), L(0.05), L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-r');
+  //    barrel; behind the rider's ankle). Their tops stop 1cm BELOW the
+  //    blanket's top plane — flush tops z-fought leather↔blanket along the
+  //    seam. Each stirrup = two side straps straddling the boot + the tread
+  //    bar whose TOP face is exactly the seated boot bottoms
+  //    (riderFeetY + 0.0225·scale).
+  mesh(body, materials.leatherDark, L(0.09), L(0.39), L(0.05), -L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-l');
+  mesh(body, materials.leatherDark, L(0.09), L(0.39), L(0.05), L(0.375), saddleY - L(0.30), L(0.145), false, 'fender-r');
   const treadTop = P.riderFeetY + 0.0225 * P.scale - P.bodyCenterY; // body-local y of the boot bottoms
   const stirrupBuild = (side: -1 | 1): void => {
-    for (const lx of [0.485, 0.3]) {
+    // Outer strap stands PROUD of the tread's outer face (0.492 vs 0.50 half
+    // width would be flush at the old 0.485 → coplanar leather pair).
+    for (const lx of [0.492, 0.3]) {
       mesh(body, materials.leatherDark, L(0.03), L(0.06), L(0.05), side * L(lx), treadTop + L(0.0225), L(0.10), side === -1, side === -1 ? 'stirrup-strap-l' : 'stirrup-strap-r');
     }
     const tread = mesh(body, materials.leather, L(0.21), L(0.045), L(0.17), side * L(0.395), treadTop - L(0.0225), L(0.02), false, side === -1 ? 'stirrup-l' : 'stirrup-r');
@@ -309,17 +346,30 @@ export function createHorseModel(): HorseModel {
     tuft.rotation.x = Math.atan2(dir.z, dir.y); // lean along the crest toward the poll
   }
   // Head: skull box + tapered muzzle + jaw.
-  mesh(head, materials.coat, P.headWidth, L(0.3), L(0.42), 0, L(0.04), L(-0.08));
-  mesh(head, materials.coat, P.headWidth * 0.78, L(0.2), L(0.3), 0, L(-0.06), L(-0.32));
-  mesh(head, materials.muzzle, P.headWidth * 0.6, L(0.16), L(0.14), 0, L(-0.09), L(-0.46));
-  mesh(head, materials.coatDark, L(0.18), L(0.2), L(0.12), 0, L(-0.08), L(0.12)); // jaw
+  // SURFACE PLANES (head-local z, face forward = -Z) — keep this map in sync:
+  //   skull   front -0.29  top +0.19  bottom -0.11  sides ±(headWidth/2)
+  //   bridge  front -0.47  top +0.04  bottom -0.16
+  //   muzzle  front -0.525 top -0.01  bottom -0.17
+  // The old blaze was a full-depth slab (z -0.44..-0.14) whose TOP face sat
+  // EXACTLY at the skull's top plane (+0.19) — two coplanar, same-normal,
+  // overlapping faces with different materials → hard z-fighting flicker on
+  // the forehead; its forward half also floated ~12cm off the skull face as
+  // a buried wedge. The rebuilt blaze is a proper OVERLAY of the skull front
+  // face: front face pushed 0.03 FORWARD of the skull plane (-Z, the face's
+  // own outward direction — no world-space nudge), back buried 0.07 inside,
+  // top held 0.035 CLEAR of the skull top plane, lower end sinking into the
+  // bridge box (its top is at +0.04). Zero coplanar pairs by construction.
+  mesh(head, materials.coat, P.headWidth, L(0.3), L(0.42), 0, L(0.04), L(-0.08), false, 'skull');
+  mesh(head, materials.coat, P.headWidth * 0.78, L(0.2), L(0.3), 0, L(-0.06), L(-0.32), false, 'nose-bridge');
+  mesh(head, materials.muzzle, P.headWidth * 0.6, L(0.16), L(0.14), 0, L(-0.09), L(-0.46), false, 'muzzle');
+  mesh(head, materials.coatDark, L(0.18), L(0.2), L(0.12), 0, L(-0.08), L(0.12), false, 'jaw'); // jaw
   // Blaze (detail) + eyes + forelock + ears.
-  mesh(head, materials.muzzle, L(0.06), L(0.26), L(0.3), 0, L(0.06), L(-0.29), true);
-  const eyeL = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), -P.headWidth / 2, L(0.08), L(-0.1), true);
-  const eyeR = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), P.headWidth / 2, L(0.08), L(-0.1), true);
+  mesh(head, materials.muzzle, L(0.06), L(0.22), L(0.1), 0, L(0.045), L(-0.27), true, 'blaze');
+  const eyeL = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), -P.headWidth / 2, L(0.08), L(-0.1), true, 'eye-l');
+  const eyeR = mesh(head, materials.eye, L(0.05), L(0.05), L(0.05), P.headWidth / 2, L(0.08), L(-0.1), true, 'eye-r');
   eyeL.name = 'eye-l';
   eyeR.name = 'eye-r';
-  mesh(head, materials.mane, L(0.16), L(0.1), L(0.08), 0, L(0.19), L(-0.02), true); // forelock
+  mesh(head, materials.mane, L(0.16), L(0.1), L(0.08), 0, L(0.19), L(-0.02), true, 'forelock'); // forelock
   const earBuild = (ear: THREE.Group): void => {
     const cone = new THREE.CylinderGeometry(L(0.008), L(0.055), P.earHeight, 6);
     geometries.push(cone);
@@ -337,13 +387,20 @@ export function createHorseModel(): HorseModel {
   earBuild(earL);
   earBuild(earR);
   // Bridle (detail): noseband + cheek strap + rein stubs toward the saddle.
-  mesh(head, materials.leatherDark, P.headWidth * 0.8, L(0.05), L(0.05), 0, L(-0.04), L(-0.4), true);
-  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), -P.headWidth / 2, L(0.0), L(-0.18), true);
-  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), P.headWidth / 2, L(0.0), L(-0.18), true);
+  mesh(head, materials.leatherDark, P.headWidth * 0.8, L(0.05), L(0.05), 0, L(-0.04), L(-0.4), true, 'noseband');
+  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), -P.headWidth / 2, L(0.0), L(-0.18), true, 'cheek-strap-l');
+  mesh(head, materials.leatherDark, L(0.04), L(0.3), L(0.05), P.headWidth / 2, L(0.0), L(-0.18), true, 'cheek-strap-r');
 
   // --- Tail ----------------------------------------------------------------------
-  cylinder(tail, materials.mane, L(0.05), L(0.09), P.tailLength, 0, -P.tailLength / 2 + L(0.05), 0, false, 7);
-  mesh(tail, materials.mane, L(0.14), L(0.3), L(0.08), 0, L(-0.14), L(0.02)); // tail root tuft
+  // Both tail meshes hang from the tail joint, whose anchor is DERIVED from
+  // the hindquarters box (see HINDQUARTERS / tailAnchorZ above): the joint is
+  // sunk ~3cm inside the rump's rear face, so the tapered dock crosses the
+  // body's rear plane — embedded at the root, visibly emerging below it. The
+  // root tuft straddles the seam to hide the intersection line. The animator
+  // only ever ROTATES this joint, and rotation about a pivot buried inside
+  // the body can never open a gap at the attachment.
+  cylinder(tail, materials.mane, L(0.05), L(0.09), P.tailLength, 0, -P.tailLength / 2 + L(0.05), 0, false, 7, 'tail-dock');
+  mesh(tail, materials.mane, L(0.14), L(0.3), L(0.08), 0, L(-0.14), L(0.02), false, 'tail-root-tuft'); // tail root tuft
 
   // --- Legs: upper + lower + hoof --------------------------------------------------
   const buildLeg = (upper: THREE.Group, knee: THREE.Group, dark: boolean): void => {

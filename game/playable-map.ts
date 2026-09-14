@@ -7,6 +7,9 @@ import {
   PersistenceManager,
   CollisionWorld,
   DayNightCycle,
+  AdaptiveResolution,
+  ShadowScheduler,
+  GameModeController,
   LocalSceneStorage,
   PlayerController,
   ObjectEditorController,
@@ -68,42 +71,44 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-// --- Adaptive resolution ladder (final-polish perf revision) ----------------
-// The frame cost is FILL-BOUND — measured matrix (forced pixelRatio on the
-// 1280×800 harness): 1.5 → 166.6ms/6fps, 1.25 → 116.6/8.6, 1.0 → 83.3/12,
-// 0.85 → 66.6/15, 0.75 → 50/20 (frame time is linear in pixels). Shadow-map
-// size (2048→768), update frequency (every 1–4 frames) and frustum shrink
-// were A/B-measured as noise on this scene (≤1ms) — resolution is THE lever.
-// The ladder starts at the best quality and walks DOWN only while the
-// already-shipped wall-clock frame EMA reads a bad framerate, and back UP
-// when there is headroom. Real-GPU machines never leave the top rung;
-// software-rendered machines converge to the fastest readable rung.
-const DPR_LADDER = [1.5, 1.25, 1.0, 0.85, 0.75] as const;
-let dprRung = 0;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_LADDER[0]));
+// --- Render governor (weak-laptop revision) --------------------------------
+// Measured bottleneck matrix (1280×800 software harness + the user's laptop):
+// frame time is FILL-BOUND — 1.5 → 166.6ms/6fps, 1.0 → 83.3/12, 0.85 → 66.6/15,
+// 0.75 → 50/20 — and the old ladder BOOTED at 1.5, so weak machines started in
+// a slideshow for seconds. The governor (src/engine/RenderGovernor.ts) now
+// owns every resolution decision: boot at 0.85, ladder TOPS OUT at 1.0, climbs
+// only with SUSTAINED ≥50 fps proof of headroom, walks down fast under 21/12.
 renderer.setSize(Math.max(stage.clientWidth, 1), Math.max(stage.clientHeight, 1));
 renderer.shadowMap.enabled = true;
-// Shadow depth pass (4.2MP at 2048²) costs ~10.5ms per frame — re-rendering
-// it EVERY frame is wasted work while the sun orbits a barely-visible
-// 0.02°/frame (180s day). autoUpdate off + needsUpdate every other frame
-// (set in animate()) halves that cost with an invisible one-frame shadow lag.
+// Shadow depth pass, measured: ~12ms per 2048² refresh on the harness. Two
+// cuts, both requested and A/B-verified: mapSize 2048→768 (0.59MP — the pass
+// drops to ~1.4ms; 85m frustum / 768 ≈ 9 texels/m stays readable with
+// PCFSoft + normalBias; 512² documented as the next fallback) and on-demand
+// refresh via ShadowScheduler (idle world ≈ every 150ms instead of every
+// other frame — the orbiting sun moves ~0.02°/frame, so the extra passes
+// rebuilt identical shadows).
 renderer.shadowMap.autoUpdate = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 stage.appendChild(renderer.domElement);
+const resolution = new AdaptiveResolution({
+  sink: renderer,
+  getDevicePixelRatio: () => window.devicePixelRatio || 1,
+});
+const shadows = new ShadowScheduler({ idleIntervalSeconds: 0.15, movingIntervalSeconds: 1 / 30 });
 
 const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-// Shadow frustum sized to the PLAYABLE AREA (final-polish perf revision):
-// the map is a 60×60 ground plane, so its farthest point from the light
-// target (the origin) is the half-diagonal 30√2 ≈ 42.4m. An ortho box of
-// ±42.5 contains every map point for EVERY sun azimuth (a projection never
-// exceeds the vector length), while the old hand-waved ±55 wasted 38% of
-// the shadow map's texel density. 2048² / 85m ≈ 24 texels/m (was 18.6).
-// Map size (2048→768) and update frequency (1–4 frames) were A/B-measured
-// as nearly free on the depth pass — 2048² every-other-frame stays.
+// 768² / 85m ≈ 9 texels/m — deliberately coarse (weak-laptop revision):
+// PCFSoft + normalBias 0.03 keep the soft readable look. 512² is the
+// documented next fallback if a future target needs an even cheaper pass.
+sun.shadow.mapSize.set(768, 768);
+// Shadow frustum sized to the PLAYABLE AREA: the map is a 60×60 ground
+// plane, so its farthest point from the light target (the origin) is the
+// half-diagonal 30√2 ≈ 42.4m. An ortho box of ±42.5 contains every map
+// point for EVERY sun azimuth (a projection never exceeds the vector
+// length), while the old hand-waved ±55 wasted 38% of the texel density.
 sun.shadow.camera.left = -42.5;
 sun.shadow.camera.right = 42.5;
 sun.shadow.camera.top = 42.5;
@@ -204,10 +209,19 @@ const dayNight = new DayNightCycle(scene, sun, hemisphere, {
   startTime: 8,
 });
 
+// Shadow-governor inputs: an edit transform (gizmo drag, keyboard nudge,
+// panel value) marks the light frustum dirty for a short pulse so the map
+// refreshes promptly even though the player/horse stand still. Declared
+// BEFORE the editor wiring that pulses it (module top-to-bottom order).
+let editShadowPulse = 0;
+// HUD/panel DOM writes are throttled to 10Hz (see animate()).
+let hudTimer = 0;
+
 const editor = new ObjectEditorController(manager, {
   onObjectModified: () => {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
     updateSaveStatus();
+    editShadowPulse = 0.25; // edited object → its shadow needs a refresh
   },
 });
 
@@ -241,6 +255,7 @@ const gizmo = new TransformGizmo({
     // the pointer moves continuously.
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
     updateSaveStatus();
+    editShadowPulse = 0.25; // drag settled → refresh the parked shadows
   },
 });
 gizmo.root.visible = false;
@@ -378,7 +393,7 @@ function updatePointerFromEvent(event: MouseEvent): void {
 }
 
 function selectObjectFromPointer(event: MouseEvent): void {
-  if (!editor.isEditMode()) return;
+  if (!modes.isEdit()) return;
   updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
   const candidates = adapter.getActiveUUIDs()
@@ -395,7 +410,7 @@ function updateEditorHud(): void {
   const mode = document.getElementById('editor-mode');
   const selected = document.getElementById('editor-selection');
   const cameraLabel = document.getElementById('camera-mode');
-  if (mode) mode.textContent = editor.isEditMode() ? 'EDIT MODE' : 'PLAY MODE';
+  if (mode) mode.textContent = modes.isEdit() ? 'EDIT MODE' : 'PLAY MODE';
   if (selected) {
     const selectedUuid = editor.getSelectedUuid();
     selected.textContent = selectedUuid ? manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid : 'None';
@@ -403,9 +418,9 @@ function updateEditorHud(): void {
   if (cameraLabel) {
     // Edit owns the camera whenever it is open (it may sit anywhere a
     // Creative session left it) — reflect ownership, not the player's mode.
-    cameraLabel.textContent = editor.isEditMode()
+    cameraLabel.textContent = modes.isEdit()
       ? 'EDIT CAMERA'
-      : creativeActive
+      : modes.isCreative()
         ? 'CREATIVE FLIGHT'
         : isRiding()
           ? (playerController.getCameraMode() === 'third_person' ? 'RIDE · THIRD PERSON' : 'RIDE · FIRST PERSON')
@@ -416,7 +431,7 @@ function updateEditorHud(): void {
 function updateControlHint(): void {
   const hint = document.getElementById('control-hint');
   if (!hint) return;
-  if (editor.isEditMode()) {
+  if (modes.isEdit()) {
     hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
     return;
   }
@@ -567,55 +582,54 @@ function loadSavedScene(): void {
   updateSaveStatus();
 }
 
-// --- Creative Mode (Development fly camera, F key) ------------------------
-// A separate, self-contained Development mode: the CreativeFlightController
-// owns ONLY the camera while active. The player stays exactly where he is
-// (position/velocity/animation untouched, gravity + collision off because
-// PlayerController.update simply isn't called) and the third-person rig is
-// disconnected so nothing else can move the camera either. Exiting just
-// reconnects the normal Third Person system — the player is NEVER teleported
-// to the camera or vice versa.
+// --- Mode state machine (camera-ownership revision) -----------------------
+// ONE owner of "which mode is the game in and who moves the camera":
+//   play → gameplay rig · creative → fly camera · edit → nobody (parked).
+// The full transition contract lives in src/core/GameModeController.ts;
+// this wiring only translates delegate hooks into concrete systems:
+//   • F (play↔creative): attach from the gameplay pose / reconnect the rig.
+//   • TAB (enter edit): the camera PARKS wherever it is — from creative the
+//     flight ends WITHOUT reconnecting anything; the camera never snaps.
+//   • TAB (exit edit): back to the session's ORIGIN — play-origin reconnects
+//     the gameplay rig (unchanged Play→Edit→Play), creative-origin RESUMES
+//     the fly session (saved yaw/pitch, zero jump cut). The camera only
+//     ever returns to the player when the USER presses F themselves.
 const creativeFlight = new CreativeFlightController({ speed: 12 });
-let creativeActive = false;
-
-function setCreativeMode(active: boolean): void {
-  if (active === creativeActive) return;
-  creativeActive = active;
-  if (active) {
-    playerController.freezeMotion(); // stop in place: no run-in-place pose
-    creativeFlight.begin(camera, playerController.getYaw(), playerController.getPitch());
-    showStatusMessage('Creative mode: WASD fly · Space up · Ctrl down · Shift fast · F exit');
-  } else {
-    creativeFlight.end();
-    // Reconnect the camera the player's mode already uses — without moving
-    // the player. Third person re-snaps behind the character; first person
-    // re-derives the eye from the untouched player state.
-    playerController.setCameraMode(playerController.getCameraMode());
-    showStatusMessage('Back to normal third person.');
-  }
-  updateEditorHud();
-  updateControlHint();
-}
+const modes = new GameModeController({
+  delegate: {
+    onPlayCameraReconnect: (source) => {
+      playerController.setCameraMode(playerController.getCameraMode());
+      if (source === 'creative-exit') showStatusMessage('Back to normal third person.');
+    },
+    onCreativeCameraAttach: (source) => {
+      playerController.freezeMotion(); // stop in place: no run-in-place pose
+      if (source === 'edit-resume') creativeFlight.resume(camera);
+      else creativeFlight.begin(camera, playerController.getYaw(), playerController.getPitch());
+      showStatusMessage('Creative mode: WASD fly · Space up · Ctrl down · Shift fast · F exit');
+    },
+    onEditEnter: (from) => {
+      // From creative: release fly ownership but KEEP the session pose
+      // (resume() continues it later). From play: the gameplay rig simply
+      // stops being updated — both paths park the camera untouched.
+      if (from === 'creative') creativeFlight.end();
+    },
+    onModeChanged: () => applyModeState(),
+  },
+});
 
 /**
  * Mode wiring — the ONE place that mirrors the game mode into the input
- * systems. Boot and every Tab toggle go through this, so the character can
- * never sit in play mode with a dead keyboard again (the original movement
- * bug: input stayed disabled until the player pressed Tab twice).
+ * systems and HUD. Every transition funnels through GameModeController's
+ * onModeChanged → here, so boot and every TAB/F toggle stay in sync and the
+ * character can never sit in play mode with a dead keyboard again.
  *
  * MODE PRIORITY CONTRACT: Edit Mode owns the keyboard/camera above
  * gameplay AND creative. This function only MIRRORS the current mode into
- * the input systems — it never performs mode transitions itself. The
- * transitions live explicitly in the TAB handler below: Creative→Edit
- * stops the flight WITHOUT touching the camera (the editor inherits the
- * fly camera's exact transform), while Edit→Play reconnects the gameplay
- * camera. F only toggles creative during normal Play Mode: in Edit Mode
- * the bindings are disabled (edges dropped below) so F can never re-enter
- * creative, and F keeps its editor rotate-shortcut role.
+ * the input systems — it never performs mode transitions itself.
  */
 function applyModeState(): void {
-  const editMode = editor.isEditMode();
-  input.setEnabled(!editMode); // character controls only live in play mode
+  const editMode = modes.isEdit();
+  input.setEnabled(!editMode); // gameplay + creative controls live outside edit
   debugAxes.visible = editMode;
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
   updateEditorHud();
@@ -632,33 +646,20 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'Tab') {
     event.preventDefault();
 
-    if (!editor.isEditMode()) {
+    if (!modes.isEdit()) {
       // Entering Edit Mode (from Play OR Creative). The rider dismounts
       // first — the editor owns the world, nobody rides during editing —
       // and INSTANTLY: the editor must not wait for the choreography.
       if (isRiding()) dismountHorse({ instant: true });
-      // From Creative: stop the flight/input ownership but do NOT reconnect
-      // or snap the gameplay camera — Edit Mode inherits the camera exactly
-      // where the fly camera left it (same position AND rotation), so the
-      // user can select/edit whatever they flew to. Only the F-exit path
-      // (setCreativeMode(false)) reconnects the gameplay camera.
-      if (creativeActive) {
-        creativeFlight.end();
-        creativeActive = false;
-      }
-
-      editor.setEditMode(true);
+      modes.enterEdit(); // parks the camera EXACTLY where it is — no snap
     } else {
-      // Leaving Edit Mode always returns to normal Play Mode — never
-      // re-enter Creative automatically. Reconnect the normal gameplay
-      // camera: third person re-snaps behind the character, first person
-      // re-derives the eye — the camera must not stay parked where a
-      // Creative session left it.
-      editor.setEditMode(false);
-      playerController.setCameraMode(playerController.getCameraMode());
+      // Leaving Edit Mode hands the camera back to the session's ORIGIN
+      // (GameModeController contract): a play-origin edit reconnects the
+      // gameplay camera (the normal Play→Edit→Play path), a creative-origin
+      // edit RESUMES the fly camera where it left off — no player snap.
+      modes.exitEdit();
     }
 
-    applyModeState();
     refreshSelectionHelper();
     return;
   }
@@ -680,7 +681,7 @@ window.addEventListener('keydown', (event) => {
   //   Horse damage/heal are DEBUG-ONLY actions on [ / ] — keys with NO other
   //   meaning anywhere in the game (a Shift-modified B/N would collide with
   //   sprint+command and leave one key carrying two meanings).
-  if (!editor.isEditMode() && !creativeActive) {
+  if (modes.isPlay()) {
     if (event.code === 'KeyB' && !horse.isMounted()) {
       if (horse.summon()) showStatusMessage('COME — your horse makes its way to you.');
       else showStatusMessage(`COME ready in ${horse.summonCooldown.toFixed(1)}s`);
@@ -697,7 +698,7 @@ window.addEventListener('keydown', (event) => {
     if (event.code === 'BracketRight') horse.heal(35); // DEBUG ONLY
   }
 
-  if (!editor.isEditMode()) return;
+  if (!modes.isEdit()) return;
 
   const fast = event.shiftKey;
   let handled = false;
@@ -714,7 +715,7 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyF') handled = editor.rotateSelected('x', -1, fast);
   if (event.code === 'KeyT') handled = editor.rotateSelected('z', 1, fast);
   if (event.code === 'KeyG') handled = editor.rotateSelected('z', -1, fast);
-  if (handled) { event.preventDefault(); refreshSelectionHelper(); updateEditorHud(); }
+  if (handled) { event.preventDefault(); refreshSelectionHelper(); updateEditorHud(); editShadowPulse = 0.25; }
 });
 
 // --- Mouse look: RIGHT-button drag only ----------------------------------
@@ -724,7 +725,7 @@ window.addEventListener('keydown', (event) => {
 const mouseLook = new MouseLookController();
 
 renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
-  if (editor.isEditMode()) return; // the editor owns the mouse in edit mode
+  if (modes.isEdit()) return; // the editor owns the mouse in edit mode
   if (event.button !== 2) return;  // left/middle clicks never touch the camera
   if (mouseLook.beginDrag(event.button, event.clientX, event.clientY)) {
     // Capture so the release outside the window still ends the drag.
@@ -736,7 +737,7 @@ renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
 // The context menu would steal the right button's pointerup and leave the
 // drag stuck — suppress it in play mode.
 renderer.domElement.addEventListener('contextmenu', (event) => {
-  if (!editor.isEditMode()) event.preventDefault();
+  if (!modes.isEdit()) event.preventDefault();
 });
 
 window.addEventListener('pointerup', (event: PointerEvent) => {
@@ -754,7 +755,7 @@ window.addEventListener('blur', () => {
 // hit the drag starts and object selection is skipped for this press, so the
 // gizmo can never select/move anything but its own target.
 renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
-  if (!editor.isEditMode() || event.button !== 0) return;
+  if (!modes.isEdit() || event.button !== 0) return;
   updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
   const handle = gizmo.pickHandle(raycaster.ray);
@@ -789,7 +790,7 @@ function updatePlayer(delta: number): void {
   // Creative mode: the player is frozen in place — no update means no
   // movement, no gravity and no collision. The fly camera owns the frame.
   // Riding: the player is attached to the saddle — the horse owns the frame.
-  if (editor.isEditMode() || creativeActive || isRiding()) return;
+  if (!modes.isPlay() || isRiding()) return;
   playerController.update(delta, input.getMoveInput());
 }
 
@@ -849,7 +850,7 @@ function syncCharacter(delta: number, previousBodyYaw: number): void {
   // mode neither runs either: the editor keeps whatever camera transform it
   // inherited (gameplay framing from play, or the fly camera's framing from
   // a Creative session) and must never be dragged back to the player.
-  if (!creativeActive && !editor.isEditMode() && playerController.getCameraMode() === 'third_person') {
+  if (modes.isPlay() && playerController.getCameraMode() === 'third_person') {
     // Crouch factor from the CONTROLLER's own eye metrics (single source) —
     // 1 = standing, 0 = fully crouched.
     const standEye = playerController.getStandingEyeHeight();
@@ -939,8 +940,6 @@ function setHud(): void {
 
 const clock = new THREE.Clock();
 let previousBodyYaw = playerController.getBodyYaw();
-/** Alternates each frame — drives the every-other-frame shadow map refresh. */
-let shadowFrame = 0;
 
 // --- FPS + frame-time counter (controls revision §6) -----------------------
 // Always visible in the PLAY MODE panel (the game runs in development mode).
@@ -951,6 +950,7 @@ let shadowFrame = 0;
 // frame costs beyond that clamp honestly).
 const fpsValueEl = document.getElementById('fps-value');
 const frameValueEl = document.getElementById('frame-value');
+const dprValueEl = document.getElementById('dpr-value');
 let perfWindowStart = performance.now();
 let perfFrames = 0;
 let frameEma = 1 / 60;
@@ -965,39 +965,13 @@ function updatePerfCounter(): void {
   if (elapsed >= 0.5 && fpsValueEl && frameValueEl) {
     fpsValueEl.textContent = (perfFrames / elapsed).toFixed(0);
     frameValueEl.textContent = (frameEma * 1000).toFixed(1);
+    if (dprValueEl) dprValueEl.textContent = resolution.getPixelRatio().toFixed(2);
     perfWindowStart = now;
     perfFrames = 0;
   }
-  updateAdaptiveResolution(now);
-}
-
-// --- Adaptive resolution stepping -------------------------------------------
-// Runs inside updatePerfCounter (real wall clock, no clamped delta). Every
-// 1.5s of wall time the frame EMA decides a rung change: below 21 fps step
-// DOWN one rung (below 12 fps step DOWN two — a slideshow should reach the
-// readable rungs fast), above 40 fps step back UP. The first check waits
-// 4s so boot-time shader compilation can't fake a slow machine. A rung
-// change reallocates the drawing buffer once (one-frame hiccup, at most
-// every 1.5s while adapting, never in steady state).
-const FPS_STEP_DOWN = 21;
-const FPS_STEP_DOWN_FAST = 12;
-const FPS_STEP_UP = 40;
-let dprCheckAt = performance.now() + 4000;
-function updateAdaptiveResolution(now: number): void {
-  if (now < dprCheckAt) return;
-  dprCheckAt = now + 1500;
-  const fps = 1 / frameEma;
-  // DPR_LADDER is indexed best→fastest, so a SLOW machine steps the rung UP
-  // (toward the smaller pixelRatio) and a fast machine steps it back DOWN.
-  let step = 0;
-  if (fps < FPS_STEP_DOWN_FAST) step = 2;
-  else if (fps < FPS_STEP_DOWN) step = 1;
-  else if (fps > FPS_STEP_UP) step = -1;
-  if (step === 0) return;
-  const next = Math.max(0, Math.min(DPR_LADDER.length - 1, dprRung + step));
-  if (next === dprRung) return;
-  dprRung = next;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_LADDER[dprRung]));
+  // The render governor (DPR ladder) runs on this real wall clock — no
+  // clamped game delta, no clamped rung changes.
+  resolution.update(now, frameEma);
 }
 
 /** Shortest signed angular distance of `angle` into (-π, π]. */
@@ -1263,8 +1237,7 @@ function buildRidingInput() {
   };
 }
 
-function syncRider(delta: number): void {
-  const snap = horse.getSnapshot();
+function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot']>): void {
   updateMountAnim(delta);
   updateDismountAnim(delta);
   // The dismount handover may have detached the rider THIS frame — the world
@@ -1301,8 +1274,7 @@ function syncRider(delta: number): void {
   if (prompt) prompt.textContent = '[E] Dismount';
 }
 
-function syncHorse(delta: number): void {
-  const snap = horse.getSnapshot();
+function syncHorse(delta: number, snap: ReturnType<HorseController['getSnapshot']>): void {
   horseModel.root.position.set(snap.position.x, snap.position.y, snap.position.z);
   horseModel.root.rotation.y = snap.yaw;
   horseModel.root.rotation.x = snap.pitch;
@@ -1346,8 +1318,8 @@ function animate(): void {
   // Right-drag look FIRST: the accumulated pixel delta becomes yaw/pitch
   // before the player updates, so movement and the camera agree this frame.
   const lookDelta = mouseLook.consumeLookDelta();
-  if (!editor.isEditMode() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
-    if (creativeActive) creativeFlight.look(lookDelta.x, lookDelta.y);
+  if (!modes.isEdit() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
+    if (modes.isCreative()) creativeFlight.look(lookDelta.x, lookDelta.y);
     else if (isRiding()) updateRideLook(lookDelta.x, lookDelta.y);
     else playerController.look(lookDelta.x, lookDelta.y);
   }
@@ -1355,10 +1327,10 @@ function animate(): void {
   // F toggles the Development fly camera (edge action, consumed once).
   if (input.consumePressed('creativeToggle')) {
     if (isRiding()) showStatusMessage('Dismount first (E).');
-    else setCreativeMode(!creativeActive);
+    else modes.toggleCreative();
   }
   // Edge-triggered play actions (death gates everything but respawn).
-  if (creativeActive) {
+  if (modes.isCreative()) {
     // Creative owns the movement keys: discard the play edges so nothing
     // (jump queue, crouch, camera toggle…) leaks in or out of the mode.
     input.consumePressed('jump');
@@ -1370,7 +1342,7 @@ function animate(): void {
     input.consumePressed('respawn');
     input.consumePressed('forward');
     input.consumePressed('backward');
-  } else if (!editor.isEditMode()) {
+  } else if (modes.isPlay()) {
     if (isRiding() && horse.isMounted()) {
       // Riding: movement keys ARE the horse's reins; the rest is consumed
       // so nothing leaks into the (paused) player controller.
@@ -1415,7 +1387,7 @@ function animate(): void {
   // Horse world update: AI decisions, gaits, collision. The horse must run
   // BEFORE the HUD but AFTER the player moved, so its player-overlap push-out
   // uses this frame's position (spec §14: no hard player↔horse overlap).
-  if (!editor.isEditMode() && !creativeActive) {
+  if (modes.isPlay()) {
     const riding = isRiding() && horse.isMounted() ? buildRidingInput() : undefined;
     const playerPos = playerController.getPosition();
     horse.update({
@@ -1448,7 +1420,7 @@ function animate(): void {
   }
   // Fly the creative camera AFTER the (skipped) player update: Space/Ctrl
   // drive vertical motion, Shift doubles the speed.
-  if (creativeActive) {
+  if (modes.isCreative()) {
     const move = input.getMoveInput();
     creativeFlight.update(delta, {
       forward: move.forward,
@@ -1462,36 +1434,54 @@ function animate(): void {
   }
   // Rider and horse sync: while mounted the character root is a child of the
   // saddle socket (bit-stable relative to the horse) and the riding camera
-  // rig owns the frame; otherwise the normal on-foot sync runs.
-  if (isRiding()) syncRider(delta);
+  // rig owns the frame; otherwise the normal on-foot sync runs. ONE horse
+  // snapshot per frame feeds both syncs AND the shadow governor below.
+  const horseSnap = horse.getSnapshot();
+  if (isRiding()) syncRider(delta, horseSnap);
   else {
     syncCharacter(delta, previousBodyYaw);
     previousBodyYaw = playerController.getBodyYaw();
   }
-  syncHorse(delta);
-  if (!editor.isEditMode() && !isRiding()) interactions.update(
+  syncHorse(delta, horseSnap);
+  if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
   );
   dayNight.update(delta);
-  // Shadow maps refresh every OTHER frame (performance revision §6): the
-  // orbiting sun moves ~0.02° per frame, so the one-frame shadow lag is
-  // invisible, while the 4.2MP depth pass no longer runs on every frame.
-  // (Final-polish matrix: freq 1/2/4 measured as ≤1ms apart; 2 stays.)
-  shadowFrame ^= 1;
-  renderer.shadowMap.needsUpdate = shadowFrame === 0;
-  gizmo.sync(editor.isEditMode(), editor.getSelectedUuid());
+  // Shadow maps refresh ON DEMAND (RenderGovernor): the depth pass is real
+  // money (~12ms per 2048² pass on the harness; ~1.4ms at 768²), so the
+  // scheduler fires it only when the cooldown expires — fast cadence while
+  // casters move (player/horse/mount/DEmount/edit drags), slow cadence when
+  // only the sun drifts (~0.02°/frame — identical shadows between passes).
+  const castersMoving = mountAnim !== null
+    || dismountAnim !== null
+    || gizmo.isDragging()
+    || editShadowPulse > 0
+    || playerController.getHorizontalSpeed() > 0.25
+    || Math.abs(playerController.getVerticalVelocity()) > 0.5
+    || Math.abs(horseSnap.speed) > 0.25;
+  renderer.shadowMap.needsUpdate = shadows.update(delta, castersMoving);
+  if (editShadowPulse > 0) editShadowPulse -= delta;
+  gizmo.sync(modes.isEdit(), editor.getSelectedUuid());
   // The selection box only needs to track transforms in edit mode; the one
   // frame after leaving edit mode hides it for good.
-  if (editor.isEditMode() || selectionBox.visible) refreshSelectionHelper();
+  if (modes.isEdit() || selectionBox.visible) refreshSelectionHelper();
   contactIndicator.update({
-    editMode: editor.isEditMode(),
+    editMode: modes.isEdit(),
     selectedUuid: editor.getSelectedUuid(),
     scene,
     manager,
   });
-  updateSelectionPanel();
-  setHud();
+  // HUD + selection panel at 10Hz instead of every frame: ~25 DOM writes
+  // per frame were a measurable CPU tax on weak laptops (the render itself
+  // dominates the GPU, but THIS trims the main thread). The perf counter
+  // above keeps its own faster windows.
+  hudTimer -= delta;
+  if (hudTimer <= 0) {
+    hudTimer = 0.1;
+    updateSelectionPanel();
+    setHud();
+  }
   updatePerfCounter();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);

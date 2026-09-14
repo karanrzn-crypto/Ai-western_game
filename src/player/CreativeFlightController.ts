@@ -89,6 +89,21 @@ export class CreativeFlightController {
     this.velocity.set(0, 0, 0);
   }
 
+  /**
+   * Re-attach the camera after a PAUSE (an Edit session opened on top of the
+   * flight). Unlike begin(), the session's saved yaw/pitch CONTINUE — the
+   * view is never re-derived from the player, so the camera keeps exactly
+   * the Creative/Edit position AND rotation (zero jump cut, zero snap).
+   * The position is re-read from the camera (edit mode parks it untouched),
+   * velocity is reset, and the flight carries on from the same viewpoint.
+   */
+  resume(camera: THREE.Camera): void {
+    this.active = true;
+    this.position.copy(camera.position);
+    this.velocity.set(0, 0, 0);
+    this.applyTo(camera);
+  }
+
   /** Rotate the fly view (same right-drag pixel deltas the gameplay uses). */
   look(deltaX: number, deltaY: number, sensitivity = 0.0018): void {
     if (!this.active) return;

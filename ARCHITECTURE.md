@@ -83,6 +83,8 @@ responsibility. Dependency direction is strictly **downward**:
 | `src/core/types.ts` | `ObjectDefinition`, `Transform`, `Vec3`, `AssetType`, `SceneData`. | 100 |
 | `src/core/validators.ts` | `mergeVec3`, `mergeTransform`, `validateTransform`. Pure helpers. | 65 |
 | `src/core/clone.ts` | `deepClone`, `deepFreeze` (uses `structuredClone`). | 35 |
+| `src/core/GameModeController.ts` | Camera-ownership state machine: play (gameplay rig) / creative (fly camera) / edit (parked). Records the edit session's origin so TAB-exit returns the camera to where the session came from — a creative-origin edit resumes the fly pose with zero jump cut, and only the explicit F returns the camera to the player. Pure + unit-tested (`tests/game-mode-controller.test.ts`). | 150 |
+| `src/engine/RenderGovernor.ts` | `AdaptiveResolution` (DPR ladder tops out at 1.0, boots at 0.85, climbs only with sustained ≥50 fps proof) + `ShadowScheduler` (on-demand shadow refresh: fast cadence while casters move, slow while only the sun drifts). Unit-tested (`tests/render-governor.test.ts`). | 190 |
 | `src/engine/IRendererAdapter.ts` | `IRendererAdapter` interface + `RendererChange` discriminated union. | 40 |
 | `src/engine/ThreeRendererAdapter.ts` | three.js adapter. Holds `Map<uuid, Object3D>`. Handles async asset loading with pending state queue. | 200 |
 | `src/engine/HeadlessRendererAdapter.ts` | Test/Node adapter with audit log. | 50 |

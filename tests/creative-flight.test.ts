@@ -177,3 +177,54 @@ test('CREATIVE: F is bound to creativeToggle and no other action claims KeyF', (
     assert.equal(codes.includes('KeyF'), false, `${action} must not steal KeyF`);
   }
 });
+
+test('CREATIVE: resume() continues the paused session — no re-derive, no jump cut', () => {
+  // The Edit-on-top-of-Creative flow: begin → fly → end (edit parks the
+  // camera) → resume. The saved fly yaw/pitch MUST survive the pause —
+  // the view is never re-derived from the player (the Creative→Edit bug).
+  const camera = makeCamera([4, 6, 2], 0.3, -0.1);
+  const creative = new CreativeFlightController();
+  creative.begin(camera, 0.3, -0.1);
+  creative.look(100, 50); // rotate the fly view: yaw -= 0.18, pitch -= 0.09
+  creative.update(0, idle, camera); // idle flush: applyTo writes the new view to the camera
+  const yawAfterLook = camera.rotation.y;
+  const pitchAfterLook = camera.rotation.x;
+  for (let i = 0; i < 30; i += 1) creative.update(1 / 60, { ...idle, forward: true }, camera);
+  const parked = camera.position.clone();
+
+  creative.end(); // edit session opens; the wiring parks the camera untouched
+  assert.equal(creative.isActive(), false);
+
+  creative.resume(camera); // edit exits back to creative
+  assert.equal(creative.isActive(), true);
+  assert.deepEqual([camera.position.x, camera.position.y, camera.position.z],
+    [parked.x, parked.y, parked.z], 'the camera stays EXACTLY where edit left it');
+  assert.equal(camera.rotation.y, yawAfterLook, 'fly yaw survived the pause');
+  assert.equal(camera.rotation.x, pitchAfterLook, 'fly pitch survived the pause');
+
+  // W must fly along the SAME view direction as before the pause.
+  const before = camera.position.clone();
+  for (let i = 0; i < 60; i += 1) creative.update(1 / 60, { ...idle, forward: true }, camera);
+  const dx = camera.position.x - before.x;
+  const dz = camera.position.z - before.z;
+  const sin = Math.sin(yawAfterLook);
+  const cos = Math.cos(yawAfterLook);
+  assert.ok(dx < -0.5 && dz < -2, `W continues along the paused yaw (dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)})`);
+  const along = -sin * dx + -cos * dz;
+  const cross = Math.abs(cos * dx - sin * dz);
+  assert.ok(cross < 0.5, `no sideways drift after resume (cross=${cross.toFixed(3)})`);
+  assert.ok(along > 2, 'net forward progress along the saved view');
+});
+
+test('CREATIVE: resume() never teleports to the player or the origin', () => {
+  const camera = makeCamera([9, 7, -5], 1.2, 0.4);
+  const creative = new CreativeFlightController();
+  creative.begin(camera, 1.2, 0.4);
+  for (let i = 0; i < 10; i += 1) creative.update(1 / 60, { ...idle, up: true, fast: true }, camera);
+  const parked = camera.position.clone();
+  creative.end();
+  creative.resume(camera);
+  assert.deepEqual([camera.position.x, camera.position.y, camera.position.z],
+    [parked.x, parked.y, parked.z],
+    'resume reattaches in place — no jump to (0,0,0), no player snap');
+});

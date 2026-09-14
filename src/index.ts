@@ -16,6 +16,16 @@ export { PersistenceManager, SceneLoadError } from './persistence/PersistenceMan
 export type { LoadSummary, LoadOptions, SkippedEntry, PersistenceManagerOptions } from './persistence/PersistenceManager.js';
 export { EventBus } from './core/EventBus.js';
 export type { SceneEvents, EventName, Handler } from './core/EventBus.js';
+export { GameModeController } from './core/GameModeController.js';
+export type {
+  GameMode,
+  EditOrigin,
+  CameraOwner,
+  CreativeAttachSource,
+  PlayReturnSource,
+  GameModeDelegate,
+  GameModeOptions,
+} from './core/GameModeController.js';
 
 // --- Engine adapters ----------------------------------------------------
 export * from './engine/IRendererAdapter.js';
@@ -23,6 +33,12 @@ export { ThreeRendererAdapter } from './engine/ThreeRendererAdapter.js';
 export type { ThreeRendererAdapterOptions } from './engine/ThreeRendererAdapter.js';
 export { HeadlessRendererAdapter } from './engine/HeadlessRendererAdapter.js';
 export type { HeadlessChangeRecord } from './engine/HeadlessRendererAdapter.js';
+export { AdaptiveResolution, ShadowScheduler, DEFAULT_DPR_LADDER } from './engine/RenderGovernor.js';
+export type {
+  ResolutionSink,
+  AdaptiveResolutionOptions,
+  ShadowSchedulerOptions,
+} from './engine/RenderGovernor.js';
 
 // --- Asset layer --------------------------------------------------------
 export * from './assets/index.js';

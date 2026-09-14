@@ -159,57 +159,86 @@ function capsuleBoxDist(cap, box) {
 //   seated pelvis ON the seat, seated boots ON the treads
 const SADDLE_LEATHER = new Set(['seat', 'pommel', 'horn', 'cantle', 'cantle-rim', 'skirt', 'horn-cap']);
 function toleranceFor(capName, colName, t) {
-  // The hand grips from the reach landing until the climb release blend
-  // (kClimb 0.35→0.7 — the arm extends and slides off the seat edge).
-  const gripUntil = lerp(timeline.reachEnd, timeline.climbEnd, 0.7);
-  const gripPhase = t >= timeline.reachEnd - 0.09 && t <= gripUntil;
-  if (gripPhase && (capName === 'handL' || capName === 'armL-fore') &&
-      (colName === 'seat' || colName === 'blanket' || colName === 'skirt')) {
-    return -0.05; // grip hand/forearm rest and PRESS on the seat edge (the
-                  // r=0.05 ball sinks into the seat slab; the real meshes
-                  // rest on top — designed contact)
+  const c = (a, b, k) => lerp(a, b, k);
+  // LEFT hand ON the pommel from the grip landing until the arm fully
+  // extends and slips off (mid-climb). The forearm rests across the seat
+  // edge / pommel leather — designed contact.
+  const gripFrom = c(timeline.reachEnd, timeline.climbEnd, -0.15);
+  const gripUntil = c(timeline.reachEnd, timeline.climbEnd, 0.66);
+  if (t >= gripFrom && t <= gripUntil &&
+      (capName === 'handL' || capName === 'armL-fore') &&
+      (colName === 'seat' || colName === 'blanket' || colName === 'skirt' ||
+       colName === 'pommel' || colName === 'horn' || colName === 'horn-cap')) {
+    return -0.05;
   }
-  // The drop: from the wide-splay descent on, the legs sweep down past the
-  // blanket/skirt/fender leather into the stirrups (a real rider's leg
-  // slides along the fender identically). Designed graze.
-  const dropFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.35);
-  if ((capName.startsWith('boot') || capName.startsWith('shin') || capName.startsWith('thigh')) &&
-      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('skirt-tie')) && t >= dropFrom) {
+  // LEFT boot entering the stirrup: the boot slides along / past the fender
+  // leather and the stirrup straps from the catch through the stand (loose
+  // leather flexes — designed contact), then rests ON the tread.
+  const catchFrom = c(timeline.reachEnd, timeline.climbEnd, 0.25);
+  const standUntil = 1.0;
+  if ((capName === 'bootL' || capName === 'shinL' || capName === 'thighL') &&
+      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('stirrup') ||
+       colName.startsWith('skirt-tie') || colName.startsWith('blanket-flap') ||
+       ((capName === 'shinL' || capName === 'thighL') &&
+        (colName.startsWith('blanket') || colName.startsWith('skirt')))) &&
+      t >= catchFrom && t <= standUntil) {
+    return -0.09;
+  }
+  // While standing on the stirrup the boot's toe RESTS lightly against the
+  // barrel (a real rider's boot touches the horse's side) — designed contact.
+  if (capName === 'bootL' && colName === 'barrel' && t >= catchFrom && t <= timeline.seatEnd) {
+    return -0.016;
+  }
+  // LEFT leg draping into the seat: thigh sweeps across the skirt/seat edge
+  // as the body turns and folds (a real leg slides along the leather).
+  const drapeFrom = c(timeline.swingEnd, timeline.seatEnd, 0.1);
+  if ((capName.startsWith('bootL') || capName.startsWith('shinL') || capName.startsWith('thighL')) &&
+      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('stirrup') ||
+       colName.startsWith('skirt-tie')) && t >= drapeFrom) {
     return -0.06;
   }
-  if ((capName.startsWith('shin') || capName.startsWith('thigh')) &&
-      (colName.startsWith('blanket') || colName.startsWith('skirt')) && t >= dropFrom) {
-    return -0.03;
+  if (capName.startsWith('thighL') && (colName.startsWith('blanket') || colName.startsWith('skirt')) && t >= drapeFrom) {
+    return -0.04;
   }
-  if ((capName.startsWith('boot') || capName.startsWith('shin')) &&
-      colName.startsWith('stirrup') && t >= lerp(timeline.seatEnd, 1, 0.45)) return -0.06;
-  // Seated/settling contacts (phase-relative: the legs blend onto the saddle
-  // from kSeatL's start, the pelvis folds in from kSeatIn's start).
-  const legsSeatFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.55);
-  const pelvisSeatFrom = lerp(timeline.climbEnd, timeline.seatEnd, 0.45);
-  if ((capName === 'thighL' || capName === 'thighR') && (colName === 'seat' || colName === 'skirt') && t >= legsSeatFrom) {
-    // Seated/settling thigh drapes over the seat slab's edge (the FINAL pose
-    // rests on it — a real saddle's rolled edge contacts identically).
+  // RIGHT boot settling into the far stirrup at the very end.
+  if ((capName === 'bootR' || capName === 'shinR') &&
+      colName.startsWith('stirrup') && t >= c(timeline.seatEnd, 1, 0.3)) {
     return -0.06;
   }
-  if ((capName === 'thighL' || capName === 'thighR') && SADDLE_LEATHER.has(colName) && t >= legsSeatFrom) {
-    return -0.004; // seated thighs drape over the saddle leather
+  if ((capName.startsWith('bootR') || capName.startsWith('shinR') || capName.startsWith('thighR')) &&
+      (colName.startsWith('fender') || colName.includes('strap') || colName.startsWith('skirt-tie') ||
+       colName.startsWith('skirt') || colName.startsWith('blanket')) &&
+      t >= timeline.swingEnd) {
+    return -0.05;
   }
+  // The settling LEFT thigh presses the horse's barrel side as it drapes
+  // home (a real rider's leg hugs the horse through the saddle's edge) and
+  // the boot/shin rest lightly against the barrel while in the stirrups —
+  // designed contacts.
+  if ((capName === 'thighL' || capName === 'shinL') && colName === 'barrel' && t >= drapeFrom) {
+    return capName === 'thighL' ? -0.035 : -0.022;
+  }
+  // Seated/settling thigh drapes over the saddle leather (phase-relative).
+  if ((capName === 'thighL' || capName === 'thighR') && (colName === 'seat' || colName === 'skirt') && t >= drapeFrom) {
+    return -0.06;
+  }
+  if ((capName === 'thighL' || capName === 'thighR') && SADDLE_LEATHER.has(colName) && t >= drapeFrom) {
+    return -0.008;
+  }
+  // Seated pelvis ON the seat (the capsule's hemispherical hip-end dips).
+  const pelvisSeatFrom = c(timeline.swingEnd, timeline.seatEnd, 0.4);
   if ((capName === 'pelvis' || capName === 'torso') && t >= pelvisSeatFrom && colName === 'seat') {
-    // Seated pelvis ON the seat: the pelvis MESH bottom rests exactly on the
-    // seat top (hipsY constant for it — see the seated diagnostics), but a
-    // capsule's hemispherical hip-end dips ~3cm below that. Designed contact.
     return -0.045;
   }
-  if ((capName === 'pelvis' || capName === 'torso') && t >= lerp(timeline.seatEnd, 1, 0.5) && SADDLE_LEATHER.has(colName)) return -0.003;
-  if (capName.startsWith('boot') && t >= lerp(timeline.seatEnd, 1, 0.7) && SADDLE_LEATHER.has(colName)) return -0.003;
+  if ((capName === 'pelvis' || capName === 'torso') && t >= c(timeline.seatEnd, 1, 0.5) && SADDLE_LEATHER.has(colName)) return -0.003;
+  if (capName.startsWith('boot') && t >= c(timeline.seatEnd, 1, 0.7) && SADDLE_LEATHER.has(colName)) return -0.003;
   return 0;
 }
 function lerp(a, b, k) { return a + (b - a) * k; }
 
 // --- Sweep -----------------------------------------------------------------------
 const timeline = buildMountTimeline(1.35); // typical mid-size arc
-console.log(`timeline: total ${timeline.total.toFixed(2)}s  walk ${timeline.walkEnd.toFixed(3)} reach ${timeline.reachEnd.toFixed(3)} climb ${timeline.climbEnd.toFixed(3)} seat ${timeline.seatEnd.toFixed(3)}`);
+console.log(`timeline: total ${timeline.total.toFixed(2)}s  walk ${timeline.walkEnd.toFixed(3)} reach ${timeline.reachEnd.toFixed(3)} climb ${timeline.climbEnd.toFixed(3)} swing ${timeline.swingEnd.toFixed(3)} seat ${timeline.seatEnd.toFixed(3)}`);
 
 const startState = {
   startPhi: Math.PI * 0.95, // a demanding start: far side, requires a long arc

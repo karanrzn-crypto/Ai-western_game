@@ -42,11 +42,21 @@ export interface HorseRidingInput {
   brake: boolean;
   /** A/D steering: +1 left, -1 right. */
   steer: number;
-  /** W edge — gait ladder up. */
-  tapGaitUp: boolean;
-  /** S edge — gait ladder down. */
-  tapGaitDown: boolean;
+  /** Shift held together with W — request the run (gallop). */
+  sprint?: boolean;
+  /** @deprecated controls revision §20 — the W press IS the throttle, so the
+   *  old tap-the-ladder scheme fought the hold (a second W press trotted).
+   *  The fields remain accepted for compatibility but are IGNORED. */
+  tapGaitUp?: boolean;
+  /** @deprecated see tapGaitUp. */
+  tapGaitDown?: boolean;
 }
+
+/** Seconds a fresh W+Shift engage from below walk speed stays at the walk
+ *  before the gallop wish engages (controls revision §20 — the run transition
+ *  reads walk → trot → canter → gallop through the speed ramp, never a
+ *  standstill-to-sprint). */
+export const HORSE_RUN_WINDUP_SECONDS = 0.55;
 
 export interface HorseWorldContext {
   deltaSeconds: number;
@@ -136,6 +146,9 @@ export class HorseController {
   private mountLock = 0;
   private lastTurnRate = 0;
   private deathHandled = false;
+  /** Controls revision §20 — W+Shift run engage state (see applyRidingInput). */
+  private sprintHold = false;
+  private runWindup = 0;
 
   constructor(
     collisionWorld: CollisionWorld,
@@ -249,9 +262,15 @@ export class HorseController {
    * Take the rider. The caller attaches the character model to the socket and
    * plays the mount animation; `lockSeconds` keeps the horse standing for the
    * whole choreography (reach → grip → climb → settle) — it may not walk off.
+   * While ALREADY mounted (the animated dismount re-locks) the call just
+   * extends the stand lock for the dismount choreography.
    */
   mount(lockSeconds = 0.45): void {
-    if (!this.isAlive() || this.mounted) return;
+    if (!this.isAlive()) return;
+    if (this.mounted) {
+      this.mountLock = Math.max(this.mountLock, lockSeconds); // extend the stand
+      return;
+    }
     this.mounted = true;
     this.mountLock = Math.max(0.45, lockSeconds); // horse stands while the rider settles
     this.brain.force('ridden');
@@ -388,28 +407,34 @@ export class HorseController {
     this.stamina.update(dt, this.actualGait());
   }
 
-  /** Gait ladder + throttle/brake/reverse while ridden (spec §4/§19).
-   *  Natural momentum contract: W held = accelerate to / hold the selected
-   *  gait; W released = the animal COASTS — natural deceleration to a smooth
-   *  full stop, then standing (no snap, no cruise-hold, no artificial drift). */
+  /** Throttle/brake/reverse while ridden (spec §4, controls revision §20).
+   *  W = WALK: holding W (no Shift) always rides at a walk — from a
+   *  standstill, after a stop, ALWAYS (the old tap-the-ladder scheme is gone:
+   *  the W press edge IS the throttle, so taps fought the hold and a second
+   *  W press trotted). W+Shift = RUN: the gallop wish engages through a short
+   *  walk-first windup when engaged from below walk speed, so the transition
+   *  reads walk → trot → canter → gallop through the speed ramp and control
+   *  is never stolen by a standstill sprint; engaging at speed skips the
+   *  windup. Releasing Shift (W still held) eases back to the walk.
+   *  Natural momentum contract (unchanged): W released = the animal COASTS —
+   *  natural deceleration to a smooth full stop, then standing. */
   private applyRidingInput(input: HorseRidingInput, dt: number): void {
     if (this.mountLock > 0) return; // horse stands while the rider settles
 
     const ceiling = this.gaitCeiling();
-    if (input.tapGaitUp) {
-      const index = LADDER.indexOf(this.targetGait);
-      this.targetGait = LADDER[Math.min(LADDER.length - 1, index + 1)];
+    const sprinting = input.throttle && input.sprint === true;
+    if (sprinting && !this.sprintHold && this.speed < HORSE_GAITS.walk.speed) {
+      this.runWindup = HORSE_RUN_WINDUP_SECONDS; // fresh engage from (near) rest: walk first
     }
-    if (input.tapGaitDown) {
-      const index = LADDER.indexOf(this.targetGait);
-      this.targetGait = LADDER[Math.max(0, index - 1)];
-    }
-    // Holding W always rides at a walk or above: never a dead throttle from a
-    // standstill, and never an instant stop when the ladder sits at idle.
-    if (input.throttle && this.targetGait === 'idle') this.targetGait = 'walk';
-    if (LADDER.indexOf(this.targetGait) > LADDER.indexOf(ceiling)) this.targetGait = ceiling;
+    this.sprintHold = sprinting;
+    this.runWindup = Math.max(0, this.runWindup - dt);
 
-    const targetSpeed = HORSE_GAITS[this.targetGait].speed * (this.spookSurge > 0 ? 1.15 : 1);
+    let wish: HorseGait = 'idle';
+    if (input.throttle) wish = sprinting && this.runWindup <= 0 ? 'gallop' : 'walk';
+    if (LADDER.indexOf(wish) > LADDER.indexOf(ceiling)) wish = ceiling;
+    this.targetGait = wish;
+
+    const targetSpeed = HORSE_GAITS[wish].speed * (this.spookSurge > 0 ? 1.15 : 1);
     const steering = clamp(input.steer, -1, 1);
     this.steerHorse(steering, dt);
 
@@ -437,6 +462,7 @@ export class HorseController {
     // natural deceleration to exactly zero, then it stands (no snapping).
     if (this.speed > 0) this.speed = Math.max(0, this.speed - HORSE_NATURAL_DECELERATION * dt);
     else if (this.speed < 0) this.speed = Math.min(0, this.speed + HORSE_NATURAL_DECELERATION * dt);
+    if (this.speed === 0) this.targetGait = 'idle'; // stopped → the wish clears
   }
 
   /** Execute the brain's order (unmounted). */

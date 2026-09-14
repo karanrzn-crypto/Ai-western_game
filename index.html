@@ -30,6 +30,14 @@
     #stamina-fill{background:linear-gradient(90deg,#5d7d43,#8fae66)}
     #stamina-fill.locked{background:linear-gradient(90deg,#7d6a35,#a08a48)}
     #horse-panel{position:absolute;right:16px;bottom:24px;min-width:230px;padding:12px 14px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(12,12,14,.72);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
+    #object-log-panel{position:absolute;right:16px;bottom:246px;min-width:250px;max-width:320px;padding:12px 14px;border:1px solid rgba(215,189,124,.35);border-radius:8px;background:rgba(12,12,14,.78);backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.25)}
+    #object-log-panel .title{color:#d7bd7c}
+    #object-log-empty{font-size:10px;color:#8f887c;padding:2px 0}
+    #object-log{display:flex;flex-direction:column;gap:2px}
+    #object-log>div{display:flex;justify-content:space-between;gap:14px;font-size:10px}
+    #object-log .k{color:#a7a195;flex:0 0 auto}
+    #object-log .v{color:#f1eadf;font-variant-numeric:tabular-nums;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #object-log .v.name{font-weight:800;color:#ffe9b0}
     #horse-health-fill{background:linear-gradient(90deg,#8f6a32,#c49a4a)}
     #horse-stamina-fill{background:linear-gradient(90deg,#43707d,#6aa3ae)}
     #horse-stamina-fill.locked{background:linear-gradient(90deg,#7d6a35,#a08a48)}
@@ -107,6 +115,19 @@
       <div class="row"><span class="key">Gait</span><span class="value" id="horse-gait">IDLE</span></div>
       <div class="row"><span class="key">Distance</span><span class="value" id="horse-dist">—</span></div>
       <div class="badge">PART 3 · E MOUNT · B COME · N STAY</div>
+    </div>
+    <div id="object-log-panel">
+      <div class="title">آخرین تغییر OBJECT</div>
+      <div id="object-log-empty">هنوز تغییری ثبت نشده است</div>
+      <div id="object-log" dir="ltr" hidden>
+        <div><span class="k">name</span><span class="v name" id="objlog-name">—</span></div>
+        <div><span class="k">uuid</span><span class="v" id="objlog-uuid">—</span></div>
+        <div><span class="k">change</span><span class="v" id="objlog-action">—</span></div>
+        <div><span class="k">position</span><span class="v" id="objlog-pos">—</span></div>
+        <div><span class="k">rotation</span><span class="v" id="objlog-rot">—</span></div>
+        <div><span class="k">scale</span><span class="v" id="objlog-scl">—</span></div>
+        <div><span class="k">time</span><span class="v" id="objlog-time">—</span></div>
+      </div>
     </div>
     <div id="interact-prompt"></div>
     <div id="status-message"></div>

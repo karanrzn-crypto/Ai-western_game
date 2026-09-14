@@ -43,8 +43,11 @@ import {
   mountSafeRadius,
   MOUNT_STAND,
   MOUNT_SEAT_QUATERNION,
+  buildDismountTimeline,
+  dismountRootPose,
+  poseDismountRider,
 } from '../src/index.js';
-import type { MountStartState, MountTimeline } from '../src/index.js';
+import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
 
@@ -144,10 +147,26 @@ registerPrimitiveFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
+
+// --- Last-object-change log (TEST panel, bottom-right) ---------------------
+// Every transform mutation in the game flows through ONE funnel —
+// SceneStateManager.updateObjectTransform (gizmo drags, arrow keys, rotation
+// shortcuts and the numeric panel all land here). Wrapping that funnel gives
+// the debug panel the exact last change per object: name, which transform
+// group changed, the new values and a timestamp — formatted so the text can
+// be pasted to another AI to reproduce the change 1:1. Read-only debug: the
+// wrapper never alters what the manager does.
+const rawUpdateObjectTransform = manager.updateObjectTransform.bind(manager);
+manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
+  const next = rawUpdateObjectTransform(uuid, patch);
+  noteObjectChange(uuid, patch, next);
+  return next;
+};
+
 const persistence = new PersistenceManager();
-// Storage key v4: the map objects received human-readable Persian names, so
-// old v3 saves (previous names) must not shadow the renamed default map.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v4' });
+// Storage key v5: the default map gained the enterable BUILDING, so old v4
+// saves (without it) must not shadow the renamed default map.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v5' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -286,6 +305,48 @@ interactions.register({
   onInteract: () => showStatusMessage('The crate holds jerky, rifle rounds and a worn tin star.'),
 });
 
+// --- The enterable BUILDING -------------------------------------------------
+// One simple walk-in structure, built entirely from managed cubes (the same
+// primitive every other map object uses): four walls, a roof and a real
+// DOORWAY — a 1.6m gap in the south wall with a header above it — so the
+// player walks through the opening into an EMPTY enterable interior. No
+// decor, no furniture, no props: exactly walls + roof + door + interior.
+// Footprint 8×6m at (14, −12); walls 3m tall, 0.35m thick; roof slab above.
+const BUILDING = { x: 14, z: -12, w: 8, d: 6, h: 3, t: 0.35, doorW: 1.6, doorH: 2.3 };
+function addBuildingPart(
+  uuid: string,
+  name: string,
+  x: number, y: number, z: number,
+  sx: number, sy: number, sz: number,
+): void {
+  manager.registerObject({
+    uuid,
+    assetType: 'cube',
+    transform: {
+      position: { x, y, z },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: sx, y: sy, z: sz },
+    },
+    metadata: { name, editable: true, collider: true },
+  });
+}
+// North wall (back, away from the spawn) + west/east side walls.
+addBuildingPart('10000000-0000-4000-a000-000000000030', 'ساختمان - دیوار شمالی', BUILDING.x, BUILDING.h / 2, BUILDING.z - BUILDING.d / 2, BUILDING.w, BUILDING.h, BUILDING.t);
+addBuildingPart('10000000-0000-4000-a000-000000000031', 'ساختمان - دیوار غربی', BUILDING.x - BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
+addBuildingPart('10000000-0000-4000-a000-000000000032', 'ساختمان - دیوار شرقی', BUILDING.x + BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
+// South wall (facing the spawn) split around the doorway: two side segments
+// + the header above the door. The gap IS the entrance — nothing blocks it.
+{
+  const segW = (BUILDING.w - BUILDING.doorW) / 2;
+  const segCenter = BUILDING.w / 2 - segW / 2;
+  addBuildingPart('10000000-0000-4000-a000-000000000033', 'ساختمان - دیوار جنوبی (راست در)', BUILDING.x - segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
+  addBuildingPart('10000000-0000-4000-a000-000000000034', 'ساختمان - دیوار جنوبی (چپ در)', BUILDING.x + segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
+  addBuildingPart('10000000-0000-4000-a000-000000000035', 'ساختمان - بالای در', BUILDING.x, BUILDING.h - (BUILDING.h - BUILDING.doorH) / 2, BUILDING.z + BUILDING.d / 2, BUILDING.doorW, BUILDING.h - BUILDING.doorH, BUILDING.t);
+}
+// Roof — one slab with a slight overhang; its collider also stops re-entry
+// from above.
+addBuildingPart('10000000-0000-4000-a000-000000000036', 'ساختمان - سقف', BUILDING.x, BUILDING.h + 0.15, BUILDING.z, BUILDING.w + 0.7, 0.3, BUILDING.d + 0.7);
+
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
@@ -360,7 +421,7 @@ function updateControlHint(): void {
     return;
   }
   if (isRiding()) {
-    hint.textContent = 'tap W/S = gait up/down · hold W ride · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
+    hint.textContent = 'W walk · W+Shift gallop · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
     return;
   }
   hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · B come · N stay · V camera · F creative fly · H/J player debug · [ ] horse debug · R respawn · TAB edit';
@@ -431,6 +492,68 @@ function updateSaveStatus(): void {
   const saved = document.getElementById('save-status');
   if (!saved) return;
   saved.textContent = storage.hasSavedScene() ? `Saved ${new Date().toLocaleTimeString()}` : 'No saved scene';
+}
+
+// --- Last-object-change panel (TEST panel, bottom-right) --------------------
+// Populated by the updateObjectTransform wrapper above. Machine-friendly
+// format: the user can copy the panel text and hand it to another AI to
+// re-apply the exact same change elsewhere.
+interface ObjectChangeRecord {
+  name: string;
+  uuid: string;
+  action: string;
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+  time: string;
+}
+let lastObjectChange: ObjectChangeRecord | null = null;
+const vecText = (v: { x: number; y: number; z: number }): string =>
+  `x=${v.x.toFixed(2)} y=${v.y.toFixed(2)} z=${v.z.toFixed(2)}`;
+const rotText = (v: { x: number; y: number; z: number }): string =>
+  `x=${Math.round(v.x)}° y=${Math.round(v.y)}° z=${Math.round(v.z)}°`;
+
+function noteObjectChange(
+  uuid: string,
+  patch: PartialTransform,
+  transform: Readonly<{ position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number }; scale: { x: number; y: number; z: number } }>,
+): void {
+  const definition = manager.getObject(uuid);
+  if (!definition) return;
+  const groups: string[] = [];
+  if (patch.position) groups.push('position');
+  if (patch.rotation) groups.push('rotation');
+  if (patch.scale) groups.push('scale');
+  lastObjectChange = {
+    name: definition.metadata.name,
+    uuid,
+    action: groups.length === 1 ? groups[0] : groups.length > 1 ? groups.join('+') : 'update',
+    position: { ...transform.position },
+    rotation: { ...transform.rotation },
+    scale: { ...transform.scale },
+    time: new Date().toLocaleTimeString(),
+  };
+  updateObjectLogPanel();
+}
+
+function updateObjectLogPanel(): void {
+  const record = lastObjectChange;
+  const empty = document.getElementById('object-log-empty');
+  const body = document.getElementById('object-log');
+  if (!body || !record) return;
+  if (empty) empty.hidden = true;
+  body.hidden = false;
+  const set = (id: string, text: string): void => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  set('objlog-name', record.name);
+  set('objlog-uuid', record.uuid);
+  set('objlog-action', record.action);
+  set('objlog-pos', vecText(record.position));
+  set('objlog-rot', rotText(record.rotation));
+  set('objlog-scl', vecText(record.scale));
+  set('objlog-time', record.time);
 }
 
 function loadSavedScene(): void {
@@ -511,8 +634,9 @@ window.addEventListener('keydown', (event) => {
 
     if (!editor.isEditMode()) {
       // Entering Edit Mode (from Play OR Creative). The rider dismounts
-      // first — the editor owns the world, nobody rides during editing.
-      if (isRiding()) dismountHorse();
+      // first — the editor owns the world, nobody rides during editing —
+      // and INSTANTLY: the editor must not wait for the choreography.
+      if (isRiding()) dismountHorse({ instant: true });
       // From Creative: stop the flight/input ownership but do NOT reconnect
       // or snap the gameplay camera — Edit Mode inherits the camera exactly
       // where the fly camera left it (same position AND rotation), so the
@@ -683,7 +807,7 @@ function respawn(): void {
 }
 health.on((event) => {
   if (event !== 'died') return;
-  if (isRiding()) dismountHorse(); // never die in the saddle
+  if (isRiding()) dismountHorse({ instant: true }); // never die in the saddle
   playerController.setDead(true);
   characterStates.force('dead');
   respawnCountdown = 2.6;
@@ -935,6 +1059,20 @@ let mountAnim: {
   timeline: MountTimeline;
 } | null = null;
 
+// Dismount animation (controls revision §21): the short reverse choreography —
+// the hand grips the saddle edge, the rider stands on the stirrups, the right
+// leg sweeps back OVER the cantle, the body descends the left flank and
+// settles BESIDE the horse. Same contract as the mount: a few hand-authored
+// key poses + smooth interpolation, NO IK/solver, driven entirely in
+// SOCKET-LOCAL space. During the animation the rider stays attached to the
+// socket (isRiding() stays true) and the horse holds still (mount lock), so
+// the riding camera keeps framing the move; the on-foot handover runs once,
+// at the very end, at the exact final pose.
+let dismountAnim: {
+  age: number;
+  timeline: DismountTimeline;
+} | null = null;
+
 /** Geometric length of the polar approach path (start → stand point), used
  *  to size the walk phase (walk duration = arc / walk speed). */
 function mountApproachArc(startPhi: number, startR: number): number {
@@ -1015,35 +1153,53 @@ function mountHorse(): void {
   updateEditorHud();
   updateControlHint();
   saveHorseState(true);
-  showStatusMessage('Riding: tap W/S gait · hold W ride · hold S brake · A/D steer · E dismount');
+  showStatusMessage('Riding: W walk · W+Shift gallop · hold S brake · A/D steer · E dismount');
 }
 
-function dismountHorse(): void {
+function dismountHorse(options: { instant?: boolean } = {}): void {
   if (mountAnim) return; // never yank the rider out of the mount choreography
+  if (dismountAnim) {
+    if (!options.instant) return; // already dismounting — extra E presses do nothing
+    dismountAnim = null; // emergency (death / Tab): cancel and drop instantly
+  }
   if (isRiding()) {
-    const feet = horse.computeDismountFeet();
-    scene.attach(character.root); // keep the world transform for a beat
-    horse.dismount();
-    // Place the player at the validated spot (left side first). respawnAt
-    // resets motion state and hands the camera back to the gameplay rig.
-    playerController.respawnAt({ x: feet.x, y: feet.y + CHARACTER_PROPORTIONS.eyeHeight, z: feet.z });
-    characterAnimator.notifyLanding(4);
-    mountAnim = null;
-    characterAnimator.reset();
-    characterStates.force('idle');
-    if (playerController.getCameraMode() === 'third_person') thirdPersonCamera.snap();
-    updateEditorHud();
-    updateControlHint();
-    saveHorseState(true);
-    showStatusMessage('Dismounted.');
-    // The interaction system only re-fires its prompt when the TARGET
-    // changes — and the horse was already the target before mounting. Rewrite
-    // the prompt here so "[E] Dismount" can't stick after landing.
-    const prompt = document.getElementById('interact-prompt');
-    if (prompt) prompt.textContent = horse.canMount(playerController.getFeetPosition()) ? '[E] Mount horse' : '';
+    if (!options.instant) {
+      // ANIMATED DISMOUNT: grip → leg over the cantle → slide down the flank
+      // → settle. The horse holds still for the whole choreography (the
+      // already-mounted mount() call just extends the stand lock).
+      dismountAnim = { age: 0, timeline: buildDismountTimeline() };
+      horse.mount(dismountAnim.timeline.total + 0.3);
+      showStatusMessage('Dismounting…');
+      return;
+    }
+    finishDismount(horse.computeDismountFeet());
   } else {
     horse.dismount();
   }
+}
+
+/** The one-way on-foot handover, shared by the instant and animated paths. */
+function finishDismount(feet: { x: number; y: number; z: number }): void {
+  scene.attach(character.root); // keep the world transform for a beat
+  horse.dismount();
+  // Place the player at the validated spot (left side first). respawnAt
+  // resets motion state and hands the camera back to the gameplay rig.
+  playerController.respawnAt({ x: feet.x, y: feet.y + CHARACTER_PROPORTIONS.eyeHeight, z: feet.z });
+  characterAnimator.notifyLanding(4);
+  mountAnim = null;
+  dismountAnim = null;
+  characterAnimator.reset();
+  characterStates.force('idle');
+  if (playerController.getCameraMode() === 'third_person') thirdPersonCamera.snap();
+  updateEditorHud();
+  updateControlHint();
+  saveHorseState(true);
+  showStatusMessage('Dismounted.');
+  // The interaction system only re-fires its prompt when the TARGET
+  // changes — and the horse was already the target before mounting. Rewrite
+  // the prompt here so "[E] Dismount" can't stick after landing.
+  const prompt = document.getElementById('interact-prompt');
+  if (prompt) prompt.textContent = horse.canMount(playerController.getFeetPosition()) ? '[E] Mount horse' : '';
 }
 
 /** Per-frame mount animation driver: root transform + rider pose. The whole
@@ -1064,26 +1220,57 @@ function updateMountAnim(delta: number): void {
   }
 }
 
+/** Per-frame dismount animation driver. At t = 1 the root sits exactly on
+ *  DISMOUNT_STAND (socket-local, standing rest pose) — the world position is
+ *  validated against the collision world (with the classic dismount spots as
+ *  fallback) and the shared instant handover runs. The root's animated end
+ *  spot is already clear of the horse capsule, so the normal case has ZERO
+ *  position pop. */
+function updateDismountAnim(delta: number): void {
+  if (!dismountAnim) return;
+  dismountAnim.age += delta;
+  const t = Math.min(1, dismountAnim.age / dismountAnim.timeline.total);
+  dismountRootPose(character.root, t, dismountAnim.timeline);
+  poseDismountRider(character.joints, t, dismountAnim.timeline);
+  if (t >= 1) {
+    const world = riderSocket.localToWorld(character.root.position.clone());
+    const fallback = horse.computeDismountFeet();
+    const eye = CHARACTER_PROPORTIONS.eyeHeight;
+    const safe = findSafeSpawnPosition(collisionWorld, {
+      candidates: [
+        { x: world.x, y: world.y + eye, z: world.z },
+        { x: fallback.x, y: fallback.y + eye, z: fallback.z },
+      ],
+    });
+    finishDismount({ x: safe.x, y: safe.y - eye, z: safe.z });
+  }
+}
+
 function updateRideLook(deltaX: number, deltaY: number): void {
   const sensitivity = 0.0018;
   ridePitch = Math.max(-1.25, Math.min(1.25, ridePitch - deltaY * sensitivity));
   rideYaw -= deltaX * sensitivity;
 }
 
-/** Riding input map (spec §19) — W/S tap = gait ladder, hold = throttle/brake. */
+/** Riding input map (spec §19, controls revision §20) — W = walk,
+ *  W+Shift = run (the controller walks first from a standstill), S = brake. */
 function buildRidingInput() {
   return {
     throttle: input.isDown('forward'),
     brake: input.isDown('backward'),
     steer: (input.isDown('left') ? 1 : 0) - (input.isDown('right') ? 1 : 0),
-    tapGaitUp: input.consumePressed('forward'),
-    tapGaitDown: input.consumePressed('backward'),
+    sprint: input.isDown('sprint'),
   };
 }
 
 function syncRider(delta: number): void {
   const snap = horse.getSnapshot();
   updateMountAnim(delta);
+  updateDismountAnim(delta);
+  // The dismount handover may have detached the rider THIS frame — the world
+  // is on-foot now (the prompt was already rewritten by finishDismount), so
+  // the riding camera/prompt must not run one last stale frame.
+  if (!isRiding()) return;
   if (playerController.getCameraMode() === 'third_person') {
     // Chase-cam: while rolling and not dragging, the camera eases back behind
     // the horse; RMB can still orbit freely within a wide clamp.
@@ -1140,9 +1327,9 @@ horse.on((event) => {
     return;
   }
   if (event === 'death') {
-    if (isRiding() || mountAnim) {
-      mountAnim = null; // the saddle collapsed mid-mount — emergency dismount
-      dismountHorse();
+    if (isRiding() || mountAnim || dismountAnim) {
+      mountAnim = null; // the saddle collapsed mid-choreography — emergency dismount
+      dismountHorse({ instant: true });
     }
     saveHorseState(true);
     showStatusMessage('Your horse has fallen.');

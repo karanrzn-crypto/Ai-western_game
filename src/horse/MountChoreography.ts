@@ -265,8 +265,14 @@ export interface MountTimeline {
 }
 
 export function buildMountTimeline(arcLength: number): MountTimeline {
-  const walk = Math.max(0.65, Math.min(1.9, arcLength / 1.35));
-  const durations = [walk, 0.5, 0.92, 0.66, 0.52, 0.36];
+  // CONTROLS REVISION (faster mount): the whole sequence reads ~35% shorter —
+  // the approach walks at 1.9 m/s (tighter cap) and every in-saddle beat is
+  // compressed. The KEYFRAMES are untouched: every easing is per-fraction
+  // smoothstep, so each path keeps its exact shape and clearance margins and
+  // only plays faster — and scripts/mount-solver.mjs samples t ∈ (0, 1]
+  // FRACTIONS, so its 0-violation sweep stays valid without changes.
+  const walk = Math.max(0.5, Math.min(1.4, arcLength / 1.9));
+  const durations = [walk, 0.32, 0.6, 0.45, 0.34, 0.24];
   const total = durations.reduce((a, b) => a + b, 0);
   const bounds: number[] = [];
   let acc = 0;
@@ -676,4 +682,184 @@ export function applyRiderPose(j: MountJoints): void {
   j.elbowL.rotation.set(SEAT_POSE.elbowL, 0, 0);
   j.shoulderR.rotation.set(SEAT_POSE.shoulderR.rx, 0, SEAT_POSE.shoulderR.rz);
   j.elbowR.rotation.set(SEAT_POSE.elbowR, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// DISMOUNT — the short reverse of the mount (controls revision §21).
+//
+// REAL-RIDER DISMOUNT, LEFT side, in four small beats: the hand grabs the
+// saddle edge → the rider stands up on the stirrups → the RIGHT leg sweeps
+// back OVER the cantle (the mirror of the mount's swing — never a slide
+// through the horse) → the rider descends the LEFT flank and settles into a
+// standing pose BESIDE the horse.
+//
+// Same contract as the mount: a few hand-authored key poses + smooth
+// interpolation, NO runtime IK, NO solver. Every leg key below is one of the
+// mount's OWN solver-verified keys played in reverse order, so the swept
+// clearance already proven for the mount applies to the dismount path too.
+//
+//   1 grip    the LEFT hand takes the pommel grip (MOUNT_GRIP), the body
+//             unseats and stands up onto the stirrups (root: seat → APEX)
+//   2 swing   the RIGHT leg lifts off the far stirrup and arcs back OVER
+//             the cantle while the root slides OUTBOARD (still high)
+//   3 drop    the root descends the left flank, outside the fender/stirrup
+//             line, to the ground (the mount's climb played backwards);
+//             both boots gather under the body (COIL)
+//   4 settle  the coil uncoils into the character animator's exact REST
+//             pose (hips 0.96 / HANG legs / rest arms) — the handover to
+//             the on-foot animator pops nothing
+// ---------------------------------------------------------------------------
+
+/**
+ * Final dismount stand point (socket-local; y = ground). Farther outboard
+ * than MOUNT_STAND: the landed rider (capsule 0.35) must already stand clear
+ * of the horse's collision capsule (P.collisionRadius) + a small margin, so
+ * the player-separation push can never yank them on the first on-foot frame.
+ */
+export const DISMOUNT_STAND = {
+  x: -(P.collisionRadius + 0.35 + 0.07),
+  y: -P.riderFeetY,
+  z: MOUNT_STAND.z,
+};
+
+export interface DismountTimeline {
+  /** Cumulative phase ENDS as fractions of the whole (grip → swing → drop). */
+  gripEnd: number;
+  swingEnd: number;
+  dropEnd: number;
+  /** Total duration (seconds). */
+  total: number;
+}
+
+export function buildDismountTimeline(): DismountTimeline {
+  const durations = [0.3, 0.42, 0.44, 0.26]; // grip → swing over → drop → settle
+  const total = durations.reduce((a, b) => a + b, 0);
+  return {
+    gripEnd: durations[0] / total,
+    swingEnd: (durations[0] + durations[1]) / total,
+    dropEnd: (durations[0] + durations[1] + durations[2]) / total,
+    total,
+  };
+}
+
+/**
+ * Root transform at dismount timeline position t (socket-local). Seated root
+ * origin (0,0,0, facing the horse's head) → stand up on the stirrups →
+ * outboard slide over the flank → down to DISMOUNT_STAND, turning to face
+ * the horse's flank by the landing.
+ */
+export function dismountRootPose(
+  root: { position: { x: number; y: number; z: number }; quaternion: THREE.Quaternion },
+  t: number,
+  timeline: DismountTimeline,
+): void {
+  const { gripEnd, swingEnd, dropEnd } = timeline;
+  const kGrip = seg(t, 0, gripEnd);
+  const kSwing = seg(t, gripEnd, swingEnd);
+  const kDrop = seg(t, swingEnd, dropEnd);
+
+  // grip: the body unseats and stands up onto the stirrups (weight onto the
+  // LEFT stirrup — the root drifts a little outboard and tailward).
+  const gripX = lerp(0, -0.1, kGrip);
+  const gripY = lerp(0, APEX, kGrip);
+  const gripZ = lerp(0, 0.05, kGrip);
+  // swing: hold high while the right leg sweeps over; begin the outboard slide.
+  const swingX = lerp(gripX, DISMOUNT_STAND.x * 0.55, kSwing);
+  const swingZ = lerp(gripZ, DISMOUNT_STAND.z, kSwing);
+  // drop: descend the flank, outside the fender/stirrup line, to the ground.
+  const x = lerp(swingX, DISMOUNT_STAND.x, kDrop);
+  const y = lerp(gripY, DISMOUNT_STAND.y, kDrop);
+  const z = swingZ;
+
+  root.position.x = x;
+  root.position.y = y;
+  root.position.z = z;
+  // Facing: seated (forward) → turned toward the flank across swing + drop.
+  root.quaternion.slerpQuaternions(MOUNT_SEAT_QUATERNION, MOUNT_FACE_HORSE, Math.max(kSwing, kDrop));
+}
+
+/** Arm rest — exactly the character animator's standing rest (no pop). */
+const ARM_REST_L: ArmKey = { rx: 0, rz: -0.07, elbow: 0.22 };
+const ARM_REST_R: ArmKey = { rx: 0, rz: 0.07, elbow: 0.22 };
+/** Seat-pose arms as blend sources (applyRiderPose values). */
+const ARM_SEAT_L: ArmKey = { rx: SEAT_POSE.shoulderL.rx, rz: SEAT_POSE.shoulderL.rz, elbow: SEAT_POSE.elbowL };
+const ARM_SEAT_R: ArmKey = { rx: SEAT_POSE.shoulderR.rx, rz: SEAT_POSE.shoulderR.rz, elbow: SEAT_POSE.elbowR };
+
+/**
+ * Full rider pose at dismount timeline position t. Every channel STARTS
+ * exactly on SEAT_POSE (the riding pose — no pop at dismount start) and
+ * ENDS exactly on the character animator's standing rest (HANG legs, hips
+ * 0.96, rest arms — no pop at the handover).
+ */
+export function poseDismountRider(j: MountJoints, t: number, timeline: DismountTimeline): void {
+  const { gripEnd, swingEnd, dropEnd } = timeline;
+  const kGrip = seg(t, 0, gripEnd);
+  const kSwing = seg(t, gripEnd, swingEnd);
+  const kDrop = seg(t, swingEnd, dropEnd);
+  const kSettle = seg(t, dropEnd, 1);
+
+  // --- Torso: stand up on the stirrups → straighten → coiled landing →
+  // uncoil into the rest pose --------------------------------------------
+  const hipsY = lerp(SEAT_POSE.hipsY, 0.9, kGrip)
+    + lerp(0, RIDER.hipYStand - 0.9, kSwing)
+    - lerp(0, RIDER.hipYStand - 0.9, kDrop)
+    + lerp(0, RIDER.hipYStand - 0.9, kSettle);
+  j.hips.position.y = hipsY;
+  j.hips.rotation.x = lerp(SEAT_POSE.hipsRx, 0, kGrip);
+  j.hips.rotation.y = 0;
+  j.hips.rotation.z = 0;
+  j.spine.rotation.x = lerp(SEAT_POSE.spineRx, 0, kGrip);
+  j.chest.rotation.set(0, 0, 0);
+  j.neck.rotation.set(0, 0, 0);
+  j.head.rotation.x = lerp(SEAT_POSE.headRx, 0, kGrip);
+  j.head.rotation.y = 0;
+  j.head.rotation.z = 0;
+
+  // --- LEFT arm: hand to the saddle edge (grip) → presses as the body
+  // rises → slips off in the swing → relaxed carry → rest --------------
+  const lArm = blendArm([
+    { key: ARM_GRIP, from: 0, to: gripEnd },
+    { key: ARM_PRESS, from: gripEnd, to: lerp(gripEnd, swingEnd, 0.7) },
+    { key: ARM_EXT, from: lerp(gripEnd, swingEnd, 0.7), to: lerp(swingEnd, dropEnd, 0.35) },
+    { key: ARM_RELAXED, from: lerp(swingEnd, dropEnd, 0.35), to: lerp(dropEnd, 1, 0.45) },
+    { key: ARM_REST_L, from: lerp(dropEnd, 1, 0.45), to: 1.01 },
+  ], ARM_SEAT_L, t);
+  j.shoulderL.rotation.set(lArm.rx, 0, lArm.rz);
+  j.elbowL.rotation.set(lArm.elbow, 0, 0);
+
+  // --- RIGHT arm: balance sweep while the leg swings over, then rest ----
+  const rArm = blendArm([
+    { key: ARM_BALANCE, from: lerp(0, gripEnd, 0.4), to: lerp(gripEnd, swingEnd, 0.8) },
+    { key: ARM_REST_R, from: lerp(swingEnd, dropEnd, 0.4), to: lerp(dropEnd, 1, 0.45) },
+  ], ARM_SEAT_R, t);
+  j.shoulderR.rotation.set(rArm.rx, 0, rArm.rz);
+  j.elbowR.rotation.set(rArm.elbow, 0, 0);
+
+  // --- LEFT leg: the support chain in reverse — standing ON the stirrup
+  // (grip) → the boot releases and swings free (swing) → gathers under the
+  // body on the way down (COIL = boots grounded) → rest ------------------
+  const lKey = blendLeg([
+    { key: L_STAND, from: 0, to: gripEnd },
+    { key: L_STAND2A, from: gripEnd, to: swingEnd },
+    { key: L_STAND2B, from: swingEnd, to: lerp(swingEnd, dropEnd, 0.5) },
+    { key: COIL, from: lerp(swingEnd, dropEnd, 0.5), to: dropEnd },
+    { key: HANG, from: dropEnd, to: 1.01 },
+  ], SEAT_KEY, t);
+  setLeg(j, 'L', lKey);
+
+  // --- RIGHT leg: THE REVERSE SWING — off the far tread, up the far side,
+  // OVER the cantle, down behind on the near side, grounded. The key ORDER
+  // is the mount's swing chain reversed, so the boot retraces the exact
+  // arc the mount sweep already proved clear of the cantle and barrel ----
+  const rKey = blendLeg([
+    { key: R_STIRRUP, from: 0, to: gripEnd },
+    { key: R_MID, from: gripEnd, to: lerp(gripEnd, swingEnd, 0.4) },
+    { key: R_SWING3, from: lerp(gripEnd, swingEnd, 0.4), to: lerp(gripEnd, swingEnd, 0.7) },
+    { key: R_SWING2, from: lerp(gripEnd, swingEnd, 0.7), to: lerp(swingEnd, dropEnd, 0.25) },
+    { key: R_SWING1, from: lerp(swingEnd, dropEnd, 0.25), to: lerp(swingEnd, dropEnd, 0.55) },
+    { key: R_MIDWND, from: lerp(swingEnd, dropEnd, 0.55), to: lerp(swingEnd, dropEnd, 0.85) },
+    { key: COIL, from: lerp(swingEnd, dropEnd, 0.85), to: dropEnd },
+    { key: HANG, from: dropEnd, to: 1.01 },
+  ], SEAT_KEY, t);
+  setLeg(j, 'R', rKey);
 }

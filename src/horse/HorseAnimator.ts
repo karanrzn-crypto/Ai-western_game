@@ -68,6 +68,12 @@ const POSE_KEYS: PoseKey[] = [
 
 const DEATH_DURATION = 1.6;
 const FLINCH_DURATION = 0.45;
+/** Tail rest drape (radians). NEGATIVE x tilts the hanging tail BACKWARD
+ *  (away from the body): rotation.x > 0 would swing the tail FORWARD into
+ *  the hindquarters — the old +0.12 rest was half of the tail-clipping bug.
+ *  Every tail.rx target keys off this constant (fear/flinch/gallop/death
+ *  deltas stay relative to it). */
+const TAIL_REST_RX = -0.08;
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
 
@@ -177,7 +183,7 @@ export class HorseAnimator {
     j.legBL.rotation.x = 0; j.legBR.rotation.x = 0;
     j.kneeFL.rotation.x = -0.06; j.kneeFR.rotation.x = -0.06;
     j.kneeBL.rotation.x = -0.06; j.kneeBR.rotation.x = -0.06;
-    j.tail.rotation.x = 0.12;
+    j.tail.rotation.x = TAIL_REST_RX;
     j.neck.rotation.x = -0.18;
   }
 
@@ -219,7 +225,7 @@ export class HorseAnimator {
       set('head.rx', 0.06, 9); set('head.ry', 0, 9);
       set('earL.rx', 0, 10); set('earL.rz', -0.1, 10);
       set('earR.rx', 0, 10); set('earR.rz', 0.1, 10);
-      set('tail.rx', 0.12, 9); set('tail.ry', 0, 9); set('tail.rz', 0, 9);
+      set('tail.rx', TAIL_REST_RX, 9); set('tail.ry', 0, 9); set('tail.rz', 0, 9);
       set('legFL.rx', 0, 12); set('kneeFL.rx', -0.06, 12);
       set('legFR.rx', 0, 12); set('kneeFR.rx', -0.06, 12);
       set('legBL.rx', 0, 12); set('kneeBL.rx', -0.06, 12);
@@ -309,7 +315,7 @@ export class HorseAnimator {
       // forward at speed.
       set('neck.rx', -0.18 + (gait === 'gallop' ? -0.22 : gait === 'canter' ? -0.14 : -0.04) + 0.05 * Math.sin(bobPhase), 11);
       set('head.rx', 0.06 + (gait === 'gallop' ? 0.12 : 0), 11);
-      set('tail.rx', 0.12 + (gait === 'gallop' ? -0.25 : 0.04 * Math.sin(phi)), 10);
+      set('tail.rx', TAIL_REST_RX + (gait === 'gallop' ? -0.25 : 0.04 * Math.sin(phi)), 10);
       set('tail.ry', 0.18 * Math.sin(phi * 0.5 + 1), 10);
       set('earL.rz', -0.1 - 0.06, 10);
       set('earR.rz', 0.1 + 0.06, 10);
@@ -450,7 +456,7 @@ export class HorseAnimator {
     this.setAll((set) => {
       set('earL.rz', (this.targets.get('earL.rz') ?? -0.1) - 0.7 * fear, 9);
       set('earR.rz', (this.targets.get('earR.rz') ?? 0.1) + 0.7 * fear, 9);
-      set('tail.rx', (this.targets.get('tail.rx') ?? 0.12) - 0.5 * fear, 9);
+      set('tail.rx', (this.targets.get('tail.rx') ?? TAIL_REST_RX) - 0.5 * fear, 9);
       set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) + 0.25 * fear, 9);
       set('body.posY', (this.targets.get('body.posY') ?? HORSE_PROPORTIONS.bodyCenterY) + 0.004 * Math.sin(t * 31) * fear, 20);
     });
@@ -465,7 +471,7 @@ export class HorseAnimator {
       set('neck.rx', (this.targets.get('neck.rx') ?? -0.18) + 0.5 * pulse, 16);
       set('head.rx', (this.targets.get('head.rx') ?? 0.06) + 0.35 * pulse, 16);
       set('body.posY', (this.targets.get('body.posY') ?? HORSE_PROPORTIONS.bodyCenterY) - 0.05 * pulse, 16);
-      set('tail.rx', (this.targets.get('tail.rx') ?? 0.12) - 0.3 * pulse, 14);
+      set('tail.rx', (this.targets.get('tail.rx') ?? TAIL_REST_RX) - 0.3 * pulse, 14);
       set('earL.rz', (this.targets.get('earL.rz') ?? -0.1) - 0.4 * pulse, 14);
       set('earR.rz', (this.targets.get('earR.rz') ?? 0.1) + 0.4 * pulse, 14);
     });
@@ -486,7 +492,7 @@ export class HorseAnimator {
       set('legBR.rx', 0.45 * ease, 7); set('kneeBR.rx', -1.1 * ease, 7);
       set('neck.rx', -0.18 + 0.85 * ease, 7);
       set('head.rx', 0.06 + 0.3 * ease, 7);
-      set('tail.rx', 0.12 + 0.2 * ease, 7);
+      set('tail.rx', TAIL_REST_RX + 0.2 * ease, 7);
       set('earL.rz', -0.4 * ease, 7);
       set('earR.rz', 0.4 * ease, 7);
     });

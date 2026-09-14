@@ -58,8 +58,14 @@ export const HORSE_PROPORTIONS = {
   headWidth: 0.26 * HORSE_SCALE,
   earHeight: 0.16 * HORSE_SCALE,
   // --- Tail -----------------------------------------------------------------
-  tailBaseY: 1.5 * HORSE_SCALE,
-  tailBaseZ: 0.82 * HORSE_SCALE,
+  // Tail-offset revision: the old base (y 1.5, z 0.82) sat at/inside the
+  // hindquarters' rear face (z ≈ 0.697·scale at the barrel's rear plane), so
+  // the dock and the upper tail were buried IN the body mesh. The base now
+  // sits HIGHER on the croup and clearly BEHIND the rear plane — the tail
+  // visibly grows out of the back of the body (the animator's small backward
+  // rest drape completes the fix).
+  tailBaseY: 1.56 * HORSE_SCALE,
+  tailBaseZ: 0.94 * HORSE_SCALE,
   tailLength: 0.85 * HORSE_SCALE,
   // --- Rider socket ----------------------------------------------------------
   /**

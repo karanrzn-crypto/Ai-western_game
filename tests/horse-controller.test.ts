@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CollisionWorld, HorseController, SceneStateManager, HORSE_GAITS, HORSE_PROPORTIONS, mountEnterCameraMode } from '../src/index.js';
+import { CollisionWorld, HorseController, SceneStateManager, HORSE_GAITS, HORSE_PROPORTIONS, HORSE_RUN_WINDUP_SECONDS, mountEnterCameraMode } from '../src/index.js';
 
 let uuidCounter = 0;
 function wall(manager: SceneStateManager, position: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
@@ -47,7 +47,7 @@ test('HORSE CONTROLLER: holding W accelerates smoothly to the walk gait (no tele
   let maxStep = 0;
   let previous = horse.getPosition();
   for (let i = 0; i < 240; i += 1) {
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
     const p = horse.getPosition();
     maxStep = Math.max(maxStep, Math.hypot(p.x - previous.x, p.z - previous.z));
     previous = p;
@@ -58,35 +58,74 @@ test('HORSE CONTROLLER: holding W accelerates smoothly to the walk gait (no tele
   assert.ok(maxStep <= horse.getSpeed() * DT + 0.02);
 });
 
-test('HORSE CONTROLLER: gait ladder taps reach all four gaits, taps down descend', () => {
+// --- Controls revision §20: W = walk · W+Shift = run -------------------------
+
+test('HORSE CONTROLLER: W always walks — re-pressing W never trots (tap ladder gone)', () => {
   const { world } = buildWorld();
   const horse = horseAt(world);
   horse.mount();
-  // Burn the mount lock (the horse stands while the rider settles).
-  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
-  const ride = (up: boolean, down: boolean): void =>
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: up, tapGaitDown: down });
-  assert.equal(horse.getTargetGait(), 'idle');
-  ride(true, false); // idle → walk
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+  // First W press: walks.
+  for (let i = 0; i < 240; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
+  assert.ok(Math.abs(horse.getSpeed() - HORSE_GAITS.walk.speed) < 0.05);
+  // Stop, then press W AGAIN — still a walk (the old ladder trotted here).
+  for (let i = 0; i < 200; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+  for (let i = 0; i < 240; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
+  assert.ok(Math.abs(horse.getSpeed() - HORSE_GAITS.walk.speed) < 0.05, `second W press must walk (got ${horse.getSpeed().toFixed(2)})`);
   assert.equal(horse.getTargetGait(), 'walk');
-  ride(true, false); // → trot
-  assert.equal(horse.getTargetGait(), 'trot');
-  ride(true, false); // → canter
-  assert.equal(horse.getTargetGait(), 'canter');
-  ride(true, false); // → gallop
-  assert.equal(horse.getTargetGait(), 'gallop');
-  for (let i = 0; i < 400; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
-  assert.ok(Math.abs(horse.getSpeed() - HORSE_GAITS.gallop.speed) < 0.1);
-  const rideDown = (): void => horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: true });
-  rideDown(); // gallop → canter
-  assert.equal(horse.getTargetGait(), 'canter');
-  rideDown();
-  rideDown();
-  rideDown(); // → idle
-  assert.equal(horse.getTargetGait(), 'idle');
-  // Holding W from idle rides again (dead-throttle guard).
-  ride(false, false);
+});
+
+test('HORSE CONTROLLER: W+Shift from a standstill walks first, then reaches the gallop', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world);
+  horse.mount();
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+  // Hold W+Shift from the very first movement frame: the windup (0.55s walk)
+  // + the speed ramp through trot/canter lands the gallop before fatigue can
+  // bite (~3s at gallop drain; the cap check lives in its own test).
+  for (let i = 0; i < 60 * 4; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.ok(Math.abs(horse.getSpeed() - HORSE_GAITS.gallop.speed) < 0.1, `must settle at the gallop (got ${horse.getSpeed().toFixed(2)})`);
+});
+
+test('HORSE CONTROLLER: fresh W+Shift engages through a walk-first windup (never instant run)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world);
+  horse.mount();
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+  // Inside the windup window the horse is still in the WALK band (< 2.6 m/s).
+  const windupFrames = Math.ceil(HORSE_RUN_WINDUP_SECONDS * 60);
+  for (let i = 0; i < windupFrames - 6; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.ok(horse.getSpeed() < 2.6, `windup keeps the walk (got ${horse.getSpeed().toFixed(2)})`);
+  // And the target gait during the windup reads WALK, not gallop.
   assert.equal(horse.getTargetGait(), 'walk');
+  // After the windup the run engages and the speed passes the trot band.
+  for (let i = 0; i < 60 * 2; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.ok(horse.getSpeed() > HORSE_GAITS.trot.speed, `run engaged after the windup (got ${horse.getSpeed().toFixed(2)})`);
+});
+
+test('HORSE CONTROLLER: engaging W+Shift at speed skips the windup (control is kept)', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world);
+  horse.mount();
+  // Walk first, then ask for the run while already moving.
+  for (let i = 0; i < 60 * 2; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
+  assert.ok(horse.getSpeed() >= HORSE_GAITS.walk.speed - 0.05);
+  const before = horse.getSpeed();
+  for (let i = 0; i < 12; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.ok(horse.getSpeed() > before, 'no windup at speed: the run engages immediately');
+});
+
+test('HORSE CONTROLLER: releasing Shift while holding W eases back to the walk', () => {
+  const { world } = buildWorld();
+  const horse = horseAt(world);
+  horse.mount();
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+  // Build up to the gallop, then release Shift (W still held).
+  for (let i = 0; i < 60 * 12; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.ok(horse.getSpeed() > HORSE_GAITS.canter.speed);
+  for (let i = 0; i < 60 * 5; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
+  assert.ok(Math.abs(horse.getSpeed() - HORSE_GAITS.walk.speed) < 0.05, `must settle at the walk (got ${horse.getSpeed().toFixed(2)})`);
+  assert.ok(horse.getSpeed() > 0.5, 'releasing Shift never slams to a stop');
 });
 
 test('HORSE CONTROLLER: braking stops faster than natural deceleration', () => {
@@ -94,13 +133,12 @@ test('HORSE CONTROLLER: braking stops faster than natural deceleration', () => {
     const { world } = buildWorld();
     const horse = horseAt(world);
     horse.mount();
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: true, });
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: true });
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: true });
-    for (let i = 0; i < 600; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+    // Reach the gallop with W+Shift, then release everything.
+    for (let i = 0; i < 600; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
     let frames = 0;
     while (horse.getSpeed() > 0.05 && frames < 1200) {
-      horse.update(ctx(), { throttle: false, brake, steer: 0, tapGaitUp: false, tapGaitDown: false });
+      horse.update(ctx(), { throttle: false, brake, steer: 0 });
       frames += 1;
     }
     return frames * DT;
@@ -111,26 +149,27 @@ test('HORSE CONTROLLER: braking stops faster than natural deceleration', () => {
 });
 
 test('HORSE CONTROLLER: releasing W coasts to a smooth full stop at every gait (no snap, no cruise)', () => {
-  for (const taps of [0, 1, 2, 3]) { // walk, trot, canter, gallop
+  // Target speeds cover the four gait bands: walk (W only), trot, canter and
+  // gallop (reached mid-ramp by holding W+Shift for a bounded time).
+  for (const [gait, target] of [['walk', HORSE_GAITS.walk.speed], ['trot', HORSE_GAITS.trot.speed], ['canter', HORSE_GAITS.canter.speed], ['gallop', HORSE_GAITS.gallop.speed]] as const) {
     const { world } = buildWorld();
     const horse = horseAt(world);
     horse.mount();
-    for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
-    for (let i = 0; i < taps; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
-    // Ride until the selected gait's steady-state speed is reached.
-    const gait = (['walk', 'trot', 'canter', 'gallop'] as const)[taps];
-    for (let i = 0; i < 900 && horse.getSpeed() < HORSE_GAITS[gait].speed - 0.05; i += 1) {
-      horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
+    // Ride until the target speed (the windup delays only the START — the
+    // ramp passes through every band).
+    for (let i = 0; i < 900 && horse.getSpeed() < target - 0.05; i += 1) {
+      horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: gait !== 'walk' });
     }
     assert.ok(horse.getSpeed() > 1.5, `gait ${gait} should be moving`);
     // Release W — the very next frame must NOT be an instant stop.
-    horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
     assert.ok(horse.getSpeed() > 1.2, 'release keeps momentum (continues briefly)');
     // Coast: speed decays gradually and monotonically toward exactly zero.
     let previous = horse.getSpeed();
     let frames = 0;
     while (horse.getSpeed() > 0 && frames < 1200) {
-      horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+      horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
       assert.ok(horse.getSpeed() <= previous + 1e-9, 'deceleration is monotonic');
       previous = horse.getSpeed();
       frames += 1;
@@ -141,7 +180,7 @@ test('HORSE CONTROLLER: releasing W coasts to a smooth full stop at every gait (
     // After stopping: no artificial movement, speed stays exactly zero.
     const stopped = horse.getPosition();
     for (let i = 0; i < 120; i += 1) {
-      horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+      horse.update(ctx(), { throttle: false, brake: false, steer: 0 });
       assert.equal(horse.getSpeed(), 0);
     }
     const after = horse.getPosition();
@@ -154,7 +193,7 @@ test('HORSE CONTROLLER: reverse crawls far slower than the walk and steers inver
   const horse = horseAt(world);
   horse.mount();
   // From standstill, hold S → reverse.
-  for (let i = 0; i < 120; i += 1) horse.update(ctx(), { throttle: false, brake: true, steer: 0, tapGaitUp: false, tapGaitDown: false });
+  for (let i = 0; i < 120; i += 1) horse.update(ctx(), { throttle: false, brake: true, steer: 0 });
   assert.ok(horse.getSpeed() < 0);
   assert.ok(Math.abs(horse.getSpeed()) <= 1.1 + 1e-6);
   assert.ok(Math.abs(horse.getSpeed()) < HORSE_GAITS.walk.speed);
@@ -165,9 +204,9 @@ test('HORSE CONTROLLER: steering turns left (+yaw) while riding forward', () => 
   const { world } = buildWorld();
   const horse = horseAt(world);
   horse.mount();
-  for (let i = 0; i < 60; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+  for (let i = 0; i < 60; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
   const yawBefore = horse.getYaw();
-  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 1, tapGaitUp: false, tapGaitDown: false });
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 1 });
   assert.ok(horse.getYaw() > yawBefore + 0.2);
 });
 
@@ -176,7 +215,7 @@ test('HORSE CONTROLLER: never passes through a wall — collision clamps, no tel
   wall(manager, { x: 0, y: 1.5, z: -6 }, { x: 10, y: 3, z: 1 });
   const horse = horseAt(world, 0, 0, 0); // rides toward the wall at -Z
   horse.mount();
-  for (let i = 0; i < 600; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+  for (let i = 0; i < 600; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
   const p = horse.getPosition();
   const bounds = world.getCollisionBounds()[0];
   assert.ok(p.z > bounds.min.z - HORSE_PROPORTIONS.collisionRadius - 0.1, `horse z=${p.z} must stay in front of the wall`);
@@ -193,7 +232,7 @@ test('HORSE CONTROLLER: grinding a wall does not pump stamina dry (knock is edge
   // holds on EVERY frame, but the knock must fire at most once per refractory
   // window (1s) — 3s ⇒ ≤ 4 knocks (12 SP) + gallop-band drain (9/s ⇒ 27) ≈ 39.
   for (let i = 0; i < 180; i += 1) {
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+    horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
   }
   const sp = horse.getSnapshot().stamina;
   assert.ok(sp >= 60, `wall grind must not drain stamina to 0 (SP left ${sp.toFixed(1)})`);
@@ -235,11 +274,11 @@ test('HORSE CONTROLLER: steps up onto low ledges and stands on top (terrain)', (
   wall(manager, { x: 0, y: 0.2, z: -10 }, { x: 6, y: 0.4, z: 24 }); // deep ledge
   const horse = horseAt(world, 0, 0, 0);
   horse.mount();
-  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
-  horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
+  horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
   // Ride until clearly on top of the ledge (past the climb, before the far edge).
   for (let i = 0; i < 600; i += 1) {
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
     const p = horse.getPosition();
     if (p.z < -6 && p.z > -16) break;
   }
@@ -252,17 +291,16 @@ test('HORSE CONTROLLER: gallop drains stamina until fatigue caps the gait at can
   const { world } = buildWorld();
   const horse = horseAt(world);
   horse.mount();
-  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
-  for (let i = 0; i < 3; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+  for (let i = 0; i < 30; i += 1) horse.update(ctx(), { throttle: true, brake: false, steer: 0 });
   let fatiguedSeen = false;
   for (let i = 0; i < 60 * 40; i += 1) {
-    horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: false, tapGaitDown: false });
+    horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
     if (horse.getSnapshot().fatigued) fatiguedSeen = true;
   }
   assert.equal(fatiguedSeen, true);
   assert.ok(horse.getSnapshot().staminaRatio < 1);
   // While fatigued the gallop is capped: target gait can never be gallop.
-  horse.update(ctx(), { throttle: true, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
+  horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
   assert.notEqual(horse.getTargetGait(), 'gallop');
   assert.ok(horse.getSpeed() < HORSE_GAITS.gallop.speed - 0.5);
 });
@@ -273,8 +311,8 @@ test('HORSE CONTROLLER: damage injures (gait capped) and death blocks mounting',
   horse.damage(80);
   assert.equal(horse.isInjured(), true);
   horse.mount();
-  horse.update(ctx(), { throttle: false, brake: false, steer: 0, tapGaitUp: true, tapGaitDown: false });
-  assert.notEqual(horse.getTargetGait(), 'gallop'); // injured ceiling = canter
+  horse.update(ctx(), { throttle: true, brake: false, steer: 0, sprint: true });
+  assert.notEqual(horse.getTargetGait(), 'gallop'); // injured ceiling = canter (windup walks first)
   horse.dismount();
   horse.damage(200);
   assert.equal(horse.isDead(), true);

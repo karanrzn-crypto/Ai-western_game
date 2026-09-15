@@ -52,6 +52,9 @@ import {
   registerSaloonFactories,
   buildSaloonMapObjects,
   SALOON_SITE,
+  registerAllBankFactories,
+  buildBankMapObjects,
+  BANK_SITE,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -163,6 +166,7 @@ scene.add(debugAxes);
 const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
 registerSaloonFactories(assets);
+registerAllBankFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -189,11 +193,10 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 };
 
 const persistence = new PersistenceManager();
-// Storage key v7: the saloon layout was re-baked from the player's finalized
-// Object-panel positions (counter/stools/piano/chairs moved, back bar back on
-// the floor) and the back bar was rebuilt as open shelving — old v6 saves
-// would resurrect stale positions and the old buried-glass geometry.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v7' });
+// Storage key v8: the bank was added to the map. Old v7 saves would load a
+// full scene WITHOUT the bank (scene load replaces the whole registry), so
+// the key must move for every existing save to pick the bank up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v8' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -393,6 +396,20 @@ addBuildingPart('10000000-0000-4000-a000-000000000036', 'ساختمان - سقف
 // saloon layout module — the SAME list the saloon tests assert against.
 for (const saloonDef of buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z)) {
   manager.registerObject(saloonDef);
+}
+
+// --- The BANK (grand western frontier bank) ----------------------------------
+// Classical stone-facade bank terminating the street's north end, facing
+// south toward the spawn: 3-step stone stair → landing → four fluted columns
+// → entablature with gold BANK letters → triangular pediment. The doorway is
+// a real gap (elevated floor continues the landing), and the interior uses
+// the supplied bank interior asset library — teller counter + cage, vault
+// door in the rear wall, safe-deposit wall, floor safe, banker desk/chair,
+// grandfather clock, marble columns, rug, gas lamps, money bags and coins —
+// as individually managed objects. All placement data comes from the bank
+// layout module — the SAME list the bank tests assert against.
+for (const bankDef of buildBankMapObjects(BANK_SITE.x, BANK_SITE.z)) {
+  manager.registerObject(bankDef);
 }
 
 const raycaster = new THREE.Raycaster();

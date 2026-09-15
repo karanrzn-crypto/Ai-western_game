@@ -46,6 +46,8 @@ export {
   buildFloorRug,
   buildBankSign,
   buildSecureGate,
+  SECURE_GATE_OPEN_ANGLE,
+  setSecureGateOpen,
   BANK_INTERIOR_ASSET_TYPES,
   registerBankFactories,
 } from './BankInteriorAssetFactory.js';

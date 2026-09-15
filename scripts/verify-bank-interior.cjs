@@ -144,50 +144,51 @@ const ok = (name, pass, detail) => {
   await lookAbs(0, -0.05);
   await shot('07-cage-window');
 
-  // 8 — staff strip behind the counter (walkability read)
-  await servo(2.6, 1.8, -24.1, 0.3, 'strip');
+  // 8 — staff strip behind the counter (walkability read): closed iron gate
+  // west, open vault slot east
+  await servo(2.6, 1.8, -23.4, 0.3, 'strip');
   await lookAbs(Math.PI, -0.1); // face south over the counter
   await shot('08-staff-strip');
 
-  // 9 — office doorway opening (west, in the partition line)
-  await servo(0.3, 1.8, -24.15, 0.25, 'office-door');
+  // 9 — the barred iron gate CLOSED across the manager doorway
+  await servo(0.3, 1.8, -23.4, 0.25, 'gate-closed');
   await lookAbs(0, -0.02);
-  await shot('09-office-doorway');
+  await shot('09-gate-closed');
 
-  // 10 — manager office: desk + chair + BANK sign
-  await servo(0.8, 1.85, -24.7, 0.3, 'office');
-  await lookAbs(Math.atan2(2.7, 0.95), -0.12); // WSW toward the desk
+  // 10 — manager office interior: desk + chair + BANK sign under the lamp
+  await servo(0.6, 1.85, -25.2, 0.3, 'office');
+  await lookAbs(Math.atan2(2.62, 0.5), -0.1); // WSW toward the desk
   await shot('10-office-desk-sign');
 
-  // 11 — desk close-up
-  await servo(-0.7, 1.75, -25.0, 0.25, 'desk');
-  await lookAbs(Math.atan2(1.3, 0.75), -0.14);
+  // 11 — desk close-up (user Final arrangement, yaw 246°)
+  await servo(-1.1, 1.7, -25.6, 0.25, 'desk');
+  await lookAbs(Math.atan2(0.92, 0.1), -0.14);
   await shot('11-office-desk-close');
 
-  // 12 — secure gate: barred double leaf held open, vault glow behind
-  await servo(0.6, 1.8, -24.35, 0.25, 'gate');
-  await lookAbs(0, -0.03);
-  await shot('12-secure-gate');
+  // 12 — secure gate from the OFFICE side (open leaves toward the lobby)
+  await servo(0.2, 1.8, -25.3, 0.25, 'gate-office-side');
+  await lookAbs(Math.PI, -0.03);
+  await shot('12-secure-gate-office-side');
 
-  // 13 — THE VAULT DOOR (90° fix): round iron door facing the camera
-  await servo(0.6, 1.8, -25.7, 0.25, 'vault');
+  // 13 — THE VAULT DOOR (90° fix): round iron door on the office rear wall
+  await servo(0.65, 1.8, -25.9, 0.25, 'vault');
   await lookAbs(0, -0.02);
   await shot('13-vault-door-front');
 
-  // 14 — safe-deposit wall on the enclosure west wall
-  await servo(1.0, 1.7, -26.3, 0.25, 'deposit');
-  await lookAbs(Math.PI / 2, -0.04); // face west
+  // 14 — vault room: safe-deposit wall on the east wall (doors facing west)
+  await servo(3.2, 1.7, -26.0, 0.25, 'deposit');
+  await lookAbs(-1.505, -0.05); // face east at the panel
   await shot('14-safe-deposit-wall');
 
-  // 15 — floor safe in the south-east corner + money bags
-  await servo(0.7, 1.6, -27.0, 0.25, 'safe');
-  await lookAbs(Math.atan2(-0.9, 1.05), -0.16); // SE toward the safe
+  // 15 — floor safe + money bags in the vault room
+  await servo(2.45, 1.6, -26.5, 0.25, 'safe');
+  await lookAbs(-2.58, -0.12); // NNE toward the safe and the bags
   await shot('15-floor-safe-bags');
 
-  // 16 — reverse: over the gate into the office (spatial read)
-  await servo(0.9, 2.5, -26.9, 0.3, 'reverse');
+  // 16 — reverse: over the suite into the lobby (spatial read)
+  await servo(2.6, 2.5, -26.8, 0.3, 'reverse');
   await lookAbs(Math.PI, -0.16);
-  await shot('16-reverse-into-office');
+  await shot('16-reverse-into-lobby');
 
   // FPS samples — SwiftShader software harness, so ABSOLUTE numbers are low;
   // the meaningful check is the BANK vs SALOON-interior ratio (same session,

@@ -55,6 +55,8 @@ import {
   registerAllBankFactories,
   buildBankMapObjects,
   BANK_SITE,
+  BANK_OBJECT_IDS,
+  setSecureGateOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -412,6 +414,77 @@ for (const bankDef of buildBankMapObjects(BANK_SITE.x, BANK_SITE.z)) {
   manager.registerObject(bankDef);
 }
 
+// --- The bank's barred iron gate (truly openable manager doorway) ------------
+// The gate spawns CLOSED across the manager doorway. E swings both leaves
+// toward the lobby (~0.9 s). The collider is released the moment the leaves
+// pass half-open and re-arms the moment they pass half-closed, so a CLOSED
+// gate always blocks and an OPEN gate never does — collision can never
+// disagree with what the player sees. Metadata updates invalidate the
+// CollisionWorld cache (object:metadata-updated), which IS the walk switch.
+const gateUuid = BANK_OBJECT_IDS.secureGate;
+const gateSwing = { value: 0, target: 0, speed: 1 / 0.9 };
+interactions.register({
+  uuid: gateUuid,
+  get label() {
+    return gateSwing.target > 0.5 ? 'Close the iron gate' : 'Open the iron gate';
+  },
+  range: 2.2,
+  getPosition: () => manager.getObject(gateUuid)?.transform.position
+    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
+  canInteract: () => Boolean(manager.getObject(gateUuid)),
+  onInteract: () => {
+    gateSwing.target = gateSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(gateSwing.target > 0.5 ? 'The iron gate swings open.' : 'The iron gate clangs shut.');
+  },
+});
+/** Advance the gate swing and sync its collider to the visible leaf pose. */
+function updateSecureGate(delta: number): void {
+  if (gateSwing.value === gateSwing.target) return;
+  const dir = Math.sign(gateSwing.target - gateSwing.value);
+  gateSwing.value = THREE.MathUtils.clamp(
+    gateSwing.value + dir * gateSwing.speed * delta,
+    0,
+    1,
+  );
+  const root = scene.getObjectByProperty('uuid', gateUuid);
+  if (root) setSecureGateOpen(root, gateSwing.value);
+  const opened = gateSwing.value > 0.5;
+  const def = manager.getObject(gateUuid);
+  if (def && Boolean(def.metadata.collider) === opened) {
+    manager.updateObjectMetadata(gateUuid, { collider: !opened });
+  }
+}
+
+// Dev verification hook (write-capable, harness-only): teleports the on-foot
+// player and reads the iron-gate mechanism so the headless browser script can
+// prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
+// is genuinely walkable. Read by scripts/verify-bank-gate.cjs only.
+(window as unknown as Record<string, unknown>).__westTest = {
+  teleport: (x: number, y: number, z: number) => {
+    playerController.setPosition({ x, y, z });
+    playerController.setBodyYaw(Math.PI); // face +Z (south, the camera default)
+  },
+  setYaw: (yaw: number) => playerController.setBodyYaw(yaw),
+  player: () => playerController.getPosition(),
+  gateBounds: () => collisionWorld
+    .getCollisionBounds()
+    .filter((b) => b.uuid === gateUuid)
+    .map((b) => ({ min: b.min, max: b.max })),
+  gate: () => {
+    const root = scene.getObjectByProperty('uuid', gateUuid);
+    const leafW = root?.getObjectByName('secure-gate-leaf-w');
+    const leafE = root?.getObjectByName('secure-gate-leaf-e');
+    return {
+      swing: gateSwing.value,
+      target: gateSwing.target,
+      collider: manager.getObject(gateUuid)?.metadata.collider ?? null,
+      leafWYaw: leafW ? leafW.rotation.y : null,
+      leafEYaw: leafE ? leafE.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+};
+
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
@@ -722,6 +795,13 @@ function loadSavedScene(): void {
     // A broken/incompatible save must never take the whole game down at boot.
     // LocalSceneStorage keeps the raw payload, so a newer build can recover it.
     console.warn('[playable-map] failed to load saved scene — starting with the default map', err);
+  }
+  // The gate VISUALS are rebuilt closed by the factory every boot; force the
+  // saved metadata to match (a save taken mid-open would otherwise leave the
+  // bars walkable while looking shut).
+  const gateDef = manager.getObject(gateUuid);
+  if (gateDef && gateDef.metadata.collider !== true) {
+    manager.updateObjectMetadata(gateUuid, { collider: true });
   }
   updateSaveStatus();
 }
@@ -1595,6 +1675,7 @@ function animate(): void {
     previousBodyYaw = playerController.getBodyYaw();
   }
   syncHorse(delta, horseSnap);
+  updateSecureGate(delta); // iron gate swing + collider/walkability sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

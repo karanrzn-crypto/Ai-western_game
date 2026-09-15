@@ -652,7 +652,12 @@ export function buildBankersChair(): THREE.Group {
   return g;
 }
 
-/** Wall panel of small numbered brass safe-deposit-box doors. */
+/** Wall panel of small numbered brass safe-deposit-box doors.
+ *  Origin contract: the backing's BOTTOM rests on y = 0, so the placement's
+ *  y IS the base height (y = 0.59 seats the base 1 cm into the raised floor).
+ *  The old origin sat 0.35 m above the base, forcing placement arithmetic
+ *  (floorTop − 0.35) that broke the moment the user's Final scale (1.1)
+ *  rescaled that offset to 0.385 — the panel would have floated. */
 export function buildSafeDepositWall(cols = 6, rows = 4): THREE.Group {
   const g = new THREE.Group();
   g.name = 'safe-deposit-wall';
@@ -662,14 +667,14 @@ export function buildSafeDepositWall(cols = 6, rows = 4): THREE.Group {
   const panelW = cols * (boxSize + gap);
   const panelH = rows * (boxSize + gap);
 
-  const backing = mesh(new THREE.BoxGeometry(panelW + 0.1, panelH + 0.1, 0.06), MAT.woodDark(), 0, panelH / 2 + 0.4, 0);
+  const backing = mesh(new THREE.BoxGeometry(panelW + 0.1, panelH + 0.1, 0.06), MAT.woodDark(), 0, panelH / 2 + 0.05, 0);
   g.add(backing);
 
   let n = 1;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const x = -panelW / 2 + c * (boxSize + gap) + boxSize / 2;
-      const y = panelH - r * (boxSize + gap) - boxSize / 2 + 0.4;
+      const y = panelH - r * (boxSize + gap) - boxSize / 2 + 0.05;
 
       const doorTex = brassTexture(BRASS);
       const door = mesh(new THREE.BoxGeometry(boxSize, boxSize, 0.03), metalMat(BRASS, doorTex), x, y, 0.045);
@@ -952,11 +957,11 @@ export function buildBankSign(): THREE.Group {
  *   - origin : floor point at the CENTER of the doorway;
  *   - +Z     : the side the leaves swing TOWARD (out of the enclosure);
  *   - the closed leaf plane is XY, spanning the opening width.
- * Leaves are authored extending +X from a hinge at −width/2; the west leaf
- * swings −80°, the east leaf is the SAME geometry under a π+80° group
- * rotation (mirroring by rotation, never by negative scale).
- * Non-collider by design: the opening itself is the walkable secure entrance;
- * the masonry segments beside it carry the colliders.
+ * Leaves are authored extending +X from a hinge at −width/2 (west) and +width/2
+ * (east, mirrored by a π group rotation — never a negative scale). The gate is
+ * authored CLOSED (west leaf at 0, east leaf at π) because it guards the
+ * manager doorway; `setSecureGateOpen(root, t)` swings both leaves toward +Z
+ * (lobby side) for the runtime E-key interaction and the tests.
  */
 export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD_SCALE): THREE.Group {
   const g = new THREE.Group();
@@ -973,8 +978,10 @@ export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD
   header.name = 'secure-gate-header';
   g.add(header);
 
-  // one leaf, authored CLOSED: extends +X from its hinge post
-  const leafLen = width / 2 - 0.03;
+  // one leaf, authored CLOSED: extends +X from its hinge post. leafLen keeps
+  // the two leaves 1 cm apart at the center (5 mm per side) so a closed gate
+  // reads as meeting double leaves, never a 6 cm slot.
+  const leafLen = width / 2 - 0.005;
   const leafH = height - 0.08;
   const buildLeaf = (): THREE.Group => {
     const leaf = new THREE.Group();
@@ -993,23 +1000,39 @@ export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD
     return leaf;
   };
 
-  // west leaf: hinged at −width/2, swung 80° open toward +Z
+  // west leaf: hinged at −width/2, authored CLOSED across the opening
   const westHinge = new THREE.Group();
   westHinge.name = 'secure-gate-leaf-w';
   westHinge.position.set(-width / 2, 0, 0);
-  westHinge.rotation.y = -1.396; // −80° open toward +Z
+  westHinge.rotation.y = 0; // closed
   westHinge.add(buildLeaf());
   g.add(westHinge);
 
-  // east leaf: identical geometry, mirrored by a π+80° group rotation
+  // east leaf: identical geometry, mirrored closed by a π group rotation
   const eastHinge = new THREE.Group();
   eastHinge.name = 'secure-gate-leaf-e';
   eastHinge.position.set(width / 2, 0, 0);
-  eastHinge.rotation.y = Math.PI + 1.396; // mirrored closed (π) + 80° open
+  eastHinge.rotation.y = Math.PI; // closed (mirrored)
   eastHinge.add(buildLeaf());
   g.add(eastHinge);
 
   return g;
+}
+
+/** Swing angle (radians) both leaves open through, toward +Z (lobby side). */
+export const SECURE_GATE_OPEN_ANGLE = 1.396; // 80°
+
+/**
+ * Pose the gate's two leaves between CLOSED (t = 0) and FULLY OPEN (t = 1).
+ * Pure hinge rotations — no scaling, no re-parenting — so the interaction
+ * system and the tests share one exact definition of "open".
+ */
+export function setSecureGateOpen(root: THREE.Object3D, t: number): void {
+  const a = THREE.MathUtils.clamp(t, 0, 1) * SECURE_GATE_OPEN_ANGLE;
+  const west = root.getObjectByName('secure-gate-leaf-w');
+  const east = root.getObjectByName('secure-gate-leaf-e');
+  if (west) west.rotation.y = -a;
+  if (east) east.rotation.y = Math.PI + a;
 }
 
 // ---------------------------------------------------------------------------

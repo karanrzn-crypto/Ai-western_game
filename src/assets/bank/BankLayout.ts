@@ -27,9 +27,11 @@
  *   → staff strip behind the counter → barred iron SECURE GATE filling the
  *   manager doorway (E to open — collider released while swung open)
  *   → MANAGER OFFICE (desk + chair + interior BANK sign, desk lamp)
- *   → open full-height VAULT ENTRANCE slot east of the office, into the
- *   VAULT ROOM: big vault door on the office's rear wall, safe-deposit wall
- *   on the vault room's east wall, floor safe, money bags, dedicated gas lamp.
+ *   → the BIG VAULT DOOR on the office/vault divider's WEST (office) face —
+ *   the ONLY way into the VAULT ROOM: E swings it open (collider released),
+ *   the player walks the masonry doorway behind it. The old open slot in the
+ *   south line is SEALED — the user Final widened the middle segment to run
+ *   from the gate clear to the south-east segment.
  * Every partition segment, doorway and slot is derived from
  * BANK_LAYOUT.partitions — the ONE placement source for the private rooms.
  * -----------------------------------------------------------------------------
@@ -111,11 +113,15 @@ export const BANK_LAYOUT = Object.freeze({
    *  Manager office: the west rear room bounded by a south line (with the
    *  barred-gate manager doorway at its center-west) and an east wall at
    *  x = 2.723; the vault room fills the office's EAST end (west wall at
-   *  x = −0.2) and is entered through the open full-height slot in the south
-   *  line. All numbers are building-local and match the user Final data
-   *  (world minus BANK_SITE). Junction discipline: segments end AT faces
-   *  (back-to-back, never overlapping) — the only deviations from the raw
-   *  user numbers are millimetric end trims buried inside junctions. */
+   *  x = −0.2) and is entered ONLY through the big vault door mounted on the
+   *  divider's west (office) face — the user Final widened the south line's
+   *  middle segment until it sealed the old open slot. All numbers are
+   *  building-local and match the user Final data (world minus BANK_SITE).
+   *  Junction discipline: segments end AT faces (back-to-back, never
+   *  overlapping) — the only deviations from the raw user numbers are
+   *  millimetric end trims buried inside junctions, plus ONE principled
+   *  trim: the middle segment's raw west end (−1.427) would eat 24 cm of
+   *  the iron gate, so it seats at the gate's east jamb (−1.19) instead. */
   partitions: Object.freeze({
     thickness: 0.18,
     height: 4.8,
@@ -128,23 +134,40 @@ export const BANK_LAYOUT = Object.freeze({
      *  xMin derives from the south wall's exact east end (officeDoor.xMin)
      *  so the two plaster boxes meet back-to-back with zero overlap. */
     officeHeader: Object.freeze({ xMin: -2.2, xMax: -1.19, yMin: 2.75, yMax: 4.95 }),
-    /** Full-height masonry segment between the gate and the vault entrance
-     *  (user Final: center x −0.58, width 1.22, y 0.2→4.8 — bottom buried in
-     *  the floor slab). */
-    southMid: Object.freeze({ xMin: -1.19, xMax: 0.03 }),
-    /** Open full-height VAULT ENTRANCE slot — the walkable vault doorway. */
-    vaultEntrance: Object.freeze({ xMin: 0.03, xMax: 1.173 }),
-    /** South-line east segment: vault entrance → office east wall face. */
+    /** Full-height middle segment: gate → south-east segment. User Final
+     *  world center x 1.873 (local −0.127), width 2.6 ⇒ raw span
+     *  [−1.427, 1.173]. The raw west end overlaps the iron gate's east jamb
+     *  by 0.237 m, so it is TRIMMED to the gate jamb seat (−1.19, the
+     *  officeHeader's east face) — the gate's jamb buries 5 mm into the
+     *  masonry, exactly like a door frame set into a wall. The east end is
+     *  the user's exact value and runs into the south-east segment face. */
+    southMid: Object.freeze({ xMin: -1.19, xMax: 1.173 }),
+    /** South-line east segment: middle segment → office east wall face. */
     southEast: Object.freeze({ xMin: 1.173, xMax: 2.633 }),
     /** Manager office / vault room EAST wall (center x, 0.18 thick). */
     eastX: 2.723,
     /** East wall span between junction faces (rear wall face → south line). */
     eastZ: Object.freeze({ min: -4.325, max: -1.5105 }),
-    /** Vault room WEST wall (center x, 0.30 thick) — the office/vault divider. */
+    /** Vault room WEST wall (center x, 0.30 thick) — the office/vault
+     *  divider. The big vault door hangs on its WEST (office) face, so the
+     *  wall carries a real masonry DOORWAY and is built from three segments:
+     *  north (rear wall face → doorway), the doorway itself, south
+     *  (doorway → the middle segment's north face). */
     vaultWestX: -0.2,
     vaultWestThickness: 0.3,
-    /** Vault west wall span between junction faces. */
-    vaultWestZ: Object.freeze({ min: -4.325, max: -1.69 }),
+    /** Divider NORTH segment span (rear wall inner face → doorway). */
+    vaultWestZ: Object.freeze({ min: -4.325, max: -3.62 }),
+    /** Divider SOUTH segment span (doorway → middle segment north face). */
+    vaultWestSouthZ: Object.freeze({ min: -2.38, max: -1.69 }),
+    /** Masonry doorway cut into the divider for the vault door, centered on
+     *  the door z. Sized to the door's iron mounting plate (which seals the
+     *  circle-vs-rectangle corners): 1.24 m wide × 2.34 m tall off the slab. */
+    vaultDoorway: Object.freeze({ zMin: -3.62, zMax: -2.38, yMax: 2.94 }),
+    /** Big vault door placement — user Final world (1.475, 0.600, −26.000),
+     *  rotY −90 ⇒ local (−0.525, 0.600, −3.000). The −0.525 is principled:
+     *  divider west face (−0.35) − 0.175 frame depth, so the deepest frame
+     *  ring's back edge seats exactly ON the masonry face. */
+    vaultDoor: Object.freeze({ x: -0.525, y: 0.6, z: -3.0, rotY: -90 }),
   }),
 });
 
@@ -194,6 +217,8 @@ export const BANK_OBJECT_IDS = Object.freeze({
   partitionOfficeSouthEast: bankUuid('2e'),
   partitionOfficeEast: bankUuid('27'),
   partitionVaultWest: bankUuid('28'),
+  partitionVaultWestSouth: bankUuid('30'),
+  partitionVaultWestHeader: bankUuid('31'),
   secureGate: bankUuid('2b'),
   partitionOfficeHeader: bankUuid('2c'),
   partitionVaultHeader: bankUuid('2d'),
@@ -203,6 +228,7 @@ export const BANK_OBJECT_IDS = Object.freeze({
   vaultMoneyBag1: bankUuid('23'),
   vaultMoneyBag2: bankUuid('24'),
   deskCoinStack: bankUuid('25'),
+  lampVaultWest: bankUuid('32'),
 });
 
 const identity = () => ({ x: 0, y: 0, z: 0 });
@@ -349,9 +375,10 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
   // INTERIOR — manager-office revision
   // ---------------------------------------------------------------------------
   // Zones (building-local): lobby z ∈ [−1.6, 4.325] (public) · staff strip
-  // behind the teller counter · manager office x ∈ [−5.825, 0.26],
-  // z ∈ [−4.325, −1.51] · secure vault enclosure x ∈ [−2.44, 0.26],
-  // z ∈ [−4.325, −2.44] inside the office's east end.
+  // behind the teller counter · manager office x ∈ [−5.825, −0.35],
+  // z ∈ [−4.325, −1.51] · secure vault enclosure x ∈ [−0.05, 2.633],
+  // z ∈ [−4.325, −1.6] east of the divider — entered ONLY through the big
+  // vault door on the divider's office face.
   // ===========================================================================
 
   // --- Teller line (freestanding island; service window faces the door) ------
@@ -410,9 +437,12 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
         z: pt,
       },
     }, { collider: true, plaster: true, brickRepeat: [1, 2] });
-    // South line, full-height middle segment: doorway → vault entrance slot
-    // (user Final: center x −0.58, width 1.22, y 0.2 → 4.8 — the bottom 0.4 m
-    // buries into the floor slab, the top meets the ceiling exactly).
+    // South line, full-height middle segment: gate → south-east segment
+    // (user Final world center 1.873, width 2.6; raw west end −1.427 trimmed
+    // to the gate jamb seat −1.19 so the iron gate never gets eaten — see
+    // partitions.southMid. y 0.2 → 4.8 — the bottom 0.4 m buries into the
+    // floor slab, the top meets the ceiling exactly). The old open vault
+    // entrance slot is SEALED under this segment per the user Final data.
     push(BANK_OBJECT_IDS.partitionVaultHeader, 'bank-wall', 'بانک — دیوار میانی خط جنوبی', {
       position: {
         x: originX + (P.southMid.xMin + P.southMid.xMax) / 2,
@@ -421,8 +451,8 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
       },
       rotation: identity(),
       scale: { x: P.southMid.xMax - P.southMid.xMin, y: 4.6, z: pt },
-    }, { collider: true, plaster: true, brickRepeat: [1, 4.6] });
-    // South line, east segment: vault entrance slot → office east wall face.
+    }, { collider: true, plaster: true, brickRepeat: [2.4, 4.6] });
+    // South line, east segment: middle segment → office east wall face.
     push(BANK_OBJECT_IDS.partitionOfficeSouthEast, 'bank-wall', 'بانک — دیوار دفتر مدیر (جنوبی ۲)', {
       position: { x: originX + (P.southEast.xMin + P.southEast.xMax) / 2, y: wallY, z: originZ + P.southZ },
       rotation: identity(),
@@ -440,9 +470,10 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
       rotation: identity(),
       scale: { x: pt, y: wallH, z: P.eastZ.max - P.eastZ.min },
     }, { collider: true, plaster: true, brickRepeat: [2.6, 4] });
-    // Vault room west wall (the office/vault divider): rear wall inner face →
-    // the middle segment's north face (user Final 0.30 m thick, ends trimmed
-    // to the junction faces so nothing overlaps).
+    // Vault room west wall (the office/vault divider) — THREE masonry
+    // segments around the big vault door's real doorway (rear wall inner
+    // face → doorway → the middle segment's north face; user Final 0.30 m
+    // thick, ends trimmed to the junction faces so nothing overlaps).
     push(BANK_OBJECT_IDS.partitionVaultWest, 'bank-wall', 'بانک — دیوار گاوصندوق (غربی)', {
       position: {
         x: originX + P.vaultWestX,
@@ -452,6 +483,30 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
       rotation: identity(),
       scale: { x: P.vaultWestThickness, y: wallH, z: P.vaultWestZ.max - P.vaultWestZ.min },
     }, { collider: true, plaster: true, brickRepeat: [1.7, 4] });
+    push(BANK_OBJECT_IDS.partitionVaultWestSouth, 'bank-wall', 'بانک — دیوار گاوصندوق (غربی ۲)', {
+      position: {
+        x: originX + P.vaultWestX,
+        y: wallY,
+        z: originZ + (P.vaultWestSouthZ.min + P.vaultWestSouthZ.max) / 2,
+      },
+      rotation: identity(),
+      scale: { x: P.vaultWestThickness, y: wallH, z: P.vaultWestSouthZ.max - P.vaultWestSouthZ.min },
+    }, { collider: true, plaster: true, brickRepeat: [1.7, 4] });
+    // Masonry header over the vault doorway (doorway top → the ceiling),
+    // resting back-to-back on the slab line like the other partitions.
+    push(BANK_OBJECT_IDS.partitionVaultWestHeader, 'bank-wall', 'بانک — بالای در گاوصندوق', {
+      position: {
+        x: originX + P.vaultWestX,
+        y: (P.vaultDoorway.yMax + P.height) / 2,
+        z: originZ + (P.vaultDoorway.zMin + P.vaultDoorway.zMax) / 2,
+      },
+      rotation: identity(),
+      scale: {
+        x: P.vaultWestThickness,
+        y: P.height - P.vaultDoorway.yMax,
+        z: P.vaultDoorway.zMax - P.vaultDoorway.zMin,
+      },
+    }, { collider: true, plaster: true, brickRepeat: [1.2, 1.9] });
     // Barred iron gate filling the manager doorway — CLOSED by default and
     // genuinely openable (E): the interaction swings both leaves toward the
     // lobby and releases the collider so the player walks through.
@@ -466,14 +521,18 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
   }
 
   // --- Vault room contents (user Final transforms) -----------------------------
-  // Big vault door against the OFFICE's rear (north) wall, facing south; frame
-  // rings set into the masonry, door face proud of it. User Final x −1.35
-  // (world 0.65): shifted 0.40 m west of the old −0.95 so the 0.96 m frame
-  // rings clear the new vault west wall face (x = −0.35) — at −0.95 the ring
-  // arc (reach −0.95 + 0.96 = +0.01) clipped straight through that masonry.
+  // Big vault door ON the office/vault divider's WEST (office) face — the
+  // ONLY entrance to the vault room since the user Final sealed the old
+  // south-line slot. User Final world (1.475, 0.600, −26.000), rotY −90 ⇒
+  // local (−0.525, 0.600, −3.000). The −0.525 seats the deepest frame ring's
+  // back edge exactly on the divider's west face (−0.35 − 0.175 frame
+  // depth); the builder's mounting plate seals the rectangular doorway's
+  // circle-vs-rectangle corners. Genuinely openable (E): the swing releases
+  // the collider while the disc stands open so the player walks the masonry
+  // doorway behind it (see playable-map updateVaultDoor).
   push(BANK_OBJECT_IDS.vaultDoor, 'bank-vault-door', 'بانک — در گاوصندوق', {
-    position: { x: originX - 1.35, y: floorY, z: originZ - 4.22 },
-    rotation: identity(),
+    position: { x: originX + L.partitions.vaultDoor.x, y: L.partitions.vaultDoor.y, z: originZ + L.partitions.vaultDoor.z },
+    rotation: { x: 0, y: L.partitions.vaultDoor.rotY, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: true });
   // Safe-deposit wall on the VAULT ROOM's east wall (west face), doors facing
@@ -488,8 +547,8 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
   }, { collider: false });
   // Floor safe in the vault room's south-east corner (user Final; rotY
   // (180, 0, 180) ≡ yaw 180 — dial turned north). Its yaw-conservative 1×1
-  // collider covers x ∈ [3.06, 4.06] world, leaving a 1.0 m clear walk lane
-  // between its west face and the middle segment's east face (slot lane).
+  // collider covers x ∈ [3.06, 4.06] world, clear of the vault doorway lane
+  // (the doorway sits at x ≤ −0.05; the safe leans on the east wall).
   push(BANK_OBJECT_IDS.floorSafe, 'floor-safe', 'بانک — گاوصندوق زمینی', {
     position: { x: originX + 1.411, y: floorY, z: originZ - 1.975 },
     rotation: { x: 180, y: 0, z: 180 },
@@ -506,12 +565,27 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     rotation: { x: 0, y: 70, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  // Gas lamp remounted on the vault west wall's EAST face (the divider wall),
-  // arm swinging east into the vault room (rotY = 0 maps the +X arm to +X);
-  // backplate block sits 5 mm off the wall face (no coplanar masonry contact).
+  // Gas lamp remounted on the vault west wall's EAST face, NORTH segment
+  // (the old −2.485 mount now hangs inside the vault doorway — the doorway
+  // spans z ∈ [−3.62, −2.38]); arm swinging east into the vault room
+  // (rotY = 0 maps the +X arm to +X); backplate block sits 5 mm off the
+  // wall face (no coplanar masonry contact).
   push(BANK_OBJECT_IDS.lampVault, 'gas-wall-lamp', 'بانک — چراغ گاوصندوق', {
-    position: { x: originX - 0.005, y: floorY + 1.75, z: originZ - 2.485 },
+    position: { x: originX - 0.005, y: floorY + 1.75, z: originZ - 3.9 },
     rotation: identity(),
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: false });
+  // Second divider lamp — user request "یک چراغ هم روی دیوار گاوصندوق (غربی)":
+  // mounted on the divider's WEST face (office side, south of the vault
+  // doorway, lighting the big door), arm swinging west into the office
+  // (rotY = 180 maps the +X arm to −X); backplate 5 mm off the wall face.
+  push(BANK_OBJECT_IDS.lampVaultWest, 'gas-wall-lamp', 'بانک — چراغ دیوار گاوصندوق', {
+    position: {
+      x: originX + L.partitions.vaultWestX - L.partitions.vaultWestThickness / 2 - 0.045,
+      y: floorY + 1.75,
+      z: originZ - 2.1,
+    },
+    rotation: { x: 0, y: 180, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 

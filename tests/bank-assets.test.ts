@@ -14,17 +14,19 @@
  *     entrance surround, open door leaves, windows, quoins) and owns NO wall
  *     geometry (walls are separate collider unit-boxes).
  *  5. INTERIOR FIDELITY — the supplied assets keep their signatures: vault
- *     hinge/rivets/locking wheel, teller cage service opening, safe-deposit
- *     box doors, banker desk details, grandfather clock parts.
- *  6. LIGHT BUDGET — exactly 4 real PointLights across the whole bank
- *     (3 gas wall lamps + the banker's desk lamp).
- *  7. COLLISION — walls/stairs/landing/floor/counter/vault/floor-safe/desk
- *     carry colliders; shell kit and decor do not.
+ *     hinge/rivets/locking wheel/mounting plate, teller cage service opening,
+ *     safe-deposit box doors, banker desk details, grandfather clock parts.
+ *  6. LIGHT BUDGET — exactly 6 real PointLights across the whole bank
+ *     (5 gas wall lamps + the banker's desk lamp).
+ *  7. COLLISION — walls/stairs/landing/floor/counter/vault door/floor-safe/
+ *     desk carry colliders; shell kit and decor do not.
  *  8. WALKABILITY — the street→steps→landing→doorway→lobby path is genuinely
  *     walkable (steps climbable at the player's 0.35 stepHeight) while the
- *     wall beside the door and the teller counter block.
+ *     wall beside the door and the teller counter block; the vault is entered
+ *     ONLY through its openable big door (sealed slot, closed door blocks,
+ *     open door passes).
  *  9. LAYOUT — facade segments tile around the doorway; interior props sit
- *     inside the walls in their spec positions (vault visible from the door,
+ *     inside the walls in their spec positions (vault door on the divider,
  *     cage on the counter, deposit wall grounded, rug on the entrance path).
  * 10. GEOMETRY — no coplanar same-normal overlapping faces with different
  *     materials anywhere in the bank (the z-fighting class of bug).
@@ -44,6 +46,7 @@ import {
   BANK_SITE,
   buildBankMapObjects,
   setSecureGateOpen,
+  setBankVaultDoorOpen,
 } from '../src/index.js';
 import type { ObjectDefinition } from '../src/index.js';
 
@@ -298,7 +301,7 @@ test('GRANDFATHER CLOCK: hood, face ring, pendulum and weights', async () => {
 
 /* ---- Light budget ---------------------------------------------------------- */
 
-test('BANK LIGHT BUDGET: exactly 5 real PointLights across the whole bank', async () => {
+test('BANK LIGHT BUDGET: exactly 6 real PointLights across the whole bank', async () => {
   const registry = makeRegistry();
   const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
   let lights = 0;
@@ -308,7 +311,7 @@ test('BANK LIGHT BUDGET: exactly 5 real PointLights across the whole bank', asyn
       if ((c as THREE.PointLight).isPointLight) lights += 1;
     });
   }
-  assert.equal(lights, 5, '4 gas wall lamps (2 lobby + office + vault enclosure) + 1 banker desk lamp — nothing more');
+  assert.equal(lights, 6, '5 gas wall lamps (2 lobby + office + 2 vault divider) + 1 banker desk lamp — nothing more');
 });
 
 /* ---- Collision ------------------------------------------------------------- */
@@ -329,7 +332,7 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
   }
   // Solid banking furniture.
   for (const id of [
-    BANK_OBJECT_IDS.tellerCounter, BANK_OBJECT_IDS.vaultDoor,
+    BANK_OBJECT_IDS.tellerCounter,
     BANK_OBJECT_IDS.floorSafe, BANK_OBJECT_IDS.bankersDesk,
   ]) {
     assert.equal(flag(id), true, `furniture ${id} must be a collider`);
@@ -339,10 +342,15 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
     BANK_OBJECT_IDS.partitionOfficeSouth, BANK_OBJECT_IDS.partitionOfficeSouthEast,
     BANK_OBJECT_IDS.partitionOfficeEast,
     BANK_OBJECT_IDS.partitionOfficeHeader, BANK_OBJECT_IDS.partitionVaultWest,
+    BANK_OBJECT_IDS.partitionVaultWestSouth, BANK_OBJECT_IDS.partitionVaultWestHeader,
     BANK_OBJECT_IDS.partitionVaultHeader,
   ]) {
     assert.equal(flag(id), true, `partition ${id} must be a collider`);
   }
+  // The big vault door spawns CLOSED across the divider doorway: it IS the
+  // vault's walkability switch (true = blocks, released by the open
+  // interaction), exactly like the secure gate below.
+  assert.equal(flag(BANK_OBJECT_IDS.vaultDoor), true, 'closed vault door must be a collider');
   // The secure gate spawns CLOSED across the manager doorway: it IS the
   // walkability switch (true = blocks, released by the open interaction).
   assert.equal(flag(BANK_OBJECT_IDS.secureGate), true, 'closed secure gate must be a collider');
@@ -352,7 +360,8 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
     BANK_OBJECT_IDS.bankersChair, BANK_OBJECT_IDS.grandfatherClock,
     BANK_OBJECT_IDS.columnWest, BANK_OBJECT_IDS.columnEast, BANK_OBJECT_IDS.floorRug,
     BANK_OBJECT_IDS.bankSign, BANK_OBJECT_IDS.lampWestLobby, BANK_OBJECT_IDS.lampEastLobby,
-    BANK_OBJECT_IDS.lampVault, BANK_OBJECT_IDS.lampOffice, BANK_OBJECT_IDS.counterMoneyBag,
+    BANK_OBJECT_IDS.lampVault, BANK_OBJECT_IDS.lampVaultWest, BANK_OBJECT_IDS.lampOffice,
+    BANK_OBJECT_IDS.counterMoneyBag,
     BANK_OBJECT_IDS.counterCoins1, BANK_OBJECT_IDS.vaultMoneyBag1, BANK_OBJECT_IDS.deskCoinStack,
   ]) {
     assert.equal(flag(id), false, `decor ${id} must NOT be a collider`);
@@ -509,21 +518,48 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
   );
   assert.equal(deskHit.blockedX, true, 'banker desk must block');
 
-  // 5d) The VAULT is reachable WITHOUT the gate: lobby → east side → through
-  // the open full-height slot → inside the vault room. The walk lane keeps
-  // clear of the middle segment face (x = 2.03) AND of the floor safe's
-  // yaw-conservative 1×1 collider (west face x = 2.911).
+  // 5d) The vault's ONLY entrance is the big vault door on the divider's
+  // office face (the user Final widened the south-line middle segment, so the
+  // old open slot is sealed masonry now).
+  // 5d-i: the old slot line is SEALED — walking north from the lobby stops
+  // at the middle segment's south face + radius.
   const slotWalkX = BANK_SITE.x + 0.45;
   p = { x: BANK_SITE.x + 4.0, y: floorY, z: BANK_SITE.z + 2.0 };
   p = walkSteps(world, p, { x: 0.1, y: 0, z: 0 }, 15);                // ease east to the far side
   p = walkSteps(world, p, { x: 0, y: 0, z: -0.1 }, 30);               // north along the east wall
-  reached(p, BANK_SITE.z - 1.0, 'z', 'walk down the east side to the slot line');
+  reached(p, BANK_SITE.z - 1.0, 'z', 'walk down the east side to the old slot line');
   p = walkSteps(world, p, { x: -0.1, y: 0, z: 0 }, Math.round((p.x - slotWalkX) / 0.1)); // line up with the slot
-  reached(p, slotWalkX, 'x', 'line up with the vault entrance slot');
-  const beforeSlot = p.z;
-  p = walkSteps(world, p, { x: 0, y: 0, z: -0.1 }, 20);               // north through the slot into the vault
-  assert.ok(p.z < beforeSlot - 1.2, `vault slot must be walkable (stopped at z=${p.z.toFixed(2)})`);
-  reached(p, BANK_SITE.z - 3.0, 'z', 'stand inside the vault room');
+  reached(p, slotWalkX, 'x', 'line up with the sealed slot line');
+  const sealedSouthFace = BANK_SITE.z + P.southZ + P.thickness / 2 + 0.35;
+  p = walkSteps(world, p, { x: 0, y: 0, z: -0.1 }, 20);               // north INTO the sealed wall
+  reached(p, sealedSouthFace, 'z', 'the widened middle segment seals the old vault slot');
+
+  // 5d-ii: vault door CLOSED blocks the office-side approach (its 1×1 yaw
+  // collider fills the doorway; walking east along the door's z stops at the
+  // collider's west face + radius).
+  const doorDef = defs.find((d) => d.uuid === BANK_OBJECT_IDS.vaultDoor)!;
+  const doorZ = doorDef.transform.position.z;
+  p = { x: BANK_SITE.x - 3.0, y: floorY, z: doorZ };
+  p = walkSteps(world, p, { x: 0.1, y: 0, z: 0 }, 60);                // east toward the closed door
+  const doorFace = doorDef.transform.position.x - 0.5 - 0.35;
+  assert.ok(
+    Math.abs(p.x - doorFace) < 0.06,
+    `closed vault door must block the office at x≈${doorFace.toFixed(2)} (stopped ${p.x.toFixed(2)})`,
+  );
+
+  // 5d-iii: vault door OPEN (collider released — exactly what the runtime
+  // interaction does via updateObjectMetadata) → the player walks THROUGH
+  // the masonry doorway into the vault room.
+  const vaultOpenDefs = defs.map((d) => d.uuid === BANK_OBJECT_IDS.vaultDoor
+    ? { ...d, metadata: { ...d.metadata, collider: false } }
+    : d);
+  const vaultOpenWorld = new CollisionWorld(vaultOpenDefs);
+  p = { x: BANK_SITE.x - 3.0, y: floorY, z: doorZ };
+  p = walkSteps(vaultOpenWorld, p, { x: 0.1, y: 0, z: 0 }, 60);       // east through the open doorway
+  // The walk crosses the whole doorway lane and only stops at the vault
+  // room's east wall face + radius — proof of genuine entry into the room.
+  reached(p, BANK_SITE.x + P.eastX - P.thickness / 2 - 0.35, 'x', 'walk through the open vault door into the vault room');
+  reached(p, doorZ, 'z', 'vault entry holds the doorway z line');
 
   // 6) The room walls actually PROTECT the rooms: probes beside every opening
   // stop exactly at the masonry face + player radius (12 × 0.1 m steps).
@@ -550,7 +586,9 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
   probe({ x: BANK_SITE.x + 2.0, y: floorY, z: BANK_SITE.z + P.southZ + 0.6 }, { x: 0, y: 0, z: -0.1 },
     'z', southFace, 'south-line east segment (east of the slot)');
   probe({ x: BANK_SITE.x + 0.6, y: floorY, z: BANK_SITE.z - 3.0 }, { x: -0.1, y: 0, z: 0 },
-    'x', BANK_SITE.x + P.vaultWestX + P.vaultWestThickness / 2 + 0.35, 'vault west wall (office/vault divider)');
+    'x', BANK_SITE.x + P.vaultDoor.x + 0.5 + 0.35, 'CLOSED vault door (divider doorway line)');
+  probe({ x: BANK_SITE.x + 0.6, y: floorY, z: BANK_SITE.z - 2.0 }, { x: -0.1, y: 0, z: 0 },
+    'x', BANK_SITE.x + P.vaultWestX + P.vaultWestThickness / 2 + 0.35, 'vault west wall south segment (solid beside the doorway)');
   probe({ x: BANK_SITE.x + 1.5, y: floorY, z: BANK_SITE.z - 3.0 }, { x: 0.1, y: 0, z: 0 },
     'x', BANK_SITE.x + P.eastX - P.thickness / 2 - 0.35, 'office east wall (vault room east side)');
 });
@@ -610,10 +648,11 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
   );
 
   // The south line tiles: office-south west segment → doorway → middle
-  // segment → vault entrance slot → east segment → office east wall face.
-  assert.ok(P.southMid.xMax === P.vaultEntrance.xMin, 'middle segment ends at the slot west edge');
-  assert.ok(P.southEast.xMin === P.vaultEntrance.xMax, 'east segment starts at the slot east edge');
-  assert.ok(P.vaultEntrance.xMax - P.vaultEntrance.xMin >= 0.9, 'vault entrance must be wide enough to walk through');
+  // segment (user Final widened — the old open vault slot is SEALED masonry
+  // now) → east segment → office east wall face.
+  assert.ok(P.southMid.xMin === P.officeHeader.xMax, 'middle segment starts at the manager door header face');
+  assert.ok(P.southMid.xMax === P.southEast.xMin, 'middle segment runs into the east segment face');
+  assert.ok(P.southMid.xMax - P.southMid.xMin > 2.2, 'the widened middle segment seals the whole old slot span');
   assert.ok(P.officeHeader.xMin <= P.officeDoor.xMin && P.officeHeader.xMax >= P.officeDoor.xMax, 'manager door header spans the whole doorway');
 
   // Manager office: user Final desk + chair — the chair stands just behind
@@ -660,15 +699,30 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
   assert.ok(Math.abs(gate.position.y - (BANK_LAYOUT.floorTop + 0.005)) < 1e-9, 'gate keeps its 5 mm seat');
   assert.ok(P.officeDoor.xMax - P.officeDoor.xMin >= 0.9, 'manager doorway must be wide enough to walk through');
 
-  // Big vault door against the OFFICE rear wall, facing south — and its
-  // 0.96 m frame rings must clear the vault west wall (the old clipping bug).
+  // Big vault door ON the office/vault divider's WEST (office) face — user
+  // Final world (1.475, 0.600, −26.000), rotY −90 (the ONLY vault entrance
+  // since the south-line slot is sealed). The origin seats the deepest frame
+  // ring exactly on the divider's west face (face − 0.175 frame depth).
   const vault = p(BANK_OBJECT_IDS.vaultDoor);
-  assert.ok(vault.position.z < BANK_SITE.z - 4, 'vault must sit against the rear wall');
-  assert.ok(vault.rotation.y === 0, 'vault door must face the room (+Z), rotated 0');
+  assert.equal(vault.position.x, BANK_SITE.x + P.vaultDoor.x, 'vault door keeps the user Final x (world 1.475)');
+  assert.equal(vault.position.y, 0.6, 'vault door keeps the user Final floor seat');
+  assert.equal(vault.position.z, BANK_SITE.z + P.vaultDoor.z, 'vault door keeps the user Final z (world −26.0)');
+  assert.equal(vault.rotation.y, -90, 'vault door must face the office (rotY −90)');
   assert.ok(
-    vault.position.x + 0.96 < BANK_SITE.x + P.vaultWestX - P.vaultWestThickness / 2,
-    `vault door frame must clear the vault west wall face (x ${vault.position.x.toFixed(2)})`,
+    Math.abs(vault.position.x - (BANK_SITE.x + P.vaultWestX - P.vaultWestThickness / 2 - 0.175)) < 1e-9,
+    'vault door frame seats exactly on the divider west face',
   );
+  assert.ok(
+    vault.position.z > BANK_SITE.z + P.vaultDoorway.zMin && vault.position.z < BANK_SITE.z + P.vaultDoorway.zMax,
+    'vault door centered inside the masonry doorway',
+  );
+  // The divider tiles around the doorway: north segment → doorway → south
+  // segment → the middle segment's north face.
+  assert.ok(P.vaultWestZ.max === P.vaultDoorway.zMin, 'divider north segment ends at the doorway');
+  assert.ok(P.vaultDoorway.zMax === P.vaultWestSouthZ.min, 'divider south segment starts at the doorway');
+  assert.ok(Math.abs(P.vaultWestSouthZ.max - (P.southZ - P.thickness / 2)) < 1e-9, 'divider south segment meets the middle segment face');
+  assert.ok(P.vaultDoorway.zMax - P.vaultDoorway.zMin >= 1.2, 'vault doorway wide enough to walk through');
+  assert.ok(P.vaultDoorway.yMax > 2.3, 'vault doorway tall enough for the player');
 
   // Safe-deposit wall on the VAULT ROOM east wall, doors facing west into the
   // room (user Final rotY = 268, scale 1.1), base seated just below the floor.
@@ -684,7 +738,7 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
     'panel hugs the vault room east wall face',
   );
   assert.ok(
-    panel.position.z < BANK_SITE.z + P.vaultWestZ.max && panel.position.z > BANK_SITE.z + P.vaultWestZ.min,
+    panel.position.z < BANK_SITE.z + P.southZ && panel.position.z > BANK_SITE.z + P.vaultWestZ.min,
     'panel inside the vault room along the east wall',
   );
 
@@ -705,9 +759,11 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
   assert.ok(clock.position.x < BANK_SITE.x - 5, 'clock against the west wall');
   assert.ok(clock.position.z > BANK_SITE.z, 'clock in the lobby half, clear of the office');
 
-  // Lamps: two wall lamps in the lobby; the vault lamp remounted on the vault
-  // west wall's EAST face (arm east into the room, rotY = 0); the office lamp
-  // on the office south wall's NORTH face (arm north, rotY = 90).
+  // Lamps: two wall lamps in the lobby; the vault lamp on the divider's EAST
+  // face NORTH segment (arm east into the room, rotY = 0) — moved out of the
+  // doorway; the NEW west divider lamp (user request) on the divider's WEST
+  // face (arm west into the office, rotY = 180); the office lamp on the
+  // office south wall's NORTH face (arm north, rotY = 90).
   for (const id of [BANK_OBJECT_IDS.lampWestLobby, BANK_OBJECT_IDS.lampEastLobby]) {
     assert.ok(Math.abs(p(id).position.x - BANK_SITE.x) > 5, `lamp ${id} must be wall-mounted in the lobby`);
   }
@@ -718,10 +774,21 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
     'vault lamp mounted on the vault west wall east face (5 mm seat)',
   );
   assert.ok(
-    vaultLamp.position.z > BANK_SITE.z + P.vaultWestZ.min && vaultLamp.position.z < BANK_SITE.z + P.vaultWestZ.max,
-    'vault lamp along the divider wall span',
+    vaultLamp.position.z > BANK_SITE.z + P.vaultWestZ.min && vaultLamp.position.z < BANK_SITE.z + P.vaultDoorway.zMin,
+    'vault lamp on the divider NORTH segment, clear of the doorway',
   );
   assert.ok(vaultLamp.position.y > BANK_LAYOUT.floorTop + 1.5, 'vault lamp mounted at wall height');
+  const vaultWestLamp = p(BANK_OBJECT_IDS.lampVaultWest);
+  assert.equal(vaultWestLamp.rotation.y, 180, 'west divider lamp arm must swing west into the office');
+  assert.ok(
+    Math.abs(vaultWestLamp.position.x - (BANK_SITE.x + P.vaultWestX - P.vaultWestThickness / 2 - 0.045)) < 0.01,
+    'west divider lamp mounted on the divider west face (5 mm seat)',
+  );
+  assert.ok(
+    vaultWestLamp.position.z > BANK_SITE.z + P.vaultDoorway.zMax && vaultWestLamp.position.z < BANK_SITE.z + P.vaultWestSouthZ.max,
+    'west divider lamp on the divider SOUTH segment, clear of the doorway',
+  );
+  assert.ok(vaultWestLamp.position.y > BANK_LAYOUT.floorTop + 1.5, 'west divider lamp mounted at wall height');
   const officeLamp = p(BANK_OBJECT_IDS.lampOffice);
   assert.equal(officeLamp.rotation.y, 90, 'office lamp arm must swing north into the office');
   assert.ok(Math.abs(officeLamp.position.x - (BANK_SITE.x - 3.0)) < 0.01, 'office lamp above the desk area');
@@ -828,6 +895,43 @@ test('BANK SECURE GATE: authored closed, swings open by pure hinge rotations', a
   setSecureGateOpen(obj, 0);
   const lwShut = box3of(L);
   assert.ok(Math.abs(lwShut.min.z) < 0.02 && Math.abs(lwShut.max.z) < 0.02, 'setSecureGateOpen(0) re-closes the gate');
+});
+
+/* ---- Big vault door swing --------------------------------------------------- */
+
+test('BANK VAULT DOOR SWING: authored closed, opens outward by pure hinge rotation, plate stays fixed', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'bank-vault-door' }))) as THREE.Group;
+  const hinge = obj.getObjectByName('bank-vault-door-hinge') as THREE.Group;
+  const slab = obj.getObjectByName('bank-vault-door-slab') as THREE.Mesh;
+  const plate = obj.getObjectByName('bank-vault-door-plate') as THREE.Mesh;
+  assert.ok(hinge && slab, 'vault must expose its hinge + slab');
+  assert.ok(plate, 'vault must carry its rectangular mounting plate (seals the doorway corners)');
+
+  // CLOSED (authored state): hinge at 0, disc spanning the doorway plane.
+  assert.ok(hinge.rotation.y === 0, 'vault hinge must be authored closed');
+  const closed = box3of(slab);
+  assert.ok(Math.abs(closed.min.z + 0.05) < 0.02 && Math.abs(closed.max.z - 0.09) < 0.02,
+    'closed disc sits just proud of the frame plane');
+
+  // OPEN (setBankVaultDoorOpen 0 → 1): the disc swings OUTWARD (toward +Z,
+  // the side the door faces) and clears the walk line entirely; the plate
+  // (a root child) must NOT move with the swing.
+  setBankVaultDoorOpen(obj, 1);
+  const open = box3of(slab);
+  assert.ok(open.max.z > 0.3, `open disc must swing outward toward +Z (max z ${open.max.z.toFixed(2)})`);
+  assert.ok(Math.abs(hinge.rotation.y + 1.396) < 1e-6, 'open pose is the pure −80° hinge rotation');
+  const plateStill = box3of(plate);
+  assert.ok(
+    Math.abs(plateStill.min.z + 0.17) < 1e-6 && Math.abs(plateStill.max.z + 0.14) < 1e-6,
+    'mounting plate must stay fixed while the disc swings',
+  );
+
+  // Back to CLOSED: the same helper must restore the authored shut pose.
+  setBankVaultDoorOpen(obj, 0);
+  const shut = box3of(slab);
+  assert.ok(Math.abs(shut.min.z - closed.min.z) < 1e-6 && Math.abs(shut.max.z - closed.max.z) < 1e-6,
+    'setBankVaultDoorOpen(0) re-closes the vault door');
 });
 
 /* ---- Geometry (z-fighting) ------------------------------------------------- */

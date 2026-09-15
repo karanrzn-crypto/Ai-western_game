@@ -57,6 +57,7 @@ import {
   BANK_SITE,
   BANK_OBJECT_IDS,
   setSecureGateOpen,
+  setBankVaultDoorOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -195,10 +196,16 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 };
 
 const persistence = new PersistenceManager();
-// Storage key v8: the bank was added to the map. Old v7 saves would load a
-// full scene WITHOUT the bank (scene load replaces the whole registry), so
-// the key must move for every existing save to pick the bank up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v8' });
+// Storage key v9: the bank interior moved to its final user-designed form —
+// the big vault door now hangs on the office/vault divider's WEST face (user
+// Final world (1.475, 0.600, −26.000) rotY −90), the divider gained a real
+// masonry doorway + two new segments + a header, the south line's middle
+// segment widened to seal the old open vault slot, and a second divider lamp
+// was added. Scene load REPLACES the whole registry, so old v8 saves (solid
+// divider, old door position, no new segments) would resurrect a vault that
+// cannot be entered — the key must move for every existing save to re-base
+// on the new layout.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v9' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -455,6 +462,47 @@ function updateSecureGate(delta: number): void {
   }
 }
 
+// --- The bank's big vault door (truly openable, the vault's ONLY entrance) --
+// The door spawns CLOSED across the divider doorway. E swings the disc
+// outward into the office (~0.9 s, same feel as the iron gate). The collider
+// releases past half-open and re-arms past half-closed, so a CLOSED door
+// always blocks and an OPEN door never does — the masonry doorway behind it
+// is the real walk path into the vault room. Metadata updates invalidate the
+// CollisionWorld cache (object:metadata-updated), which IS the walk switch.
+const vaultDoorUuid = BANK_OBJECT_IDS.vaultDoor;
+const vaultSwing = { value: 0, target: 0, speed: 1 / 0.9 };
+interactions.register({
+  uuid: vaultDoorUuid,
+  get label() {
+    return vaultSwing.target > 0.5 ? 'Close the vault door' : 'Open the vault door';
+  },
+  range: 2.2,
+  getPosition: () => manager.getObject(vaultDoorUuid)?.transform.position
+    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
+  canInteract: () => Boolean(manager.getObject(vaultDoorUuid)),
+  onInteract: () => {
+    vaultSwing.target = vaultSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(vaultSwing.target > 0.5 ? 'The vault door swings open.' : 'The vault door grinds shut.');
+  },
+});
+/** Advance the vault door swing and sync its collider to the visible disc. */
+function updateVaultDoor(delta: number): void {
+  if (vaultSwing.value === vaultSwing.target) return;
+  const dir = Math.sign(vaultSwing.target - vaultSwing.value);
+  vaultSwing.value = THREE.MathUtils.clamp(
+    vaultSwing.value + dir * vaultSwing.speed * delta,
+    0,
+    1,
+  );
+  const root = scene.getObjectByProperty('uuid', vaultDoorUuid);
+  if (root) setBankVaultDoorOpen(root, vaultSwing.value);
+  const opened = vaultSwing.value > 0.5;
+  const def = manager.getObject(vaultDoorUuid);
+  if (def && Boolean(def.metadata.collider) === opened) {
+    manager.updateObjectMetadata(vaultDoorUuid, { collider: !opened });
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -483,6 +531,22 @@ function updateSecureGate(delta: number): void {
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
   },
+  vaultBounds: () => collisionWorld
+    .getCollisionBounds()
+    .filter((b) => b.uuid === vaultDoorUuid)
+    .map((b) => ({ min: b.min, max: b.max })),
+  vault: () => {
+    const root = scene.getObjectByProperty('uuid', vaultDoorUuid);
+    const hinge = root?.getObjectByName('bank-vault-door-hinge');
+    return {
+      swing: vaultSwing.value,
+      target: vaultSwing.target,
+      collider: manager.getObject(vaultDoorUuid)?.metadata.collider ?? null,
+      hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
 };
 
 const raycaster = new THREE.Raycaster();
@@ -796,12 +860,16 @@ function loadSavedScene(): void {
     // LocalSceneStorage keeps the raw payload, so a newer build can recover it.
     console.warn('[playable-map] failed to load saved scene — starting with the default map', err);
   }
-  // The gate VISUALS are rebuilt closed by the factory every boot; force the
-  // saved metadata to match (a save taken mid-open would otherwise leave the
-  // bars walkable while looking shut).
+  // The gate and vault door VISUALS are rebuilt closed by the factories every
+  // boot; force the saved metadata to match (a save taken mid-open would
+  // otherwise leave the bars/disc walkable while looking shut).
   const gateDef = manager.getObject(gateUuid);
   if (gateDef && gateDef.metadata.collider !== true) {
     manager.updateObjectMetadata(gateUuid, { collider: true });
+  }
+  const vaultDef = manager.getObject(vaultDoorUuid);
+  if (vaultDef && vaultDef.metadata.collider !== true) {
+    manager.updateObjectMetadata(vaultDoorUuid, { collider: true });
   }
   updateSaveStatus();
 }
@@ -1676,6 +1744,7 @@ function animate(): void {
   }
   syncHorse(delta, horseSnap);
   updateSecureGate(delta); // iron gate swing + collider/walkability sync
+  updateVaultDoor(delta); // big vault door swing + collider/walkability sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

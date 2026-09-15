@@ -48,6 +48,8 @@ export {
   buildSecureGate,
   SECURE_GATE_OPEN_ANGLE,
   setSecureGateOpen,
+  VAULT_DOOR_OPEN_ANGLE,
+  setBankVaultDoorOpen,
   BANK_INTERIOR_ASSET_TYPES,
   registerBankFactories,
 } from './BankInteriorAssetFactory.js';

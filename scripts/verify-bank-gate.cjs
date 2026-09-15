@@ -135,16 +135,19 @@ const ok = (name, pass, detail) => {
   );
   await shot('03-office-through-gate');
 
-  // --- 5) the VAULT is walkable through its open slot (no gate needed) -------
+  // --- 5) the old open vault slot is SEALED (user Final widened the middle
+  // segment) — the vault is entered ONLY through the big vault door, which the
+  // dedicated verify-bank-vault.cjs proves end-to-end. Here we assert the
+  // seal: a lobby-side walk north stops at the widened wall's south face.
   await teleport(2.45, 2.3, -23.85, 0);
   await page.waitForTimeout(400);
-  const inVault = await walkNorth(-25.05, 20000, 'through the vault slot');
+  const sealed = await walkNorth(-25.05, 20000, 'into the sealed slot line');
   ok(
-    'walked through the vault slot into the VAULT ROOM',
-    inVault.z <= -25.05 && inVault.z > -27.4,
-    `player (${inVault.x.toFixed(2)}, ${inVault.z.toFixed(2)}) — vault room z ≤ −24.7`,
+    'old vault slot is SEALED masonry (walk stops at the widened wall face)',
+    Math.abs(sealed.z - (-24.16)) < 0.1 && sealed.z > -24.7,
+    `player (${sealed.x.toFixed(2)}, ${sealed.z.toFixed(2)}) — expected stop −24.16 = south face −24.51 + radius`,
   );
-  await shot('04-vault-room');
+  await shot('04-slot-sealed');
 
   // --- 6) E closes the gate again (from within interaction range) ------------
   await teleport(0.3, 2.3, -23.3, 0); // back south of the gate, inside range 2.2

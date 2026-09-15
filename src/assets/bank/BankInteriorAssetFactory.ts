@@ -342,6 +342,17 @@ const MAT = {
  * rotation for a parent that never rotates. The old builder rotated the slab
  * about Z (CylinderGeometry axis Y → X), which turned the disc EDGE-ON into
  * its own frame opening and buried the inset/plaque/rivets sideways inside it.
+ *
+ * MOUNTING PLATE: the door now hangs on a masonry wall whose doorway is a
+ * RECTANGLE, while the door itself is a CIRCLE — the rectangle corners above
+ * the disc can never be covered by the disc alone. A real vault door solves
+ * this with a flat iron plate (with a circular cut-out) bolted over the
+ * opening, so the builder carries one: a rectangle 1.26 × 2.41 m with a
+ * 1.63 m circular hole, extruded 3 cm, seated 5 mm proud of the wall face
+ * (the placement puts the origin 0.175 m off that face — exactly the deepest
+ * ring's back edge). The disc (r 0.82) overlaps the hole edge (r 0.815) by
+ * 5 mm so no slit ever opens between door and plate; the plate is a ROOT
+ * child (never swings with the hinge).
  */
 export function buildBankVaultDoor(): THREE.Group {
   const g = new THREE.Group();
@@ -358,6 +369,27 @@ export function buildBankVaultDoor(): THREE.Group {
     const frameRing = mesh(new THREE.TorusGeometry(r, 0.025, 8, 32), MAT.iron(), 0, centerY, -0.05 - i * 0.05);
     g.add(frameRing);
   }
+
+  // rectangular mounting plate with the circular door cut-out (see contract
+  // above). Extruded shape → real 3 cm thick iron, visible from both sides.
+  // z ∈ [−0.17, −0.14]: behind ring 0/1 (which read as proud of the plate)
+  // and let ring 2 pierce it — the rings sit INTO the plate like a real
+  // bolted frame. The bottom 5 cm buries into the floor slab (y ≥ −0.05) so
+  // the doorway's bottom edge is always sealed.
+  const plateShape = new THREE.Shape();
+  plateShape.moveTo(-0.63, -0.05);
+  plateShape.lineTo(0.63, -0.05);
+  plateShape.lineTo(0.63, 2.36);
+  plateShape.lineTo(-0.63, 2.36);
+  plateShape.closePath();
+  const plateHole = new THREE.Path();
+  plateHole.absarc(0, centerY, opening / 2 + 0.015, 0, Math.PI * 2, true);
+  plateShape.holes.push(plateHole);
+  const plateGeo = new THREE.ExtrudeGeometry(plateShape, { depth: 0.03, bevelEnabled: false });
+  const plate = new THREE.Mesh(plateGeo, MAT.iron());
+  plate.name = 'bank-vault-door-plate';
+  plate.position.z = -0.17;
+  g.add(plate);
 
   const doorRadius = opening / 2 + 0.02;
 
@@ -433,6 +465,24 @@ export function buildBankVaultDoor(): THREE.Group {
   }
 
   return g;
+}
+
+/** Swing angle (radians) the vault door opens through, outward into the
+ *  room it faces (toward its local +Z — the same convention as the secure
+ *  gate's "swing toward the approaching player"). 80° matches the gate. */
+export const VAULT_DOOR_OPEN_ANGLE = 1.396; // 80°
+
+/**
+ * Pose the vault door between CLOSED (t = 0) and FULLY OPEN (t = 1).
+ * Pure hinge rotation about the hinge group's local +Y axis — the disc sweeps
+ * OUTWARD (toward local +Z, the side the door faces), never through the wall
+ * or the mounting plate (the sweep keeps z ≥ 0, the plate sits at z ≤ −0.14).
+ * No scaling, no re-parenting — the interaction system and the tests share
+ * one exact definition of "open".
+ */
+export function setBankVaultDoorOpen(root: THREE.Object3D, t: number): void {
+  const hinge = root.getObjectByName('bank-vault-door-hinge');
+  if (hinge) hinge.rotation.y = -THREE.MathUtils.clamp(t, 0, 1) * VAULT_DOOR_OPEN_ANGLE;
 }
 
 /** Marble-topped teller counter with a brass cash-slot trim and carved base panels. */

@@ -21,13 +21,16 @@
  *   visual can never disagree. Every decorative object carries
  *   `collider: false` explicitly.
  *
- * Interior flow (user spec §B.1):
+ * Interior flow (manager-office revision):
  *   FRONT DOOR → LOBBY (rug, 2 marble columns, grandfather clock, lamps)
- *   → TELLER COUNTER (+ cage above, dressed with coins/money bag)
- *   → SECURE BACK AREA (vault door in the rear wall, safe-deposit wall,
- *   floor safe) + BANKER OFFICE (desk + chair, west rear corner).
- * The vault door sits east of the counter line so it is visible straight
- * from the entrance over the counter's east end.
+ *   → TELLER COUNTER (+ cage above, dressed east of its service window)
+ *   → staff strip behind the counter → MANAGER OFFICE (west rear room:
+ *   desk + chair + interior BANK sign, walled off by two masonry partitions)
+ *   → SECURE VAULT ENCLOSURE inside the office's east end, behind a barred
+ *   iron gate: big vault door on the rear wall, safe-deposit wall on the
+ *   enclosure's west wall, floor safe, money bags beside the vault.
+ * Every partition segment, doorway and gate opening is derived from
+ * BANK_LAYOUT.partitions — the ONE placement source for the private rooms.
  * -----------------------------------------------------------------------------
  */
 
@@ -102,6 +105,22 @@ export const BANK_LAYOUT = Object.freeze({
   }),
   roofOverhang: 0.25,
   roofSlabTop: 5.02,
+  /** Interior partitions — single source of truth for the private rooms.
+   *  Manager office: west rear room bounded by a south wall (with the office
+   *  doorway at its east end) and an east wall; the secure vault enclosure
+   *  fills the office's east end behind a barred gate in its south wall. */
+  partitions: Object.freeze({
+    thickness: 0.18,
+    height: 4.8,
+    officeSouthZ: -1.6,
+    officeEastX: 0.35,
+    // Doorway sits in the west half, directly south of the vault gate, so the
+    // lobby → office → enclosure flow never wedges between wall faces.
+    officeDoor: Object.freeze({ xMin: -2.2, xMax: -1.2 }),
+    vaultWestX: -2.35,
+    vaultSouthZ: -2.35,
+    vaultGate: Object.freeze({ xMin: -1.9, xMax: -0.9 }),
+  }),
 });
 
 /** World-space anchor of the bank on the playable map (street's north end). */
@@ -144,7 +163,17 @@ export const BANK_OBJECT_IDS = Object.freeze({
   bankSign: bankUuid('1b'),
   lampWestLobby: bankUuid('1c'),
   lampEastLobby: bankUuid('1d'),
-  lampEastSecure: bankUuid('1e'),
+  lampOffice: bankUuid('2f'),
+  lampVault: bankUuid('1e'),
+  partitionOfficeSouth: bankUuid('26'),
+  partitionOfficeSouthEast: bankUuid('2e'),
+  partitionOfficeEast: bankUuid('27'),
+  partitionVaultWest: bankUuid('28'),
+  partitionVaultSouthWest: bankUuid('29'),
+  partitionVaultSouthEast: bankUuid('2a'),
+  secureGate: bankUuid('2b'),
+  partitionOfficeHeader: bankUuid('2c'),
+  partitionVaultHeader: bankUuid('2d'),
   counterMoneyBag: bankUuid('20'),
   counterCoins1: bankUuid('21'),
   counterCoins2: bankUuid('22'),
@@ -293,69 +322,197 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     }, { collider: true });
   }
 
-  // --- Teller line (public side faces the door; vault sight-line kept east) ---
+  // ===========================================================================
+  // INTERIOR — manager-office revision
+  // ---------------------------------------------------------------------------
+  // Zones (building-local): lobby z ∈ [−1.6, 4.325] (public) · staff strip
+  // behind the teller counter · manager office x ∈ [−5.825, 0.26],
+  // z ∈ [−4.325, −1.51] · secure vault enclosure x ∈ [−2.44, 0.26],
+  // z ∈ [−4.325, −2.44] inside the office's east end.
+  // ===========================================================================
+
+  // --- Teller line (freestanding island; service window faces the door) ------
+  // z = −0.1 keeps a ≥0.9 m staff strip between the counter and the office
+  // south wall (z = −1.51) so the player can always reach the office doorway.
   push(BANK_OBJECT_IDS.tellerCounter, 'teller-counter', 'بانک — پیشخوان تحویل', {
-    position: { x: originX - 1.0, y: floorY, z: originZ - 0.75 },
+    position: { x: originX, y: floorY, z: originZ - 0.1 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: true });
-  // Cage sits ON the counter (base raised 5 mm so its bottom rail never
-  // lands coplanar with the counter's brass tray; the rail still sinks into
-  // the marble top and the posts emerge from the rail — nothing floats).
+  // Cage sits ON the counter (base raised so its bottom rail sinks into the
+  // marble top and the posts emerge from it — nothing floats, nothing
+  // coplanar). Same footprint center as the counter.
   push(BANK_OBJECT_IDS.tellerCage, 'teller-cage', 'بانک — قفس تحویل', {
-    position: { x: originX - 1.0, y: floorY + 1.205, z: originZ - 0.75 },
+    position: { x: originX, y: floorY + 1.205, z: originZ - 0.1 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 
-  // --- Vault (rear wall, east of the counter line — visible from the door) ----
+  // --- Manager office partitions (masonry unit boxes → exact colliders) ------
+  // Junction discipline (z-fight scan): a perpendicular segment always ends
+  // AT the other's face (back-to-back) and never shares a max/min plane with
+  // an overlapping box. The office doorway is the gap between the south
+  // wall's east end (−0.85) and the east wall (0.26).
+  {
+    const P = L.partitions;
+    const pt = P.thickness;
+    const halfT = pt / 2;
+    // Partitions rise from the floor slab TOP (y = floorTop) to the ceiling —
+    // their bottom face rests back-to-back on the slab, never sharing its y=0
+    // underside plane.
+    const wallY = (floorY + P.height) / 2;
+    const wallH = P.height - floorY;
+    // Office south wall, west segment: west inner wall → doorway.
+    push(BANK_OBJECT_IDS.partitionOfficeSouth, 'bank-wall', 'بانک — دیوار دفتر مدیر (جنوبی)', {
+      position: { x: originX + (-5.825 + P.officeDoor.xMin) / 2, y: wallY, z: originZ + P.officeSouthZ },
+      rotation: identity(),
+      scale: { x: P.officeDoor.xMin - -5.825, y: wallH, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [3.3, 4] });
+    // Office south wall, east segment: doorway → office east wall face.
+    push(BANK_OBJECT_IDS.partitionOfficeSouthEast, 'bank-wall', 'بانک — دیوار دفتر مدیر (جنوبی ۲)', {
+      position: { x: originX + (P.officeDoor.xMax + P.officeEastX - halfT) / 2, y: wallY, z: originZ + P.officeSouthZ },
+      rotation: identity(),
+      scale: { x: (P.officeEastX - halfT) - P.officeDoor.xMax, y: wallH, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [1.3, 4] });
+    // Office doorway header (cased opening, 2.5 m clear like the facade door).
+    push(BANK_OBJECT_IDS.partitionOfficeHeader, 'bank-wall', 'بانک — بالای در دفتر مدیر', {
+      position: {
+        x: originX + (P.officeDoor.xMin + P.officeDoor.xMax) / 2,
+        y: (floorY + 2.5 + P.height) / 2,
+        z: originZ + P.officeSouthZ,
+      },
+      rotation: identity(),
+      scale: { x: P.officeDoor.xMax - P.officeDoor.xMin, y: P.height - 2.5, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [1, 2] });
+    // Office east wall: rear wall inner face → south wall's north face
+    // (fills the L-corner; shares no coplanar max/min plane with the south
+    // wall because their x-ranges never overlap).
+    push(BANK_OBJECT_IDS.partitionOfficeEast, 'bank-wall', 'بانک — دیوار دفتر مدیر (شرقی)', {
+      position: { x: originX + P.officeEastX, y: wallY, z: originZ + (-4.325 + P.officeSouthZ + halfT) / 2 },
+      rotation: identity(),
+      scale: { x: pt, y: wallH, z: (P.officeSouthZ + halfT) - -4.325 },
+    }, { collider: true, plaster: true, brickRepeat: [2.6, 4] });
+    // Enclosure west wall: rear wall inner face → enclosure south wall's face.
+    push(BANK_OBJECT_IDS.partitionVaultWest, 'bank-wall', 'بانک — دیوار محفظه گاوصندوق (غربی)', {
+      position: { x: originX + P.vaultWestX, y: wallY, z: originZ + (-4.325 + P.vaultSouthZ - halfT) / 2 },
+      rotation: identity(),
+      scale: { x: pt, y: wallH, z: (P.vaultSouthZ - halfT) - -4.325 },
+    }, { collider: true, plaster: true, brickRepeat: [1.7, 4] });
+    // Enclosure south wall — two segments flanking the barred gate opening.
+    push(BANK_OBJECT_IDS.partitionVaultSouthWest, 'bank-wall', 'بانک — دیوار محفظه گاوصندوق (جنوبی ۱)', {
+      position: { x: originX + (P.vaultWestX - halfT + P.vaultGate.xMin) / 2, y: wallY, z: originZ + P.vaultSouthZ },
+      rotation: identity(),
+      scale: { x: P.vaultGate.xMin - (P.vaultWestX - halfT), y: wallH, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [0.5, 4] });
+    push(BANK_OBJECT_IDS.partitionVaultSouthEast, 'bank-wall', 'بانک — دیوار محفظه گاوصندوق (جنوبی ۲)', {
+      position: { x: originX + (P.vaultGate.xMax + P.officeEastX - halfT) / 2, y: wallY, z: originZ + P.vaultSouthZ },
+      rotation: identity(),
+      scale: { x: (P.officeEastX - halfT) - P.vaultGate.xMax, y: wallH, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [1, 4] });
+    // Masonry header closing the gate opening above the iron frame (the
+    // frame top at floorTop + 2.12 is the header's exact bottom face).
+    push(BANK_OBJECT_IDS.partitionVaultHeader, 'bank-wall', 'بانک — بالای در محفظه گاوصندوق', {
+      position: {
+        x: originX + (P.vaultGate.xMin + P.vaultGate.xMax) / 2,
+        y: (floorY + 2.12 + P.height) / 2,
+        z: originZ + P.vaultSouthZ,
+      },
+      rotation: identity(),
+      scale: { x: P.vaultGate.xMax - P.vaultGate.xMin, y: P.height - 2.12, z: pt },
+    }, { collider: true, plaster: true, brickRepeat: [1, 2.4] });
+    // Barred iron gate held OPEN (visual, non-collider): the opening is the
+    // secure entrance and must stay walkable. Origin 2 cm north of the wall
+    // centerline so the frame never lands coplanar with the masonry.
+    const gateCx = (P.vaultGate.xMin + P.vaultGate.xMax) / 2;
+    push(BANK_OBJECT_IDS.secureGate, 'secure-gate', 'بانک — در آهنی محفظه گاوصندوق', {
+      // 5 mm seat above the slab: the jamb blocks must never land coplanar
+      // with the partition faces (same discipline as the cage on the counter).
+      position: { x: originX + gateCx, y: floorY + 0.005, z: originZ + P.vaultSouthZ - 0.02 },
+      rotation: identity(),
+      scale: { x: 1, y: 1, z: 1 },
+    }, { collider: false });
+  }
+
+  // --- Vault enclosure contents -----------------------------------------------
+  // Big vault door on the enclosure's rear (north) wall, facing south into the
+  // enclosure; frame rings set into the masonry, door face proud of it.
   push(BANK_OBJECT_IDS.vaultDoor, 'bank-vault-door', 'بانک — در گاوصندوق', {
-    position: { x: originX + 2.7, y: floorY, z: originZ - 4.3 },
+    position: { x: originX - 0.95, y: floorY, z: originZ - 4.22 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: true });
-
-  // --- Safe-deposit wall (east wall, secure section, faces west into the room).
-  // Panel bottom (backing at local y 0.32) grounded exactly on the floor.
+  // Safe-deposit wall on the enclosure's west partition (east face), doors
+  // facing east (rotY = +90 maps the builder's +Z door normal to +X).
+  // Backing bottom rests exactly on the floor: backing spans local y
+  // [0.35, 1.53], so y = floorTop − 0.35 grounds it.
   push(BANK_OBJECT_IDS.safeDepositWall, 'safe-deposit-wall', 'بانک — دیوار صندوق امانات', {
-    position: { x: originX + 5.8, y: floorY - 0.32, z: originZ - 2.6 },
-    rotation: { x: 0, y: -90, z: 0 },
+    position: { x: originX - 2.245, y: floorY - 0.35, z: originZ - 3.35 },
+    rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-
-  // --- Floor safe (rear-east corner, door turned toward the room) --------------
+  // Floor safe tucked into the enclosure's south-east corner (dial turned
+  // toward the gate). Its yaw-conservative AABB must stay clear of the gate
+  // corridor (walker window x ∈ [0.45, 0.75] around the opening), which is
+  // why it hugs the east partition instead of the enclosure center.
   push(BANK_OBJECT_IDS.floorSafe, 'floor-safe', 'بانک — گاوصندوق زمینی', {
-    position: { x: originX + 4.55, y: floorY, z: originZ - 3.8 },
-    rotation: { x: 0, y: -45, z: 0 },
+    position: { x: originX - 0.4, y: floorY, z: originZ - 2.95 },
+    rotation: { x: 0, y: 45, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: true });
-
-  // --- Banker office (semi-private, west rear corner) --------------------------
-  push(BANK_OBJECT_IDS.bankersDesk, 'bankers-desk', 'بانک — میز مدیر', {
-    position: { x: originX - 4.15, y: floorY, z: originZ - 2.55 },
-    rotation: { x: 0, y: 35, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
-  // Chair behind the desk (banker side), facing the desktop.
-  push(BANK_OBJECT_IDS.bankersChair, 'bankers-chair', 'بانک — صندلی مدیر', {
-    position: { x: originX - 4.72, y: floorY, z: originZ - 3.18 },
-    rotation: { x: 0, y: 215, z: 0 },
+  // Money bags beside the vault door, clear of its AABB and of the deposit wall.
+  push(BANK_OBJECT_IDS.vaultMoneyBag1, 'money-bag', 'بانک — کیسه پول گاوصندوق ۱', {
+    position: { x: originX - 1.75, y: floorY, z: originZ - 3.85 },
+    rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  // Interior BANK sign — wall-mounted above the desk on the west wall.
+  push(BANK_OBJECT_IDS.vaultMoneyBag2, 'money-bag', 'بانک — کیسه پول گاوصندوق ۲', {
+    position: { x: originX - 1.45, y: floorY, z: originZ - 3.62 },
+    rotation: { x: 0, y: 70, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: false });
+  // Gas lamp on the enclosure's south wall (north face), lighting the vault.
+  // rotY = 90 swings the lamp arm to −Z (north, into the enclosure); backplate
+  // block sits 5 mm off the wall face (no coplanar masonry contact).
+  push(BANK_OBJECT_IDS.lampVault, 'gas-wall-lamp', 'بانک — چراغ محفظه گاوصندوق', {
+    position: { x: originX, y: floorY + 1.75, z: originZ - 2.485 },
+    rotation: { x: 0, y: 90, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: false });
+
+  // --- Manager office furniture (west half, enclosure east) --------------------
+  // Desk faces south (drawers toward the banker's side at rotY = 180); the
+  // chair stands behind it (north), facing the desktop. The desk keeps a
+  // ≥0.9 m walk lane to the enclosure west wall (its 1×1 collider face at
+  // x = −3.4 vs the wall face at −2.44). Walking strips: north
+  // z ∈ [−4.325, −3.6] and the whole south strip z ∈ [−2.44, −1.69] stay clear.
+  push(BANK_OBJECT_IDS.bankersDesk, 'bankers-desk', 'بانک — میز مدیر', {
+    position: { x: originX - 3.9, y: floorY, z: originZ - 2.7 },
+    rotation: { x: 0, y: 180, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: true });
+  push(BANK_OBJECT_IDS.bankersChair, 'bankers-chair', 'بانک — صندلی مدیر', {
+    position: { x: originX - 3.9, y: floorY, z: originZ - 3.35 },
+    rotation: identity(),
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: false });
+  // Coin stack on the desktop's free east half (clear of ledger/inkwell/lamp).
+  push(BANK_OBJECT_IDS.deskCoinStack, 'coin-stack', 'بانک — سکه میز مدیر', {
+    position: { x: originX - 3.35, y: floorY + 0.775, z: originZ - 2.55 },
+    rotation: identity(),
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: false });
+  // Interior BANK sign above the desk on the office's west wall, facing east.
   push(BANK_OBJECT_IDS.bankSign, 'bank-sign', 'بانک — تابلو داخلی', {
-    position: { x: originX - 5.79, y: floorY + 2.0, z: originZ - 2.55 },
+    position: { x: originX - 5.79, y: floorY + 2.0, z: originZ - 2.7 },
     rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 
   // --- Lobby (open entrance area) ----------------------------------------------
-  // Grandfather clock against the west wall, face turned into the room.
-  // z = origin + 0.2 stands it in the CLEAR wall span between the two west
-  // side windows (world z −24..−25 and −21..−22) — its old spot (z + 1.6)
-  // planted the cabinet directly in front of the south-west window.
+  // Grandfather clock against the west wall between the two west windows,
+  // face turned east into the room.
   push(BANK_OBJECT_IDS.grandfatherClock, 'grandfather-clock', 'بانک — ساعت دیواری', {
-    position: { x: originX - 5.65, y: floorY, z: originZ + 0.2 },
+    position: { x: originX - 5.65, y: floorY, z: originZ + 0.35 },
     rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
@@ -377,10 +534,9 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 
-  // --- Gas wall lamps (3 → warm restrained light; desk lamp adds a 4th) --------
-  // The lamp's bracket tab presses flat against ±X walls: west wall rotY = 0
-  // (arm swings +X into the room), east wall rotY = 180. 5 mm off the wall
-  // face so nothing is coplanar with the masonry.
+  // --- Gas wall lamps (4 → warm restrained light; desk lamp adds a 5th) --------
+  // The lamp's bracket block presses 5 mm off its wall face; rotY swings the
+  // arm into the room (west wall 0, east wall 180, north-facing face 90).
   push(BANK_OBJECT_IDS.lampWestLobby, 'gas-wall-lamp', 'بانک — چراغ دیواری ۱', {
     position: { x: originX - 5.78, y: floorY + 1.75, z: originZ + 2.9 },
     rotation: identity(),
@@ -391,45 +547,30 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     rotation: { x: 0, y: 180, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  push(BANK_OBJECT_IDS.lampEastSecure, 'gas-wall-lamp', 'بانک — چراغ دیواری ۳', {
-    position: { x: originX + 5.78, y: floorY + 1.75, z: originZ - 0.9 },
-    rotation: { x: 0, y: 180, z: 0 },
+  // Office lamp on the office south wall's north face, arm swinging north to
+  // light the desk area (rotY = 90 maps the lamp's +X arm to −Z).
+  push(BANK_OBJECT_IDS.lampOffice, 'gas-wall-lamp', 'بانک — چراغ دفتر مدیر', {
+    position: { x: originX - 3.0, y: floorY + 1.75, z: originZ - 1.475 },
+    rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 
-  // --- Money bags / coin stacks (dressed, never scattered) ---------------------
-  // Counter top dressing east of the cage's service window (window strip
-  // [−1.35, −0.65] stays clear working space).
+  // --- Counter dressing (east of the cage's service window) --------------------
+  // Window strip x ∈ [−0.35, 0.35] stays clear working space; marble top face
+  // is at floorTop + 1.2, so dressing rests exactly on it.
   push(BANK_OBJECT_IDS.counterMoneyBag, 'money-bag', 'بانک — کیسه پول پیشخوان', {
-    position: { x: originX + 0.25, y: floorY + 1.2, z: originZ - 0.85 },
+    position: { x: originX + 0.8, y: floorY + 1.2, z: originZ - 0.15 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
   push(BANK_OBJECT_IDS.counterCoins1, 'coin-stack', 'بانک — سکه پیشخوان ۱', {
-    position: { x: originX - 0.1, y: floorY + 1.2, z: originZ - 0.58 },
+    position: { x: originX + 0.5, y: floorY + 1.2, z: originZ + 0.08 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
   push(BANK_OBJECT_IDS.counterCoins2, 'coin-stack', 'بانک — سکه پیشخوان ۲', {
-    position: { x: originX - 0.38, y: floorY + 1.2, z: originZ - 0.92 },
+    position: { x: originX + 0.5, y: floorY + 1.2, z: originZ - 0.38 },
     rotation: { x: 0, y: 40, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
-  }, { collider: false });
-  // Secure floor: two bags beside the vault (east of it, clear of its AABB).
-  push(BANK_OBJECT_IDS.vaultMoneyBag1, 'money-bag', 'بانک — کیسه پول گاوصندوق ۱', {
-    position: { x: originX + 1.7, y: floorY, z: originZ - 3.5 },
-    rotation: identity(),
-    scale: { x: 1, y: 1, z: 1 },
-  }, { collider: false });
-  push(BANK_OBJECT_IDS.vaultMoneyBag2, 'money-bag', 'بانک — کیسه پول گاوصندوق ۲', {
-    position: { x: originX + 2.1, y: floorY, z: originZ - 3.72 },
-    rotation: { x: 0, y: 70, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
-  }, { collider: false });
-  // One coin stack on the banker's desktop (top at floorY + 0.775).
-  push(BANK_OBJECT_IDS.deskCoinStack, 'coin-stack', 'بانک — سکه میز مدیر', {
-    position: { x: originX - 4.35, y: floorY + 0.775, z: originZ - 2.35 },
-    rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
 

@@ -297,7 +297,7 @@ test('GRANDFATHER CLOCK: hood, face ring, pendulum and weights', async () => {
 
 /* ---- Light budget ---------------------------------------------------------- */
 
-test('BANK LIGHT BUDGET: exactly 4 real PointLights across the whole bank', async () => {
+test('BANK LIGHT BUDGET: exactly 5 real PointLights across the whole bank', async () => {
   const registry = makeRegistry();
   const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
   let lights = 0;
@@ -307,7 +307,7 @@ test('BANK LIGHT BUDGET: exactly 4 real PointLights across the whole bank', asyn
       if ((c as THREE.PointLight).isPointLight) lights += 1;
     });
   }
-  assert.equal(lights, 4, '3 gas wall lamps + 1 banker desk lamp — nothing more');
+  assert.equal(lights, 5, '4 gas wall lamps (2 lobby + office + vault enclosure) + 1 banker desk lamp — nothing more');
 });
 
 /* ---- Collision ------------------------------------------------------------- */
@@ -333,14 +333,25 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
   ]) {
     assert.equal(flag(id), true, `furniture ${id} must be a collider`);
   }
-  // Shell kit, fixtures, seats, decor.
+  // Interior partitions close the private rooms — real masonry.
+  for (const id of [
+    BANK_OBJECT_IDS.partitionOfficeSouth, BANK_OBJECT_IDS.partitionOfficeSouthEast,
+    BANK_OBJECT_IDS.partitionOfficeEast,
+    BANK_OBJECT_IDS.partitionOfficeHeader, BANK_OBJECT_IDS.partitionVaultWest,
+    BANK_OBJECT_IDS.partitionVaultSouthWest, BANK_OBJECT_IDS.partitionVaultSouthEast,
+    BANK_OBJECT_IDS.partitionVaultHeader,
+  ]) {
+    assert.equal(flag(id), true, `partition ${id} must be a collider`);
+  }
+  // Shell kit, fixtures, seats, decor. The secure gate stays NON-collider:
+  // its open leaves frame the walkable secure entrance.
   for (const id of [
     BANK_OBJECT_IDS.building, BANK_OBJECT_IDS.tellerCage, BANK_OBJECT_IDS.safeDepositWall,
     BANK_OBJECT_IDS.bankersChair, BANK_OBJECT_IDS.grandfatherClock,
     BANK_OBJECT_IDS.columnWest, BANK_OBJECT_IDS.columnEast, BANK_OBJECT_IDS.floorRug,
     BANK_OBJECT_IDS.bankSign, BANK_OBJECT_IDS.lampWestLobby, BANK_OBJECT_IDS.lampEastLobby,
-    BANK_OBJECT_IDS.lampEastSecure, BANK_OBJECT_IDS.counterMoneyBag, BANK_OBJECT_IDS.counterCoins1,
-    BANK_OBJECT_IDS.vaultMoneyBag1, BANK_OBJECT_IDS.deskCoinStack,
+    BANK_OBJECT_IDS.lampVault, BANK_OBJECT_IDS.lampOffice, BANK_OBJECT_IDS.secureGate, BANK_OBJECT_IDS.counterMoneyBag,
+    BANK_OBJECT_IDS.counterCoins1, BANK_OBJECT_IDS.vaultMoneyBag1, BANK_OBJECT_IDS.deskCoinStack,
   ]) {
     assert.equal(flag(id), false, `decor ${id} must NOT be a collider`);
   }
@@ -428,6 +439,56 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
     { x: 0, y: 0, z: -2.0 },
   );
   assert.equal(counterHit.blockedZ, true, 'teller counter must block');
+
+  // 5) The private rooms are reachable on foot: lobby → staff strip east of
+  // the counter → office doorway → office → through the secure gate opening
+  // → inside the vault enclosure. Every leg is a real CollisionWorld walk.
+  const floorY = BANK_LAYOUT.floorTop + PLAYER_HEIGHT;
+  const axisWalk = (
+    from: { x: number; y: number; z: number },
+    delta: { x: number; y: number; z: number },
+    steps: number,
+  ): { x: number; y: number; z: number } => {
+    let p = from;
+    for (let i = 0; i < steps; i += 1) {
+      p = world.movePlayer(p, delta).position;
+    }
+    return p;
+  };
+  const reached = (p: { x: number; y: number; z: number }, target: number, axis: 'x' | 'z', label: string): void => {
+    const v = axis === 'x' ? p.x : p.z;
+    assert.ok(
+      Math.abs(v - target) < 0.05,
+      `${label}: expected ${axis}≈${target.toFixed(2)}, got ${v.toFixed(2)}`,
+    );
+  };
+  let p = { x: BANK_SITE.x + 4.0, y: floorY, z: BANK_SITE.z + 3.0 };
+  p = axisWalk(p, { x: 0, y: 0, z: -0.1 }, 40);                            // north to local z ≈ −1.0
+  reached(p, BANK_SITE.z - 1.0, 'z', 'walk down the east side');
+  p = axisWalk(p, { x: -0.1, y: 0, z: 0 }, 57);                            // west behind the counter
+  reached(p, BANK_SITE.x - 1.7, 'x', 'cross the staff strip to the doorway line');
+  const beforeDoor = p.z;
+  p = axisWalk(p, { x: 0, y: 0, z: -0.1 }, 9);                             // north through the opening
+  assert.ok(p.z < beforeDoor - 0.3, 'office doorway must let the player through');
+  p = axisWalk(p, { x: 0.1, y: 0, z: 0 }, 2);                              // ease east onto the gate line
+  reached(p, BANK_SITE.x - 1.55, 'x', 'line up with the secure gate');
+  const beforeGate = p.z;
+  p = axisWalk(p, { x: 0, y: 0, z: -0.1 }, 13);                            // north into the enclosure
+  assert.ok(p.z < beforeGate - 0.5, `secure gate opening must be walkable (stopped at z=${p.z.toFixed(2)})`);
+  reached(p, BANK_SITE.z - 3.2, 'z', 'stand inside the vault enclosure');
+
+  // 6) The room walls actually PROTECT the rooms: north walks beside the
+  // openings are blocked by the office south wall and the enclosure wall.
+  const officeWallHit = world.movePlayer(
+    { x: BANK_SITE.x - 3.0, y: floorY, z: BANK_SITE.z - 1.0 },
+    { x: 0, y: 0, z: -0.5 },
+  );
+  assert.equal(officeWallHit.blockedZ, true, 'office south partition must block beside the doorway');
+  const enclosureWallHit = world.movePlayer(
+    { x: BANK_SITE.x - 0.7, y: floorY, z: BANK_SITE.z - 1.8 },
+    { x: 0, y: 0, z: -0.5 },
+  );
+  assert.equal(enclosureWallHit.blockedZ, true, 'enclosure south partition must block beside the gate');
 });
 
 /* ---- Layout relations ------------------------------------------------------ */
@@ -463,54 +524,97 @@ test('BANK LAYOUT: facade tiles the doorway; stairs are shallow enough to climb'
   }
 });
 
-test('BANK LAYOUT: interior reads like a bank — vault sight-line, cage on counter, grounded panel', () => {
+test('BANK LAYOUT: interior reads like a real bank — office room, secure enclosure, grounded panel', () => {
   const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
   const byId = new Map(defs.map((d) => [d.uuid, d]));
   const p = (id: string): ObjectDefinition['transform'] => byId.get(id)!.transform;
+  const P = BANK_LAYOUT.partitions;
 
-  // Cage sits exactly on the counter top (plus its 5 mm seat offset), same
+  // Cage sits exactly on the counter top (plus its seat offset), same
   // footprint center.
   assert.equal(p(BANK_OBJECT_IDS.tellerCage).position.y, BANK_LAYOUT.floorTop + 1.205, 'cage base = counter top + seat offset');
   assert.equal(p(BANK_OBJECT_IDS.tellerCage).position.x, p(BANK_OBJECT_IDS.tellerCounter).position.x, 'cage centered on the counter');
   assert.equal(p(BANK_OBJECT_IDS.tellerCage).position.z, p(BANK_OBJECT_IDS.tellerCounter).position.z, 'cage aligned with the counter');
-
-  // Vault in the rear wall, EAST of the counter line → visible from the door.
-  const vault = p(BANK_OBJECT_IDS.vaultDoor);
+  // The counter stands clear of the office south wall so the staff strip
+  // (and the path to the office doorway) stays walkable.
   const counter = p(BANK_OBJECT_IDS.tellerCounter);
-  assert.ok(vault.position.z < BANK_SITE.z - 4, 'vault must sit against the rear wall');
-  const counterEastEnd = counter.position.x + 1.6; // counter length 3.2
-  assert.ok(vault.position.x > counterEastEnd + 0.5, 'vault must clear the counter east end');
-  // Sight-line from the door center to the vault passes east of the counter:
-  const doorZ = BANK_SITE.z + BANK_LAYOUT.depth / 2;
-  const doorX2 = BANK_SITE.x;
-  const tAtCounter = (doorZ - counter.position.z) / (doorZ - vault.position.z);
-  const lineX = doorX2 + (vault.position.x - doorX2) * tAtCounter;
-  assert.ok(lineX > counterEastEnd, `door→vault sight line passes x=${lineX.toFixed(2)} (counter ends at ${counterEastEnd})`);
+  const counterNorthFace = counter.position.z - 0.3; // counter depth 0.6
+  const wallSouthFace = BANK_SITE.z + P.officeSouthZ - P.thickness / 2;
+  assert.ok(
+    counterNorthFace - wallSouthFace > 0.85,
+    `counter must keep a walkable staff strip to the office wall (got ${(counterNorthFace - wallSouthFace).toFixed(2)})`,
+  );
 
-  // Safe-deposit wall: against the east wall, facing west, bottom ON the floor.
-  const panel = p(BANK_OBJECT_IDS.safeDepositWall);
-  assert.equal(panel.rotation.y, -90, 'deposit panel must face west into the room');
-  assert.ok(panel.position.x > BANK_SITE.x + 5, 'deposit panel must sit against the east wall');
-  assert.ok(Math.abs(panel.position.y + 0.32 - BANK_LAYOUT.floorTop) < 1e-9, 'panel backing bottom must rest exactly on the floor');
-
-  // Banker chair behind the desk, facing it; desk keeps NPC clearance.
+  // Manager office: desk + chair in the open west half, chair behind the desk
+  // facing it, desk clear of the enclosure wall and the office walls.
   const desk = p(BANK_OBJECT_IDS.bankersDesk);
   const chair = p(BANK_OBJECT_IDS.bankersChair);
   const dxd = chair.position.x - desk.position.x;
   const dzd = chair.position.z - desk.position.z;
   assert.ok(Math.hypot(dxd, dzd) < 1.3, 'chair belongs just behind the desk');
-  assert.ok(Math.abs(chair.rotation.y - (desk.rotation.y + 180)) < 1, 'chair must face the desktop');
-  assert.ok(desk.position.x < BANK_SITE.x - 3.5, 'office stays in the west rear corner');
+  assert.ok(Math.abs(((chair.rotation.y - desk.rotation.y - 180) % 360 + 360) % 360) < 1, 'chair must face the desktop');
+  assert.ok(desk.position.x < BANK_SITE.x - 3, 'desk stays in the office open half (west)');
+  assert.ok(
+    desk.position.x + 0.5 < BANK_SITE.x + P.vaultWestX - 0.35,
+    'desk collider must keep a player-wide lane to the enclosure west wall',
+  );
+  assert.ok(desk.position.z < BANK_SITE.z + P.officeSouthZ - P.thickness / 2, 'desk sits north of the office south wall, inside the office');
 
-  // Rug centered on the entrance path; clock on the west wall; lamps on walls.
+  // Secure vault enclosure: sealed by masonry on three sides, entered through
+  // the barred gate opening in its south wall.
+  const enclosure = {
+    xMin: BANK_SITE.x + P.vaultWestX - P.thickness / 2,
+    xMax: BANK_SITE.x + P.officeEastX - P.thickness / 2,
+    zMax: BANK_SITE.z + P.vaultSouthZ - P.thickness / 2,
+  };
+  const gate = p(BANK_OBJECT_IDS.secureGate);
+  assert.ok(gate.position.x > BANK_SITE.x + P.vaultGate.xMin && gate.position.x < BANK_SITE.x + P.vaultGate.xMax, 'gate fills the opening in the enclosure south wall');
+  assert.ok(Math.abs(gate.position.z - (BANK_SITE.z + P.vaultSouthZ - 0.02)) < 1e-9, 'gate sits on the enclosure wall line');
+  assert.ok(P.vaultGate.xMax - P.vaultGate.xMin >= 0.9, 'gate opening must be wide enough to walk through');
+
+  // Big vault door INSIDE the enclosure, against the rear wall, facing south
+  // (rotY = 0 → the builder's +Z door normal points into the enclosure).
+  const vault = p(BANK_OBJECT_IDS.vaultDoor);
+  assert.ok(vault.position.z < BANK_SITE.z - 4, 'vault must sit against the rear wall');
+  assert.ok(vault.rotation.y === 0, 'vault door must face the enclosure (+Z), rotated 0');
+  assert.ok(vault.position.x > enclosure.xMin && vault.position.x < enclosure.xMax, 'vault inside the enclosure x-range');
+  assert.ok(vault.position.z < enclosure.zMax, 'vault inside the enclosure');
+
+  // Safe-deposit wall on the enclosure's west partition, doors facing east
+  // (rotY = +90), backing bottom resting exactly on the floor.
+  const panel = p(BANK_OBJECT_IDS.safeDepositWall);
+  assert.equal(panel.rotation.y, 90, 'deposit panel must face east into the enclosure');
+  assert.ok(Math.abs(panel.position.x - (BANK_SITE.x + P.vaultWestX + 0.105)) < 0.02, 'panel backing set into the enclosure west wall face');
+  assert.ok(Math.abs(panel.position.y + 0.35 - BANK_LAYOUT.floorTop) < 1e-9, 'panel backing bottom must rest exactly on the floor');
+  assert.ok(panel.position.z < enclosure.zMax && panel.position.z > BANK_SITE.z - 4.3, 'panel inside the enclosure along the west wall');
+
+  // Floor safe inside the enclosure, clear of the vault door and the gate line.
+  const floorSafe = p(BANK_OBJECT_IDS.floorSafe);
+  assert.ok(floorSafe.position.x > enclosure.xMin && floorSafe.position.x < enclosure.xMax, 'floor safe inside the enclosure');
+  assert.ok(floorSafe.position.z < enclosure.zMax, 'floor safe inside the enclosure');
+
+  // Rug centered on the entrance path; clock on the west wall of the lobby.
   const rug = p(BANK_OBJECT_IDS.floorRug);
   assert.equal(rug.position.x, BANK_SITE.x, 'rug centered on the doorway');
   assert.ok(rug.position.z > BANK_SITE.z + 1.5, 'rug in the entrance lobby');
   const clock = p(BANK_OBJECT_IDS.grandfatherClock);
   assert.ok(clock.position.x < BANK_SITE.x - 5, 'clock against the west wall');
-  for (const id of [BANK_OBJECT_IDS.lampWestLobby, BANK_OBJECT_IDS.lampEastLobby, BANK_OBJECT_IDS.lampEastSecure]) {
-    assert.ok(Math.abs(p(id).position.x - BANK_SITE.x) > 5, `lamp ${id} must be wall-mounted`);
+  assert.ok(clock.position.z > BANK_SITE.z, 'clock in the lobby half, clear of the office');
+
+  // Lamps: two wall lamps in the lobby, the third inside the vault enclosure
+  // on its south wall (arm swung north into the room, rotY = 90).
+  for (const id of [BANK_OBJECT_IDS.lampWestLobby, BANK_OBJECT_IDS.lampEastLobby]) {
+    assert.ok(Math.abs(p(id).position.x - BANK_SITE.x) > 5, `lamp ${id} must be wall-mounted in the lobby`);
   }
+  const vaultLamp = p(BANK_OBJECT_IDS.lampVault);
+  assert.equal(vaultLamp.rotation.y, 90, 'enclosure lamp arm must swing north into the enclosure');
+  assert.ok(Math.abs(vaultLamp.position.z - (BANK_SITE.z + P.vaultSouthZ - 0.135)) < 0.02, 'enclosure lamp mounted on the enclosure south wall');
+  assert.ok(vaultLamp.position.y > BANK_LAYOUT.floorTop + 1.5, 'enclosure lamp mounted at wall height');
+  const officeLamp = p(BANK_OBJECT_IDS.lampOffice);
+  assert.equal(officeLamp.rotation.y, 90, 'office lamp arm must swing north into the office');
+  assert.ok(Math.abs(officeLamp.position.x - (BANK_SITE.x - 3.0)) < 0.01, 'office lamp above the desk area');
+  // origin sits so the bracket block's north edge is 5 mm off the wall face
+  assert.ok(Math.abs(officeLamp.position.z - (BANK_SITE.z + P.officeSouthZ + P.thickness / 2 + 0.035)) < 0.02, 'office lamp mounted on the office south wall north face');
 
   // Everything interior stays inside the walls (the threshold slab lives in
   // the wall band by design, like the walls themselves).
@@ -528,6 +632,70 @@ test('BANK LAYOUT: interior reads like a bank — vault sight-line, cage on coun
       x > inner.xMin - 0.05 && x < inner.xMax + 0.05 && z > inner.zMin - 0.05 && z < inner.zMax + 0.1,
       `${def.metadata.name} placed outside the interior walls (x=${x.toFixed(2)}, z=${z.toFixed(2)})`,
     );
+  }
+});
+
+/* ---- Vault orientation (the 90° root fix) ---------------------------------- */
+
+test('BANK VAULT ORIENTATION: the door disc lies in the frame plane (XY), facing +Z', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'bank-vault-door' }))) as THREE.Group;
+  const slab = obj.getObjectByName('bank-vault-door-slab') as THREE.Mesh;
+  assert.ok(slab, 'vault must expose its named door slab');
+  const bb = box3of(slab);
+  const size = new THREE.Vector3(); bb.getSize(size);
+  // CylinderGeometry(r, r, 0.14) rotated about X: thickness 0.14 along Z,
+  // diameter ~1.64 along X and Y. The old bug (rotation about Z) produced a
+  // slab 0.14 wide along X — edge-on inside its own frame rings.
+  assert.ok(Math.abs(size.z - 0.14) < 0.01, `slab thickness must run along Z (got ${size.z.toFixed(3)})`);
+  assert.ok(Math.abs(size.x - 1.64) < 0.02, `slab diameter must span X (got ${size.x.toFixed(3)})`);
+  assert.ok(Math.abs(size.y - 1.64) < 0.02, `slab diameter must span Y (got ${size.y.toFixed(3)})`);
+  // The disc centers on the frame rings (ring centers at x=0, y=opening/2+0.06).
+  const centerY = 1.6 / 2 + 0.06; // opening 1.6
+  assert.ok(Math.abs((bb.min.z + bb.max.z) / 2 - 0.02) < 0.01, 'slab plane sits just proud of the wall face');
+  assert.ok(Math.abs((bb.min.y + bb.max.y) / 2 - centerY) < 0.01, 'slab centered at ring height');
+  assert.ok(Math.abs((bb.min.x + bb.max.x) / 2) < 0.01, 'slab centered horizontally in the frame');
+  // The plaque faces +Z too: a flat circle (no ±90° pre-rotation).
+  const plaque = obj.getObjectByName('bank-vault-door-plaque') as THREE.Mesh;
+  assert.ok(plaque, 'vault must expose its plaque');
+  assert.ok(plaque.rotation.y === 0 && plaque.rotation.x === 0, 'plaque must not carry a compensating rotation');
+  // Rivet ring lives in the disc's XY plane (z fixed, x+y varying).
+  const rivets = (obj.getObjectByName('bank-vault-door-hinge') as THREE.Group)!.children
+    .filter((c) => (c as THREE.Mesh).isMesh && (c as THREE.Mesh).geometry.type === 'SphereGeometry');
+  assert.ok(rivets.length >= 20, 'rivet ring present');
+  const zSpread = Math.max(...rivets.map((r) => r.position.z)) - Math.min(...rivets.map((r) => r.position.z));
+  const xSpread = Math.max(...rivets.map((r) => r.position.x)) - Math.min(...rivets.map((r) => r.position.x));
+  assert.ok(zSpread < 0.01 && xSpread > 1.2, `rivets must ring the disc face (z spread ${zSpread.toFixed(3)}, x spread ${xSpread.toFixed(3)})`);
+});
+
+/* ---- Secure gate ------------------------------------------------------------ */
+
+test('BANK SECURE GATE: double leaf held open, doorway kept walkable', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'secure-gate' }))) as THREE.Group;
+  for (const name of ['secure-gate-jamb-w', 'secure-gate-jamb-e', 'secure-gate-header', 'secure-gate-leaf-w', 'secure-gate-leaf-e']) {
+    assert.ok(obj.getObjectByName(name), `gate must contain "${name}"`);
+  }
+  const L = obj.getObjectByName('secure-gate-leaf-w') as THREE.Group;
+  const R = obj.getObjectByName('secure-gate-leaf-e') as THREE.Group;
+  // Both leaves swing OPEN toward +Z (out of the enclosure): their world
+  // bounding boxes reach positive z, and neither leaf spans the opening
+  // center at z = 0 (the walkable line).
+  const lw = box3of(L);
+  const rw = box3of(R);
+  assert.ok(lw.max.z > 0.3 && rw.max.z > 0.3, `leaves must swing toward +Z (w ${lw.max.z.toFixed(2)}, e ${rw.max.z.toFixed(2)})`);
+  // The mirrored leaf is a rotation (π+80°), never a negative scale.
+  for (const leaf of [L, R]) {
+    assert.ok(leaf.scale.x > 0 && leaf.scale.y > 0 && leaf.scale.z > 0, 'leaves mirror by rotation, not negative scale');
+  }
+  // Vertical bars exist on both leaves (deep: each hinge holds a leaf group).
+  for (const leaf of [L, R]) {
+    let bars = 0;
+    leaf.traverse((c) => {
+      const m = c as THREE.Mesh;
+      if (m.isMesh && m.geometry.type === 'CylinderGeometry') bars += 1;
+    });
+    assert.ok(bars >= 5, 'each leaf carries its barred grille');
   }
 });
 

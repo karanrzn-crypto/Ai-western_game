@@ -334,13 +334,19 @@ export function buildBankShell(dims: ShellDims): THREE.Group {
 /* Masonry factories (unit box × transform scale → collider == visual)        */
 /* ========================================================================== */
 
-/** One masonry wall segment. Brick texture repeat comes from metadata. */
+/** One masonry wall segment. Brick texture repeat comes from metadata;
+ *  `plaster: true` swaps the aged brick for cream plaster — the interior
+ *  partitions read as finished rooms (spec §C interior palette), not facades. */
 export class BankWallFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
     const M = createBankMaterials();
     const meta = definition.metadata as Record<string, unknown>;
     const repeat = Array.isArray(meta.brickRepeat) ? (meta.brickRepeat as number[]) : [8, 8];
-    applyMap(M.brick, brickTexture(repeat[0] ?? 8, repeat[1] ?? 8));
+    if (meta.plaster === true) {
+      applyMap(M.stoneCream, stoneTexture(repeat[0] ?? 4, repeat[1] ?? 4));
+    } else {
+      applyMap(M.brick, brickTexture(repeat[0] ?? 8, repeat[1] ?? 8));
+    }
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), M.brick);
     mesh.castShadow = true;
     mesh.receiveShadow = true;

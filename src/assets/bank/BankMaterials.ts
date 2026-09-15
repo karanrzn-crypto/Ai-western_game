@@ -67,7 +67,7 @@ export interface BankMaterials {
 
 const HAS_DOM = typeof document !== 'undefined';
 
-function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+export function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   if (!HAS_DOM) return null;
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -77,7 +77,7 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Can
   return { canvas, ctx };
 }
 
-function toTexture(canvas: HTMLCanvasElement, repeatX: number, repeatY: number): THREE.CanvasTexture {
+export function toTexture(canvas: HTMLCanvasElement, repeatX: number, repeatY: number): THREE.CanvasTexture {
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -88,8 +88,8 @@ function toTexture(canvas: HTMLCanvasElement, repeatX: number, repeatY: number):
   return tex;
 }
 
-/** Deterministic tiny PRNG so every builder call ages the wall identically. */
-function rand(seed: { v: number }): number {
+/** Deterministic tiny PRNG so every builder call ages surfaces identically. */
+export function rand(seed: { v: number }): number {
   seed.v = (seed.v * 9301 + 49297) % 233280;
   return seed.v / 233280;
 }
@@ -199,30 +199,6 @@ function flagstoneTexture(repeatX: number, repeatY: number, size = 256): THREE.C
   return toTexture(canvas, repeatX, repeatY);
 }
 
-/** Walnut door leaves: vertical grain + panel-ready dark base. */
-function walnutTexture(size = 256): THREE.CanvasTexture | null {
-  const c = makeCanvas(size, size);
-  if (!c) return null;
-  const { canvas, ctx } = c;
-  ctx.fillStyle = '#3f2a18';
-  ctx.fillRect(0, 0, size, size);
-  const seed = { v: 61 };
-  for (let i = 0; i < 30; i += 1) {
-    const x = (i / 30) * size + (rand(seed) - 0.5) * 5;
-    ctx.strokeStyle = rand(seed) > 0.5 ? '#2c1c0e' : '#54382a';
-    ctx.globalAlpha = 0.14 + rand(seed) * 0.2;
-    ctx.lineWidth = 1 + rand(seed) * 2;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    for (let y = 0; y <= size; y += 16) {
-      ctx.lineTo(x + Math.sin(y * 0.04 + i) * 3 + (rand(seed) - 0.5) * 3, y);
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-  return toTexture(canvas, 1, 1);
-}
-
 // ---------------------------------------------------------------------------
 // Material set (per produced object — disposal contract)
 // ---------------------------------------------------------------------------
@@ -259,4 +235,10 @@ export function createBankMaterials(): BankMaterials {
   };
 }
 
-export { brickTexture, stoneTexture, flagstoneTexture, walnutTexture };
+/**
+ * Shared bank canvas kit — the ONE copy used by BankMaterials (exterior
+ * textures) and BankInteriorAssetFactory (interior textures) alike.
+ * Headless-safe: without a DOM, makeCanvas returns null and every generator
+ * degrades to a flat material color.
+ */
+export { brickTexture, stoneTexture, flagstoneTexture };

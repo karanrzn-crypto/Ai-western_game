@@ -39,8 +39,6 @@ import {
 
 /** Geometric helpers ------------------------------------------------------- */
 
-const DEG = Math.PI / 180;
-
 interface MeshOptions {
   /** Face +Z (front) semantics stay with the builder; default no rotation. */
   rx?: number;
@@ -825,6 +823,3 @@ export function buildWantedPoster(): THREE.Group {
 
   return g;
 }
-
-/** Legacy-name re-exports so older call sites keep a stable vocabulary. */
-export const DEG_PER_RAD = DEG;

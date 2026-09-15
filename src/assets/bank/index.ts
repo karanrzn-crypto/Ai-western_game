@@ -7,9 +7,9 @@
  * the user-supplied visual asset library, used verbatim (vault door, teller
  * counter/cage, banker desk/chair, safe-deposit wall, floor safe, grandfather
  * clock, gas wall lamp, marble column, money bag, coin stack, floor rug,
- * bank sign). The EXTERIOR (classical shell + masonry unit boxes) lives in
- * BankExterior.ts. registerAllBankFactories() registers BOTH groups in one
- * call — the playable map calls it once during boot.
+ * bank sign, secure gate). The EXTERIOR (classical shell + masonry unit boxes)
+ * lives in BankExterior.ts. registerAllBankFactories() registers BOTH groups
+ * in one call — the playable map calls it once during boot.
  * -----------------------------------------------------------------------------
  */
 
@@ -45,7 +45,7 @@ export {
   buildCoinStack,
   buildFloorRug,
   buildBankSign,
-  buildBankInteriorScene,
+  buildSecureGate,
   BANK_INTERIOR_ASSET_TYPES,
   registerBankFactories,
 } from './BankInteriorAssetFactory.js';

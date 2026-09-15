@@ -10,12 +10,17 @@
  *
  * Factory rule: create() builds the Object3D only. AssetRegistry mirrors UUID
  * and name; ThreeRendererAdapter applies the ObjectDefinition transform.
+ *
+ * Placement data lives ONLY in BankLayout.ts — the builders below never
+ * compose a scene (the old buildBankInteriorScene demo layout was removed:
+ * it duplicated placement logic and nothing consumed it).
  */
 
 import * as THREE from 'three';
 import type { ObjectDefinition } from '../../core/types.js';
 import type { IAssetFactory } from '../IAssetFactory.js';
 import type { AssetRegistry } from '../AssetRegistry.js';
+import { makeCanvas, toTexture, rand } from './BankMaterials.js';
 
 const WORLD_SCALE = 1;
 
@@ -41,33 +46,7 @@ const GLASS_WARM = '#ffd9a0';
 // Procedural canvas texture generators (with headless-safe fallback)
 // ---------------------------------------------------------------------------
 
-const HAS_DOM = typeof document !== 'undefined';
-
-function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
-  if (!HAS_DOM) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  return { canvas, ctx };
-}
-
-function toTexture(canvas: HTMLCanvasElement, repeatX = 1, repeatY = 1): THREE.CanvasTexture {
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(repeatX, repeatY);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function rand(seed: { v: number }) {
-  // tiny deterministic PRNG so repeated calls of a builder look consistent
-  seed.v = (seed.v * 9301 + 49297) % 233280;
-  return seed.v / 233280;
-}
+// makeCanvas / toTexture / rand are shared with BankMaterials (single copy).
 
 function woodTexture(base = WOOD_MED, grain = WOOD_DARK, size = 256): THREE.CanvasTexture | null {
   const c = makeCanvas(size, size);
@@ -170,7 +149,6 @@ function leatherTexture(base = LEATHER_MAROON, size = 256): THREE.CanvasTexture 
     }
     ctx.stroke();
   }
-  const seed = { v: 91 };
   for (let row = 0; row <= 6; row++) {
     for (let col = 0; col <= 6; col++) {
       const x = col * step + (row % 2 === 0 ? 0 : step / 2);
@@ -184,7 +162,6 @@ function leatherTexture(base = LEATHER_MAROON, size = 256): THREE.CanvasTexture 
       ctx.fill();
     }
   }
-  void seed;
   return toTexture(canvas, 1, 1);
 }
 
@@ -353,69 +330,75 @@ const MAT = {
 // Builders
 // ---------------------------------------------------------------------------
 
-/** Big riveted circular vault door on a hinge group, set into a stepped iron frame. */
+/**
+ * Big riveted circular vault door on a hinge group, set into a stepped iron frame.
+ *
+ * Local frame contract (the ROOT-CAUSE fix for the historic 90° bug):
+ *   - origin  : floor point at the CENTER of the vault opening;
+ *   - +Z      : the direction the door FACES (out of the vault, into the room);
+ *   - the door disc lies in the XY plane — the SAME plane as the frame rings —
+ *     hinged at its −X edge, swinging about the hinge group's local +Y axis.
+ * Every child is authored directly in this frame and carries no compensating
+ * rotation for a parent that never rotates. The old builder rotated the slab
+ * about Z (CylinderGeometry axis Y → X), which turned the disc EDGE-ON into
+ * its own frame opening and buried the inset/plaque/rivets sideways inside it.
+ */
 export function buildBankVaultDoor(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'bank-vault-door';
 
   const opening = 1.6 * WORLD_SCALE;
+  const centerY = opening / 2 + 0.06; // disc/ring center height
+  const doorZ = 0.02;                 // closed door plane (proud of the wall)
 
-  // stepped wall frame around the opening (3 concentric rings for a "thick vault wall" read)
+  // stepped wall frame around the opening (3 concentric rings for a "thick
+  // vault wall" read) — tori stand in XY planes, facing ±Z like the door.
   for (let i = 0; i < 3; i++) {
     const r = opening / 2 + 0.06 + i * 0.05;
-    const frameRing = mesh(
-      new THREE.TorusGeometry(r, 0.025, 8, 32),
-      MAT.iron(),
-      0,
-      opening / 2 + 0.06,
-      -0.05 - i * 0.05
-    );
+    const frameRing = mesh(new THREE.TorusGeometry(r, 0.025, 8, 32), MAT.iron(), 0, centerY, -0.05 - i * 0.05);
     g.add(frameRing);
   }
 
-  // hinge group holding the door slab so it can be rotated open by the agent
+  const doorRadius = opening / 2 + 0.02;
+
+  // hinge group holding the door slab so it can be rotated open by the agent;
+  // hinged exactly at the disc edge (−doorRadius) so the closed disc centers
+  // on the frame.
   const hinge = new THREE.Group();
   hinge.name = 'bank-vault-door-hinge';
-  hinge.position.set(-opening / 2 - 0.05, opening / 2 + 0.06, 0.02);
+  hinge.position.set(-doorRadius, centerY, doorZ);
   g.add(hinge);
 
-  const doorRadius = opening / 2 + 0.02;
-  const doorSlab = mesh(
-    new THREE.CylinderGeometry(doorRadius, doorRadius, 0.14, 32),
-    MAT.iron(),
-    doorRadius,
-    0,
-    0
-  );
-  doorSlab.rotation.z = Math.PI / 2;
+  // door slab: CylinderGeometry axis is Y; rotating about X lays the disc into
+  // the XY plane (thickness along Z). The old code rotated about Z, which
+  // pointed the axis along X — the 90° interpenetration bug.
+  const doorSlab = mesh(new THREE.CylinderGeometry(doorRadius, doorRadius, 0.14, 32), MAT.iron(), doorRadius, 0, 0);
+  doorSlab.rotation.x = Math.PI / 2;
+  doorSlab.name = 'bank-vault-door-slab';
   hinge.add(doorSlab);
 
-  // decorative inset ring + brass plaque on the door face
+  // decorative inset ring + brass plaque on the door face (+Z side);
+  // both default to facing ±Z, so NO rotation is needed (the old code
+  // pre-rotated them ±90° to match the wrongly-rotated slab).
   const inset = mesh(new THREE.TorusGeometry(doorRadius * 0.7, 0.02, 8, 32), MAT.brassDark(), doorRadius, 0, 0.08);
-  inset.rotation.y = Math.PI / 2;
+  inset.name = 'bank-vault-door-inset';
   hinge.add(inset);
 
   const plaqueTex = signTexture({ text: 'CENTRAL', sub: 'BANK & TRUST', bg: '#171717', fg: '#c9a75a', w: 400, h: 220, border: false });
-  const plaque = mesh(
-    new THREE.CircleGeometry(doorRadius * 0.45, 32),
-    stdMat('#171717', plaqueTex, { roughness: 0.4, metalness: 0.4 }),
-    doorRadius,
-    0,
-    0.081
-  );
-  plaque.rotation.y = Math.PI / 2;
+  const plaque = mesh(new THREE.CircleGeometry(doorRadius * 0.45, 32), stdMat('#171717', plaqueTex, { roughness: 0.4, metalness: 0.4 }), doorRadius, 0, 0.081);
+  plaque.name = 'bank-vault-door-plaque';
   hinge.add(plaque);
 
-  // ring of rivets around the door edge
+  // ring of rivets around the door edge — a circle in the door's own XY plane
   const rivetCount = 20;
   for (let i = 0; i < rivetCount; i++) {
     const a = (i / rivetCount) * Math.PI * 2;
     const rivet = mesh(
       new THREE.SphereGeometry(0.025, 8, 8),
       MAT.iron(),
-      doorRadius,
+      doorRadius + Math.cos(a) * doorRadius * 0.88,
       Math.sin(a) * doorRadius * 0.88,
-      Math.cos(a) * doorRadius * 0.88 + 0.075
+      0.075
     );
     hinge.add(rivet);
   }
@@ -961,89 +944,73 @@ export function buildBankSign(): THREE.Group {
   return g;
 }
 
-// ---------------------------------------------------------------------------
-// One-call convenience: a full furnished bank lobby corner
-// ---------------------------------------------------------------------------
+/**
+ * Barred iron security gate for the vault enclosure doorway (double leaf,
+ * held OPEN western-saloon style so the secure entrance stays walkable).
+ *
+ * Local frame contract:
+ *   - origin : floor point at the CENTER of the doorway;
+ *   - +Z     : the side the leaves swing TOWARD (out of the enclosure);
+ *   - the closed leaf plane is XY, spanning the opening width.
+ * Leaves are authored extending +X from a hinge at −width/2; the west leaf
+ * swings −80°, the east leaf is the SAME geometry under a π+80° group
+ * rotation (mirroring by rotation, never by negative scale).
+ * Non-collider by design: the opening itself is the walkable secure entrance;
+ * the masonry segments beside it carry the colliders.
+ */
+export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD_SCALE): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'secure-gate';
 
-export function buildBankInteriorScene(): THREE.Group {
-  const scene = new THREE.Group();
-  scene.name = 'bank-interior-scene';
-
-  const rug = buildFloorRug(3, 2);
-  rug.position.set(0, 0, 1.2);
-  scene.add(rug);
-
-  const counter = buildTellerCounter(3.2);
-  counter.position.set(0, 0, -2);
-  scene.add(counter);
-
-  const cage = buildTellerCage(3.0);
-  cage.position.set(0, 1.17, -2);
-  scene.add(cage);
-
-  const vault = buildBankVaultDoor();
-  vault.position.set(-2.6, 0, -3.2);
-  vault.rotation.y = Math.PI / 2;
-  scene.add(vault);
-
-  const safeWall = buildSafeDepositWall(6, 4);
-  safeWall.position.set(2.8, 0, -3.3);
-  safeWall.rotation.y = -Math.PI / 2;
-  scene.add(safeWall);
-
-  const floorSafe = buildFloorSafe();
-  floorSafe.position.set(2.2, 0, -2.2);
-  floorSafe.rotation.y = -0.4;
-  scene.add(floorSafe);
-
-  const desk = buildBankersDesk();
-  desk.position.set(1.4, 0, 1.5);
-  desk.rotation.y = Math.PI * 0.15;
-  scene.add(desk);
-
-  const chair = buildBankersChair();
-  chair.position.set(1.4, 0, 2.0);
-  chair.rotation.y = Math.PI * 1.1;
-  scene.add(chair);
-
-  const clock = buildGrandfatherClock();
-  clock.position.set(-3, 0, 0.5);
-  clock.rotation.y = Math.PI / 2;
-  scene.add(clock);
-
-  [-1.5, 1.5].forEach((x) => {
-    const column = buildMarbleColumn(2.6);
-    column.position.set(x, 0, -0.5);
-    scene.add(column);
+  // static frame: jambs inset 2 cm from the opening edges + header above
+  const jambHalf = 0.035;
+  [-1, 1].forEach((side) => {
+    const jamb = mesh(new THREE.BoxGeometry(jambHalf * 2, height, 0.07), MAT.iron(), side * (width / 2 - 0.02), height / 2, 0);
+    jamb.name = `secure-gate-jamb-${side < 0 ? 'w' : 'e'}`;
+    g.add(jamb);
   });
+  const header = mesh(new THREE.BoxGeometry(width - 0.04 + jambHalf * 2, 0.07, 0.07), MAT.iron(), 0, height + jambHalf, 0);
+  header.name = 'secure-gate-header';
+  g.add(header);
 
-  const lamp1 = buildGasWallLamp();
-  lamp1.position.set(-3.1, 1.6, -1.5);
-  lamp1.rotation.y = Math.PI / 2;
-  scene.add(lamp1);
-  const lamp2 = buildGasWallLamp();
-  lamp2.position.set(3.1, 1.6, -1.5);
-  lamp2.rotation.y = -Math.PI / 2;
-  scene.add(lamp2);
+  // one leaf, authored CLOSED: extends +X from its hinge post
+  const leafLen = width / 2 - 0.03;
+  const leafH = height - 0.08;
+  const buildLeaf = (): THREE.Group => {
+    const leaf = new THREE.Group();
+    const topRail = mesh(new THREE.BoxGeometry(leafLen, 0.05, 0.03), MAT.iron(), leafLen / 2, leafH - 0.05, 0);
+    leaf.add(topRail);
+    const midRail = mesh(new THREE.BoxGeometry(leafLen, 0.04, 0.03), MAT.iron(), leafLen / 2, leafH * 0.55, 0);
+    leaf.add(midRail);
+    const bottomRail = mesh(new THREE.BoxGeometry(leafLen, 0.06, 0.03), MAT.iron(), leafLen / 2, 0.06, 0);
+    leaf.add(bottomRail);
+    const bars = 5;
+    for (let i = 0; i < bars; i++) {
+      const x = 0.03 + (i / (bars - 1)) * (leafLen - 0.06);
+      const bar = mesh(new THREE.CylinderGeometry(0.012, 0.012, leafH - 0.08, 6), MAT.iron(), x, leafH / 2, 0);
+      leaf.add(bar);
+    }
+    return leaf;
+  };
 
-  const bag1 = buildMoneyBag();
-  bag1.position.set(0.7, 1.2, -2.15);
-  scene.add(bag1);
+  // west leaf: hinged at −width/2, swung 80° open toward +Z
+  const westHinge = new THREE.Group();
+  westHinge.name = 'secure-gate-leaf-w';
+  westHinge.position.set(-width / 2, 0, 0);
+  westHinge.rotation.y = -1.396; // −80° open toward +Z
+  westHinge.add(buildLeaf());
+  g.add(westHinge);
 
-  const coins1 = buildCoinStack();
-  coins1.position.set(0.5, 1.2, -2.2);
-  scene.add(coins1);
-  const coins2 = buildCoinStack();
-  coins2.position.set(-0.5, 1.2, -2.2);
-  scene.add(coins2);
+  // east leaf: identical geometry, mirrored by a π+80° group rotation
+  const eastHinge = new THREE.Group();
+  eastHinge.name = 'secure-gate-leaf-e';
+  eastHinge.position.set(width / 2, 0, 0);
+  eastHinge.rotation.y = Math.PI + 1.396; // mirrored closed (π) + 80° open
+  eastHinge.add(buildLeaf());
+  g.add(eastHinge);
 
-  const sign = buildBankSign();
-  sign.position.set(0, 2.3, 3.9);
-  scene.add(sign);
-
-  return scene;
+  return g;
 }
-
 
 // ---------------------------------------------------------------------------
 // CURRENT Ai-western_game IAssetFactory integration
@@ -1073,7 +1040,7 @@ export const BANK_INTERIOR_ASSET_TYPES = Object.freeze([
   'coin-stack',
   'floor-rug',
   'bank-sign',
-  'bank-interior-scene',
+  'secure-gate',
 ] as const);
 
 export type BankInteriorAssetType = (typeof BANK_INTERIOR_ASSET_TYPES)[number];
@@ -1093,5 +1060,5 @@ export function registerBankFactories(registry: AssetRegistry): void {
   registry.register('coin-stack', new BankAssetFactory(buildCoinStack), 'Coin Stack');
   registry.register('floor-rug', new BankAssetFactory(() => buildFloorRug()), 'Floor Rug');
   registry.register('bank-sign', new BankAssetFactory(buildBankSign), 'Bank Sign');
-  registry.register('bank-interior-scene', new BankAssetFactory(buildBankInteriorScene), 'Bank Interior Scene');
+  registry.register('secure-gate', new BankAssetFactory(() => buildSecureGate()), 'Secure Gate');
 }

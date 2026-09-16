@@ -71,8 +71,24 @@ export function rand(seed: { v: number }): number {
   return seed.v / 233280;
 }
 
+/**
+ * Memoize a texture generator. Materials stay FRESH per object (the
+ * renderer's dispose path owns material lifetimes), but the expensive
+ * <canvas> texture generation runs exactly ONCE per process — the sheriff
+ * block creates ~40 objects and every one of them used to re-paint the
+ * full texture set at boot. Sharing CanvasTextures across materials is
+ * dispose-safe: material.dispose() never disposes its textures.
+ */
+function memoTex(fn: () => THREE.CanvasTexture | null): () => THREE.CanvasTexture | null {
+  let cache: THREE.CanvasTexture | null | undefined;
+  return () => {
+    if (cache === undefined) cache = fn();
+    return cache;
+  };
+}
+
 /** Horizontal clapboard siding: stacked boards with shadow lines and grain. */
-function clapboardTexture(): THREE.CanvasTexture | null {
+function genClapboard(): THREE.CanvasTexture | null {
   const c = makeCanvas(256, 256);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -107,7 +123,7 @@ function clapboardTexture(): THREE.CanvasTexture | null {
 }
 
 /** Wide interior floor planks with nail heads. */
-function plankTexture(): THREE.CanvasTexture | null {
+function genPlank(): THREE.CanvasTexture | null {
   const c = makeCanvas(256, 256);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -146,7 +162,7 @@ function plankTexture(): THREE.CanvasTexture | null {
 }
 
 /** Wood shingle roof: staggered courses with heavy shadow lines. */
-function shingleTexture(): THREE.CanvasTexture | null {
+function genShingle(): THREE.CanvasTexture | null {
   const c = makeCanvas(256, 256);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -170,7 +186,7 @@ function shingleTexture(): THREE.CanvasTexture | null {
 }
 
 /** Rough stone foundation blocks with mortar joints. */
-function stoneTexture(): THREE.CanvasTexture | null {
+function genStone(): THREE.CanvasTexture | null {
   const c = makeCanvas(256, 256);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -193,7 +209,7 @@ function stoneTexture(): THREE.CanvasTexture | null {
 }
 
 /** Rusted iron for bars, stovepipe caps, window cages. */
-function ironTexture(): THREE.CanvasTexture | null {
+function genIron(): THREE.CanvasTexture | null {
   const c = makeCanvas(128, 128);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -215,7 +231,7 @@ function ironTexture(): THREE.CanvasTexture | null {
 }
 
 /** Aged paper (sign plaques). */
-function paperTexture(): THREE.CanvasTexture | null {
+function genPaper(): THREE.CanvasTexture | null {
   const c = makeCanvas(128, 128);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -270,7 +286,17 @@ export interface SheriffMaterials {
   glassWarm: THREE.MeshStandardMaterial;
 }
 
+
+// Memoized texture accessors (generation runs once per process).
+const clapboardTexture = memoTex(genClapboard);
+const plankTexture = memoTex(genPlank);
+const shingleTexture = memoTex(genShingle);
+const stoneTexture = memoTex(genStone);
+const ironTexture = memoTex(genIron);
+const paperTexture = memoTex(genPaper);
+
 /** Build a fresh material set (call once per builder invocation). */
+// (textures are shared; the MATERIALS themselves stay per-object)
 export function createSheriffMaterials(): SheriffMaterials {
   return {
     clapboard: stdMat(CLAPBOARD_BASE, clapboardTexture()),

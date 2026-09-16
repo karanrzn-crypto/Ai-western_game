@@ -109,6 +109,13 @@ function sheriffUuid(suffix: string): string {
   return `${SHERIFF_UUID_BASE}${suffix}`;
 }
 
+/** Extra canonical uuids for SPLIT wall segments (windows turn each windowed
+ *  wall into several masonry boxes; the wall's canonical id stays on its first
+ *  segment, every further segment draws from this pool — suffixes 2a…41). */
+export const SHERIFF_WALL_SEGMENT_UUIDS: readonly string[] = Object.freeze(
+  Array.from({ length: 24 }, (_, i) => sheriffUuid((0x2a + i).toString(16).padStart(2, '0'))),
+);
+
 /** Object ids inside the sheriff block — tests key off these names. */
 export const SHERIFF_OBJECT_IDS = Object.freeze({
   building: sheriffUuid('01'),
@@ -176,6 +183,7 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
   const pt = L.partitions;
 
   const defs: ObjectDefinition[] = [];
+  let extraSegCursor = 0; // split-wall segment uuid pool cursor
   const push = (
     uuid: string,
     assetType: string,
@@ -221,22 +229,62 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
   }, { collider: true, plankRepeat: [6, 2] });
 
   // --- Walls (each a plain box of exactly its scale → collider == visual) ----
-  // Rear (north) wall spans the full width; side walls span BETWEEN the
-  // rear/front walls; the front (south) wall splits around the doorway —
-  // the gap IS the public entrance. Centers sit ON the wall center lines
-  // (±(span−t)/2): footprint edges are the OUTER faces.
+  // WINDOWS ARE REAL OPENINGS: every windowed wall is SPLIT into masonry
+  // segments around its hole(s) — between-segments run full height, each hole
+  // gets a below + above segment. The hole IS the window; the shell's window
+  // assembly lines it (frame + glass INSIDE the wall depth). The collider
+  // tiles exactly like the visual (the unit-box scale IS the AABB).
   const wc = (span: number): number => (span - t) / 2; // wall center line
-  wall(SHERIFF_OBJECT_IDS.wallRear, 'کلانتری — دیوار شمالی', 0, L.wallHeight / 2, -wc(L.depth), L.width, L.wallHeight, t, [10, 3.2]);
-  wall(SHERIFF_OBJECT_IDS.wallWest, 'کلانتری — دیوار غربی', -wc(L.width), L.wallHeight / 2, 0, t, L.wallHeight, L.depth - 2 * t, [6.8, 3.2]);
-  wall(SHERIFF_OBJECT_IDS.wallEast, 'کلانتری — دیوار شرقی', wc(L.width), L.wallHeight / 2, 0, t, L.wallHeight, L.depth - 2 * t, [6.8, 3.2]);
+  interface Hole { min: number; max: number; yMin: number; yMax: number }
+  const holesByWall: Record<string, Hole[]> = {};
+  for (const win of L.windows) {
+    (holesByWall[win.wall] ??= []).push({
+      min: win.center - win.width / 2,
+      max: win.center + win.width / 2,
+      yMin: win.sill,
+      yMax: win.sill + win.height,
+    });
+  }
+  for (const holes of Object.values(holesByWall)) holes.sort((a, b) => a.min - b.min);
+  /** Emit a windowed wall as masonry segments around its holes.
+   *  axis 'x': the wall runs along x (front/rear walls, fixed z center);
+   *  axis 'z': the wall runs along z (side walls, fixed x center). */
+  const windowedWall = (
+    uuid: string, name: string, axis: 'x' | 'z',
+    aMin: number, aMax: number, center: number,
+    holes: Hole[],
+  ): void => {
+    let segIdx = 0;
+    const seg = (a1: number, a2: number, y1: number, y2: number, label: string): void => {
+      const w = a2 - a1;
+      const h = y2 - y1;
+      if (w < 0.02 || h < 0.02) return; // never emit slivers
+      const cx = axis === 'x' ? (a1 + a2) / 2 : center;
+      const cz = axis === 'x' ? center : (a1 + a2) / 2;
+      const sx = axis === 'x' ? w : t;
+      const sz = axis === 'x' ? t : w;
+      // The wall's canonical uuid stays on its FIRST segment; further
+      // segments draw deterministic extras from the reserved pool.
+      const id = segIdx === 0 ? uuid : SHERIFF_WALL_SEGMENT_UUIDS[extraSegCursor++];
+      segIdx += 1;
+      wall(id, `${name} — ${label}`, cx, (y1 + y2) / 2, cz, sx, h, sz, [Math.max(1, w / 1.05), Math.max(1, h / 1.05)]);
+    };
+    let cursor = aMin;
+    holes.forEach((hole, i) => {
+      seg(cursor, hole.min, 0, L.wallHeight, `بخش ${i + 1}`);
+      seg(hole.min, hole.max, 0, hole.yMin, 'زیر پنجره');
+      seg(hole.min, hole.max, hole.yMax, L.wallHeight, 'بالای پنجره');
+      cursor = hole.max;
+    });
+    seg(cursor, aMax, 0, L.wallHeight, `بخش ${holes.length + 1}`);
+  };
+  windowedWall(SHERIFF_OBJECT_IDS.wallRear, 'کلانتری — دیوار شمالی', 'x', -L.width / 2, L.width / 2, -wc(L.depth), holesByWall.north ?? []);
+  windowedWall(SHERIFF_OBJECT_IDS.wallWest, 'کلانتری — دیوار غربی', 'z', -(L.depth - 2 * t) / 2, (L.depth - 2 * t) / 2, -wc(L.width), holesByWall.west ?? []);
+  windowedWall(SHERIFF_OBJECT_IDS.wallEast, 'کلانتری — دیوار شرقی', 'z', -(L.depth - 2 * t) / 2, (L.depth - 2 * t) / 2, wc(L.width), holesByWall.east ?? []);
   const doorMidX = (L.frontDoor.xMin + L.frontDoor.xMax) / 2;
   const doorW = L.frontDoor.xMax - L.frontDoor.xMin;
-  wall(SHERIFF_OBJECT_IDS.wallFrontWest, 'کلانتری — نمای جنوبی (غرب در)',
-    (L.frontDoor.xMin - wc(L.width)) / 2, L.wallHeight / 2, wc(L.depth),
-    L.frontDoor.xMin - (-wc(L.width)), L.wallHeight, t, [2, 3.2]);
-  wall(SHERIFF_OBJECT_IDS.wallFrontEast, 'کلانتری — نمای جنوبی (شرق در)',
-    (L.frontDoor.xMax + wc(L.width)) / 2, L.wallHeight / 2, wc(L.depth),
-    wc(L.width) - L.frontDoor.xMax, L.wallHeight, t, [6.8, 3.2]);
+  windowedWall(SHERIFF_OBJECT_IDS.wallFrontWest, 'کلانتری — نمای جنوبی (غرب در)', 'x', -wc(L.width), L.frontDoor.xMin, wc(L.depth), holesByWall.south?.filter((h) => h.max <= L.frontDoor.xMin) ?? []);
+  windowedWall(SHERIFF_OBJECT_IDS.wallFrontEast, 'کلانتری — نمای جنوبی (شرق در)', 'x', L.frontDoor.xMax, wc(L.width), wc(L.depth), holesByWall.south?.filter((h) => h.min >= L.frontDoor.xMax) ?? []);
   wall(SHERIFF_OBJECT_IDS.wallFrontHeader, 'کلانتری — بالای در',
     doorMidX, floorY + L.frontDoor.height + (L.wallHeight - floorY - L.frontDoor.height) / 2, wc(L.depth),
     doorW, L.wallHeight - floorY - L.frontDoor.height, t, [1, 1]);
@@ -285,22 +333,26 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
         rotation: identity(),
         scale: { x: bt, y: barH, z: zMax - zMin },
       }, { collider: true, length: zMax - zMin, height: barH });
-    // The masonry iron header seats ON TOP of the cell-door frame header
-    // (frame top = floorY + 2.28) — back-to-back, never coplanar with it.
-    const header = (uuid: string, name: string, zMin: number, zMax: number) =>
+    // Masonry iron headers OVER the cell-door gaps — the user's Final
+    // transforms applied VERBATIM (world y center + size; z = the door gap
+    // ±0.61 = the door frame's outer width, flush with it). Header A spans
+    // y [2.25, 3.45] (wall top); header B y [2.29, 3.59] — its top 14 cm
+    // buries into the ceiling cavity, invisible from inside (no coplanar
+    // face with the ceiling slab's planes).
+    const header = (uuid: string, name: string, zc: number, yCenter: number, ySize: number) =>
       push(uuid, 'sheriff-wall', name, {
-        position: { x: originX + bx, y: floorY + 2.28 + (L.wallHeight - floorY - 2.28) / 2, z: originZ + (zMin + zMax) / 2 },
+        position: { x: originX + bx, y: yCenter, z: originZ + zc },
         rotation: identity(),
-        scale: { x: bt, y: L.wallHeight - floorY - 2.28, z: zMax - zMin },
+        scale: { x: bt, y: ySize, z: 1.22 },
       }, { collider: true, material: 'iron' });
     // Cell A (north cell, z ∈ [−3.55, −0.55]), door center z = −2.0.
     seg(SHERIFF_OBJECT_IDS.barANorth, 'کلانتری — میله‌های سلول ۱ (شمال)', pt.cellNorth.zMin, pt.cellDoorAN - frameHalf);
     seg(SHERIFF_OBJECT_IDS.barASouth, 'کلانتری — میله‌های سلول ۱ (جنوب)', pt.cellDoorAN + frameHalf, pt.cellNorth.zMax);
-    header(SHERIFF_OBJECT_IDS.barAHeader, 'کلانتری — بالای در سلول ۱', pt.cellDoorAN - frameHalf, pt.cellDoorAN + frameHalf);
+    header(SHERIFF_OBJECT_IDS.barAHeader, 'کلانتری — بالای در سلول ۱', pt.cellDoorAN, 2.85, 1.2);
     // Cell B (south cell, z ∈ [−0.35, 3.55]), door center z = 1.15.
     seg(SHERIFF_OBJECT_IDS.barBNorth, 'کلانتری — میله‌های سلول ۲ (شمال)', pt.cellSouth.zMin, pt.cellDoorBN - frameHalf);
     seg(SHERIFF_OBJECT_IDS.barBSouth, 'کلانتری — میله‌های سلول ۲ (جنوب)', pt.cellDoorBN + frameHalf, pt.cellSouth.zMax);
-    header(SHERIFF_OBJECT_IDS.barBHeader, 'کلانتری — بالای در سلول ۲', pt.cellDoorBN - frameHalf, pt.cellDoorBN + frameHalf);
+    header(SHERIFF_OBJECT_IDS.barBHeader, 'کلانتری — بالای در سلول ۲', pt.cellDoorBN, 2.94, 1.3);
   }
 
   // --- Interior plank ceiling (collider: also stops re-entry from above) ------
@@ -342,16 +394,20 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
       scale: { x: 1, y: 1, z: 1 },
     }, { collider: true });
   }
-  // Cots inside each cell, along the east wall (user asset), pillow north.
+  // Cots inside each cell — the user's Final transforms applied VERBATIM
+  // (world (17.022, 0.15, −2.645) / (16.85, 0.15, 1.455) minus the site;
+  // rotY 180; scale 1.1/1.1/1.7). Cot A's north edge lands flush on the cell
+  // divider's north face (−0.55); cot B's south edge flush on the south wall
+  // inner face (3.55) — both clear of the doors' 80° swing arcs.
   push(SHERIFF_OBJECT_IDS.cotA, 'cell-cot', 'کلانتری — تخت سلول ۱', {
-    position: { x: originX + 3.85, y: floorY, z: originZ - 2.3 },
-    rotation: { x: 0, y: 90, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
+    position: { x: originX + 4.022, y: floorY, z: originZ - 1.145 },
+    rotation: { x: 0, y: 180, z: 0 },
+    scale: { x: 1.1, y: 1.1, z: 1.7 },
   }, { collider: true });
   push(SHERIFF_OBJECT_IDS.cotB, 'cell-cot', 'کلانتری — تخت سلول ۲', {
-    position: { x: originX + 3.85, y: floorY, z: originZ + 2.4 },
-    rotation: { x: 0, y: 90, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
+    position: { x: originX + 3.85, y: floorY, z: originZ + 2.955 },
+    rotation: { x: 0, y: 180, z: 0 },
+    scale: { x: 1.1, y: 1.1, z: 1.7 },
   }, { collider: true });
 
   // --- Main office furniture (every prop has a spatial reason) ----------------
@@ -379,21 +435,27 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  // SHERIFF badge plaque above the desk line, right of the board.
+  // SHERIFF badge plaque — the user's Final transform VERBATIM (world
+  // (10.525, 2.0, −5.03) minus the site): centered over the desk line, back
+  // face 1 cm off the north wall inner face.
   push(SHERIFF_OBJECT_IDS.badgePlaque, 'sheriff-badge', 'کلانتری — نشان کلانتر', {
-    position: { x: originX - 1.0, y: floorY + 1.85, z: originZ - 3.53 },
+    position: { x: originX - 2.475, y: 2.0, z: originZ - 3.53 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  // Gun cabinet against the north wall, glass front to the room.
+  // Gun display cabinet against the north wall — the user's Final transform
+  // VERBATIM (world (12.41, 0.10, −4.87) minus the site). Its back sits
+  // 3 cm off the wall inner face; the rebuilt case grounds through its
+  // plinth at the user's y (10 cm seat into the plank floor, deliberate).
   push(SHERIFF_OBJECT_IDS.gunCabinet, 'gun-cabinet', 'کلانتری — ویترین اسلحه', {
-    position: { x: originX - 0.25, y: floorY, z: originZ - 3.36 },
+    position: { x: originX - 0.59, y: 0.1, z: originZ - 3.37 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: true });
-  // Gun rack wall-mounted on the west wall (arm/brackets reach into the room).
+  // Gun rack — rebuilt as a FLOOR-STANDING rifle rack against the west wall
+  // (back plane 1 cm off the wall inner face, facing east into the office).
   push(SHERIFF_OBJECT_IDS.gunRack, 'gun-rack', 'کلانتری — قفسه اسلحه', {
-    position: { x: originX - 5.03, y: floorY + 1.55, z: originZ + 0.3 },
+    position: { x: originX - 5.04, y: floorY, z: originZ + 0.3 },
     rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });

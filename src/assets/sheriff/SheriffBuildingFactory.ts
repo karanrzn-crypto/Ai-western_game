@@ -123,10 +123,14 @@ function signBoardTexture(text: string, sub?: string): THREE.CanvasTexture | nul
 /* ========================================================================== */
 
 /**
- * One double-hung window assembly mounted ON a wall face. The assembly lives
- * in the X/Y plane facing +Z; the caller rotates/positions it per wall.
- * Parts: casing (4 strips), sill, lintel, two sashes with a 2×2 muntin grid,
- * one glass pane, optional shutters, optional iron bar cage.
+ * One window assembly LINED INTO A REAL WALL OPENING. The assembly lives in
+ * the X/Y plane facing +Z (outward), ORIGIN AT THE HOLE CENTER in the wall
+ * MID-plane: local z ∈ [−t/2, +t/2] is inside the masonry, +z pokes outside.
+ * Parts: 4 liner boards (buried 5 cm into the masonry each side, standing
+ * 2 cm proud of BOTH faces — a real trim reveal inside and out, never a
+ * plane shared with the wall faces), one glass pane at the wall mid-plane,
+ * a muntin cross, outer casing + projecting sill + lintel, an interior sill
+ * board, optional shutters and an optional iron bar cage.
  */
 function buildWindowAssembly(
   M: ReturnType<typeof createSheriffMaterials>,
@@ -138,48 +142,61 @@ function buildWindowAssembly(
   const g = new THREE.Group();
   const hw = width / 2;
   const hh = height / 2;
+  const lining = 0.05;               // liner board thickness (each board half-buried)
+  const liningDepth = SHERIFF_LAYOUT.wallThickness + 0.04; // 2 cm proud each face
   const casing = 0.09;
+  const face = SHERIFF_LAYOUT.wallThickness / 2; // wall outer face (local +z)
 
-  // Glass pane: one plate, back face at z = 0 (stacked ON the wall face).
-  const glass = addBox(g, M.glass, width, height, 0.04, 0, 0, 0.02, 'window-glass');
+  // Liner boards around the hole (the window's real jambs/head/sill lining):
+  // each board is centered ON the hole edge — half in the opening, half
+  // buried in the masonry (the buried half hides every junction face).
+  const lw = width + lining * 2;
+  addBox(g, M.trim, lw, lining * 2, liningDepth, 0, -hh, 0, 'window-liner-bottom');
+  addBox(g, M.trim, lw, lining * 2, liningDepth, 0, hh, 0, 'window-liner-top');
+  addBox(g, M.trim, lining * 2, height - lining * 2, liningDepth, -hw, 0, 0, 'window-liner-left');
+  addBox(g, M.trim, lining * 2, height - lining * 2, liningDepth, hw, 0, 0, 'window-liner-right');
+
+  // Glass pane: one plate INSIDE the opening, centered on the wall mid-plane
+  // (faces ±1 cm around it — never touching the masonry's faces).
+  const glass = addBox(g, M.glass, width - lining * 2, height - lining * 2, 0.02, 0, 0, 0, 'window-glass');
   glass.castShadow = false;
+  // Muntin cross riding 2 mm clear of the glass front.
+  addBox(g, M.trim, 0.05, height - lining * 2 - 0.004, 0.02, 0, 0, 0.022, 'window-muntin-v');
+  addBox(g, M.trim, width - lining * 2 - 0.004, 0.05, 0.02, 0, 0, 0.022, 'window-muntin-h');
 
-  // Casing strips around the glass (fronts 4 cm proud of the glass front).
-  const cz = 0.06;
-  addBox(g, M.trim, width + casing * 2, casing, 0.07, 0, hh + casing / 2, cz, 'window-casing-top');
-  addBox(g, M.trim, width + casing * 2, casing, 0.07, 0, -hh - casing / 2, cz, 'window-casing-bottom');
-  addBox(g, M.trim, casing, height, 0.07, -hw - casing / 2, 0, cz, 'window-casing-left');
-  addBox(g, M.trim, casing, height, 0.07, hw + casing / 2, 0, cz, 'window-casing-right');
-  // Muntin cross (rides the glass front; 4 mm inset so no edge is ever
-  // coplanar with the glass edges).
-  addBox(g, M.trim, 0.05, height - 0.004, 0.03, 0, 0, 0.04, 'window-muntin-v');
-  addBox(g, M.trim, width - 0.004, 0.05, 0.03, 0, 0, 0.04, 'window-muntin-h');
-  // Lintel + sill (sill projects 6 cm; top buried under the bottom casing).
-  addBox(g, M.trim, width + casing * 2 + 0.08, 0.1, 0.09, 0, hh + casing + 0.05, 0.045, 'window-lintel');
-  addBox(g, M.trim, width + casing * 2 + 0.08, 0.07, 0.16, 0, -hh - casing - 0.035, 0.05, 'window-sill');
+  // Outer casing seated on the liner's proud band (2.5 cm proud of it).
+  const casingZ = liningDepth / 2 + 0.0125;
+  addBox(g, M.trim, lw + casing * 2, casing, 0.025, 0, hh + lining + casing / 2, casingZ, 'window-casing-top');
+  addBox(g, M.trim, lw + casing * 2, casing, 0.025, 0, -hh - lining - casing / 2, casingZ, 'window-casing-bottom');
+  addBox(g, M.trim, casing, height + lining * 2, 0.025, -hw - lining - casing / 2, 0, casingZ, 'window-casing-left');
+  addBox(g, M.trim, casing, height + lining * 2, 0.025, hw + lining + casing / 2, 0, casingZ, 'window-casing-right');
+  // Projecting outer sill (back buried in the masonry) + lintel.
+  addBox(g, M.trim, lw + casing * 2 + 0.08, 0.07, 0.18, 0, -hh - lining - 0.09, face + 0.08, 'window-sill');
+  addBox(g, M.trim, lw + casing * 2 + 0.08, 0.1, 0.1, 0, hh + lining + 0.05, face + 0.03, 'window-lintel');
+  // Interior sill board (projects 14 cm into the room; back face meets the
+  // wall's inner face back-to-back — never coplanar inside the wall).
+  addBox(g, M.trim, lw + casing * 2, 0.05, 0.14, 0, -hh - lining - 0.025, -face - 0.07, 'window-sill-inner');
 
   if (shutters) {
-    // Two louvered shutters (simple slat stacks) flanking the window.
+    // Two louvered shutters seated ON the outer face (back-to-back with it).
     const sw = hw * 0.72;
     for (const side of [-1, 1] as const) {
-      const sx = side * (hw + casing + sw / 2 + 0.02);
-      addBox(g, M.trim, sw, height, 0.05, sx, 0, 0.025, 'shutter');
+      const sx = side * (hw + lining + casing + sw / 2 + 0.02);
+      addBox(g, M.trim, sw, height + lining * 2, 0.05, sx, 0, face + 0.025, 'shutter');
       for (let i = 0; i < 7; i++) {
-        addBox(g, M.trim, sw - 0.04, 0.025, 0.03, sx, -hh + 0.09 + (i * (height - 0.18)) / 6, 0.055, 'shutter-slat');
+        addBox(g, M.trim, sw - 0.04, 0.025, 0.03, sx, -hh + 0.09 + (i * (height - 0.18)) / 6, face + 0.055, 'shutter-slat');
       }
     }
   }
 
   if (bars) {
-    // Iron bar cage: 4 vertical bars + top/bottom straps, standing 6 cm off
-    // the glass front (fixed to the casing, like a real frontier jail cage).
+    // Iron bar cage: 4 vertical bars + one mid strap, standing clear of the
+    // casing front (a real frontier jail cage fixed to the liner).
     for (let i = 0; i < 4; i++) {
       const bx = -hw + 0.06 + (i * (width - 0.12)) / 3;
-      addCyl(g, M.iron, 0.016, 0.016, height + 0.1, 8, bx, 0, 0.1, 'jail-bar');
+      addCyl(g, M.iron, 0.016, 0.016, height + 0.1, 8, bx, 0, face + 0.085, 'jail-bar');
     }
-    // One horizontal iron strap across the middle of the cage (a real
-    // jail-window look); it stands 4 cm clear of the glass front.
-    addBox(g, M.iron, width + 0.1, 0.06, 0.04, 0, 0, 0.1, 'jail-bar-strap');
+    addBox(g, M.iron, width + 0.1, 0.06, 0.04, 0, 0, face + 0.085, 'jail-bar-strap');
   }
 
   return g;
@@ -362,35 +379,41 @@ export function buildSheriffShell(dims: ShellDims): THREE.Group {
       sign.add(star);
     }
     g.add(sign);
-    // CITY JAIL plaque over the barred jail window.
+    // CITY JAIL plaque over the barred jail window — proud of the bar cage
+    // front (cage at face + 8.5 cm), so it never intersects the casing/bars.
     const plaque = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.4), new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: signBoardTexture('CITY JAIL') ?? undefined,
       roughness: 0.85,
     }));
-    plaque.position.set(2.7, 2.95, facadeZ + 0.01);
+    plaque.position.set(2.7, 2.95, facadeZ + 0.115);
     plaque.name = 'city-jail-plaque';
     g.add(plaque);
   }
 
-  // --- Windows on the four facades --------------------------------------------
+  // --- Windows: REAL assemblies lined into the wall openings ------------------
+  // The layout splits the windowed walls around each hole; the assembly sits
+  // at the hole center ON THE WALL MID-PLANE, facing outward (west/east were
+  // previously mounted at the facade offset — floating mid-room facing
+  // inward — now properly inside their walls on both faces).
   for (const win of L.windows) {
     const asm = buildWindowAssembly(M, win.width, win.height, win.bars, win.shutters);
+    const midY = win.sill + win.height / 2;
     switch (win.wall) {
       case 'south':
-        asm.position.set(win.center, win.sill + win.height / 2, facadeZ);
+        asm.position.set(win.center, midY, wallHalfD);
         break;
       case 'north':
-        asm.position.set(win.center, win.sill + win.height / 2, -facadeZ);
+        asm.position.set(win.center, midY, -wallHalfD);
         asm.rotation.y = Math.PI;
         break;
       case 'west':
-        asm.position.set(-facadeZ, win.sill + win.height / 2, win.center);
-        asm.rotation.y = Math.PI / 2;
+        asm.position.set(-wallHalfW, midY, win.center);
+        asm.rotation.y = -Math.PI / 2;
         break;
       case 'east':
-        asm.position.set(facadeZ, win.sill + win.height / 2, win.center);
-        asm.rotation.y = -Math.PI / 2;
+        asm.position.set(wallHalfW, midY, win.center);
+        asm.rotation.y = Math.PI / 2;
         break;
     }
     asm.name = `window-${win.wall}-${win.center}`;
@@ -463,10 +486,13 @@ export class SheriffCeilingFactory implements IAssetFactory {
 }
 
 /**
- * One jail bar-front segment: rails + vertical bars, built CENTERED on the
- * group origin (local y ∈ [−h/2, +h/2], local z ∈ [−len/2, +len/2]) so the
- * visual EXACTLY matches the transform-derived AABB (center = position,
- * size = scale). Bars are shared-geometry instanced-style cylinders.
+ * One jail bar-front segment: rails + vertical square bars, built PRE-DIVIDED
+ * by the registry transform's scale. The transform IS the collider box
+ * (CollisionWorld derives the AABB from position ± scale/2 alone), so the
+ * geometry is authored as final_size ÷ scale — after the renderer applies
+ * the scale the visual lands EXACTLY on the AABB (visual == collider, no
+ * double-scaling: the previous build scaled the full-size geometry a second
+ * time and produced ~11 m tall bar frames). Bars are shared-geometry boxes.
  */
 export class SheriffBarSegmentFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
@@ -476,16 +502,22 @@ export class SheriffBarSegmentFactory implements IAssetFactory {
     const height = Number(meta.height);
     const L = Number.isFinite(len) && len > 0 ? len : 1;
     const H = Number.isFinite(height) && height > 0 ? height : 3.3;
+    const s = definition.transform.scale;
+    const sx = Math.abs(s.x) > 1e-6 ? Math.abs(s.x) : 1;
+    const sy = Math.abs(s.y) > 1e-6 ? Math.abs(s.y) : 1;
+    const sz = Math.abs(s.z) > 1e-6 ? Math.abs(s.z) : 1;
     const g = new THREE.Group();
     g.name = 'sheriff-bar-segment';
 
     const rail = 0.07;
-    addBox(g, M.iron, 0.1, rail, L, 0, H / 2 - rail / 2, 0, 'bar-rail-top');
-    addBox(g, M.iron, 0.1, 0.09, L, 0, -H / 2 + 0.045, 0, 'bar-rail-bottom');
-    const barGeo = new THREE.CylinderGeometry(0.015, 0.015, H - rail - 0.09, 8);
+    // Rails: world 0.1 × rail × L at y ±(H/2 − rail/2); square 3 cm bars.
+    const barH = H - rail - 0.09;
+    addBox(g, M.iron, 0.1 / sx, rail / sy, L / sz, 0, (H / 2 - rail / 2) / sy, 0, 'bar-rail-top');
+    addBox(g, M.iron, 0.1 / sx, 0.09 / sy, L / sz, 0, -(H / 2 - 0.045) / sy, 0, 'bar-rail-bottom');
+    const barGeo = new THREE.BoxGeometry(0.03 / sx, barH / sy, 0.03 / sz);
     const count = Math.max(2, Math.round(L / 0.14));
     for (let i = 0; i <= count; i++) {
-      const z = -L / 2 + (i * L) / count;
+      const z = (-L / 2 + (i * L) / count) / sz;
       const bar = new THREE.Mesh(barGeo, M.iron);
       bar.position.set(0, 0, z);
       bar.castShadow = true;

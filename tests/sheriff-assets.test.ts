@@ -154,9 +154,9 @@ test('SHERIFF ASSETS: the 14 user builders keep their signatures', async () => {
   assert.ok(Math.abs((cotBox.max.z - cotBox.min.z) - 0.7) < 0.05, 'cot width must stay 0.7');
   assert.ok(cotBox.max.y > 0.4 && cotBox.max.y < 0.7, 'cot top must stay bunk-height (incl. headboard)');
 
-  // Gun rack: three rifles on a backing board.
+  // Gun rack: four rifles standing in a floor rack.
   const rack = (await create('gun-rack')) as THREE.Group;
-  assert.equal(rack.children.filter((c) => (c as THREE.Group).isGroup).length, 3, 'gun rack must hold three rifles');
+  assert.equal(rack.children.filter((c) => (c as THREE.Group).isGroup).length, 4, 'gun rack must hold four rifles');
 
   // Cabinet: glass front + pediment.
   const cabinet = (await create('gun-cabinet')) as THREE.Group;
@@ -420,15 +420,19 @@ test('SHERIFF LAYOUT: office reads like a real law office, jail reads like a jai
   const badge = p(SHERIFF_OBJECT_IDS.badgePlaque);
   assert.ok(badge.transform.position.y > 1.8 && badge.transform.position.y < 3.3,
     'badge plaque must hang at eye-raised height');
-  assert.ok(badge.transform.position.x > board.transform.position.x + 1.0,
-    'badge plaque must sit east of the board (no overlap)');
+  // The user's Final moves the badge OVER the desk line — it hangs CLEAR
+  // ABOVE the wanted board's top (board top ≈ 1.68 world; badge ≥ 1.89).
+  assert.ok(badge.transform.position.y > board.transform.position.y + 1.6,
+    'badge plaque must hang clear above the wanted board');
 
-  // Gun rack on the west wall face; wash stand + crates also along it, all
-  // clear of each other in z.
+  // Gun rack floor-standing against the west wall (back plane 1 cm off the
+  // wall inner face), facing east into the office; wash stand + crates also
+  // along it, all clear of each other in z.
   const rack = p(SHERIFF_OBJECT_IDS.gunRack);
   assert.equal(rack.transform.rotation.y, 90, 'gun rack must face east into the office');
-  assert.ok(Math.abs(rack.transform.position.x - (S.x - (L.width / 2 - L.wallThickness / 2) + 0.095)) < 0.01,
-    'gun rack backing must seat on the west wall face');
+  assert.ok(Math.abs(rack.transform.position.x - (S.x - (L.width / 2 - L.wallThickness) + 0.01)) < 0.01,
+    'gun rack backing must seat 1 cm off the west wall inner face');
+  assert.ok(Math.abs(rack.transform.position.y - L.floorTop) < 1e-6, 'gun rack must stand on the plank floor');
   const stand = p(SHERIFF_OBJECT_IDS.washStand);
   const crates = p(SHERIFF_OBJECT_IDS.ammoCrate1);
   for (const [a, b] of [[rack, stand], [stand, crates]] as const) {
@@ -487,6 +491,68 @@ test('SHERIFF LAYOUT: office reads like a real law office, jail reads like a jai
   assert.ok(Math.abs((L.porch.xMin + L.porch.xMax) / 2 - (-2.325)) < 1e-6, 'porch covers the office door');
   const barred = L.windows.find((w) => w.wall === 'south' && w.bars);
   assert.ok(barred && Math.abs(barred.center - 2.7) < 1e-6, 'the barred facade window marks the jail');
+});
+
+/* ---- User Final transforms -------------------------------------------------------- */
+
+test('SHERIFF USER FINALS: cell-front transforms applied verbatim (world → site-local)', () => {
+  const defs = buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z);
+  const p = (uuid: string): ObjectDefinition => {
+    const def = defs.find((d) => d.uuid === uuid);
+    assert.ok(def, `missing ${uuid}`);
+    return def;
+  };
+  const S = SHERIFF_SITE;
+  // The user's Final table (world positions, degrees, scales) — the layout
+  // must reproduce them EXACTLY after the site offset (13, −1.5).
+  const finals: [string, number, number, number, number, number, number, number, number, number][] = [
+    // uuid, x, y, z, rotX, rotY, rotZ, sx, sy, sz
+    [SHERIFF_OBJECT_IDS.barAHeader, 14.7, 2.85, -3.5, 0, 0, 0, 0.1, 1.2, 1.22],
+    [SHERIFF_OBJECT_IDS.barBSouth, 14.645, 1.8, 1.155, 0, 0, 0, 0.1, 1.0, 1.0],
+    [SHERIFF_OBJECT_IDS.barBHeader, 14.7, 2.94, -0.35, 0, 0, 0, 0.1, 1.3, 1.22],
+    [SHERIFF_OBJECT_IDS.barASouth, 14.7, 1.8, -2.47, 0, 0, 0, 0.1, 1.0, 0.8],
+    [SHERIFF_OBJECT_IDS.barBNorth, 14.7, 1.8, -1.405, 0, 0, 0, 0.1, 1.0, 1.1],
+    [SHERIFF_OBJECT_IDS.cotB, 16.85, 0.15, 1.455, 0, 180, 0, 1.1, 1.1, 1.7],
+    [SHERIFF_OBJECT_IDS.cotA, 17.022, 0.15, -2.645, 0, 180, 0, 1.1, 1.1, 1.7],
+    [SHERIFF_OBJECT_IDS.barANorth, 14.7, 1.8, -4.58, 0, 0, 0, 0.1, 1.0, 0.94],
+    [SHERIFF_OBJECT_IDS.gunCabinet, 12.41, 0.1, -4.87, 0, 0, 0, 1, 1, 1],
+    [SHERIFF_OBJECT_IDS.badgePlaque, 10.525, 2.0, -5.03, 0, 0, 0, 1, 1, 1],
+  ];
+  for (const [uuid, x, y, z, rx, ry, rz, sx, sy, sz] of finals) {
+    const t = p(uuid).transform;
+    const close = (a: number, b: number, what: string): void =>
+      assert.ok(Math.abs(a - b) < 5e-3, `${what} for ${uuid}: ${a} vs Final ${b}`);
+    const isBar = uuid === SHERIFF_OBJECT_IDS.barANorth || uuid === SHERIFF_OBJECT_IDS.barASouth
+      || uuid === SHERIFF_OBJECT_IDS.barBNorth || uuid === SHERIFF_OBJECT_IDS.barBSouth;
+    if (!isBar) close(t.position.x, x, 'position.x');
+    close(t.position.y, y, 'position.y');
+    close(t.position.z, z, 'position.z');
+    close(t.rotation.x, rx, 'rotation.x');
+    close(t.rotation.y, ry, 'rotation.y');
+    close(t.rotation.z, rz, 'rotation.z');
+    // The bar FRONT segments keep the junction-derived collider scale and the
+    // straight bars plane (their Final scale.y / one x-nudge captured the
+    // double-scale bug); their CENTERS (z) must match the Final table.
+    if (isBar) {
+      close(t.position.z, z, 'bar center z');
+      close(t.position.x, 14.7, 'bar plane x');
+    } else {
+      close(t.scale.x, sx, 'scale.x');
+      close(t.scale.y, sy, 'scale.y');
+      close(t.scale.z, sz, 'scale.z');
+    }
+  }
+
+  // Headers span exactly over the door gaps (frame outer ±0.61) and their
+  // bottoms meet the door lintels' tops (2.3) — no slit, no floating strip.
+  const hA = p(SHERIFF_OBJECT_IDS.barAHeader).transform;
+  const hB = p(SHERIFF_OBJECT_IDS.barBHeader).transform;
+  assert.ok(Math.abs(hA.position.z - (S.z - 2.0)) < 1e-6 && Math.abs(hA.scale.z - 1.22) < 1e-6,
+    'header A must span the door A gap');
+  assert.ok(Math.abs(hA.position.y - 2.85) < 1e-6, 'header A y = the user Final 2.85');
+  assert.ok(Math.abs(hB.position.y - 2.94) < 1e-6, 'header B y = the user Final 2.94');
+  assert.ok(hA.position.y - hA.scale.y / 2 >= 2.24 && hB.position.y - hB.scale.y / 2 >= 2.28,
+    'both headers start at/above the door lintels (2.3) minus a small buried seat');
 });
 
 /* ---- Cell door swing ---------------------------------------------------------------- */

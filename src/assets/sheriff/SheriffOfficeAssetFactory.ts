@@ -378,15 +378,25 @@ function createStarGeometry(outerR: number, innerR: number, depth: number, point
   return new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: depth * 0.3, bevelSize: depth * 0.2, bevelSegments: 2 });
 }
 
-/** Simple long-gun prop (rifle/shotgun silhouette) reused by the rack, cabinet, and coat rack. */
+/**
+ * Simple long-gun prop (rifle/shotgun silhouette) reused by the rack and the
+ * cabinet. The whole gun lies along local +X with its BORE AXIS ON y = 0 —
+ * barrel (-0.375..+0.375), stock (-0.64..-0.36), foregrip, trigger guard all
+ * collinear — so consumers may pitch the group up (rotation.z = PI/2) and the
+ * rifle stays one straight piece: butts land where the consumer's comment
+ * says, muzzles up, no lateral offset. (The old prop had its barrel floating
+ * at y = +0.375 above the stock line; stood upright that became a 37.5 cm
+ * horizontal shift that threw barrels THROUGH the cabinet side / outside the
+ * rack.)
+ */
 function buildRifle(): THREE.Group {
   const g = new THREE.Group();
-  const barrel = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.75, 8), MAT.iron(), 0, 0.375, 0);
+  const barrel = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.75, 8), MAT.iron(), 0, 0, 0);
   barrel.rotation.z = Math.PI / 2;
   g.add(barrel);
   const stock = mesh(new THREE.BoxGeometry(0.28, 0.06, 0.035), MAT.woodDark(), -0.5, -0.02, 0);
   g.add(stock);
-  const foregrip = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), MAT.woodDark(), -0.1, 0.375, 0);
+  const foregrip = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), MAT.woodDark(), -0.1, 0, 0);
   foregrip.rotation.z = Math.PI / 2;
   g.add(foregrip);
   const trigger = mesh(new THREE.TorusGeometry(0.02, 0.005, 6, 10, Math.PI), MAT.iron(), -0.28, -0.01, 0);
@@ -504,21 +514,23 @@ export function buildSheriffChair(): THREE.Group {
   return g;
 }
 
-/** Barred jail cell door on a hinge group, with a heavy lock plate. */
+/** Barred jail cell door on a hinge group, with a heavy lock plate.
+ *
+ *  Frame = two FULL-HEIGHT jamb posts + one Lintel that bridges the post
+ *  tops (y = height) up INTO the masonry headers above the bars gap (the
+ *  layout's user-Final headers start at y 2.25 / 2.29 world; the lintel
+ *  spans [height, height + 0.2] so it buries 5 cm (door A) / 1 cm (door B)
+ *  into them — no slit, no floating strip). The old thin header floating
+ *  at y = height and the floor sill were REMOVED: once the leaf swung open
+ *  they read as two stray dark strips (the user's "stain" objects) — the
+ *  posts + lintel + masonry now close the opening completely. */
 export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORLD_SCALE): THREE.Group {
   const g = new THREE.Group();
   g.name = 'jail-cell-door';
 
-  // frame set into the wall
-  const frameThickness = 0.06;
-  const frameParts: [number, number, number][] = [
-    [width + frameThickness, frameThickness, 0], // header
-  ];
-  void frameParts;
-  const header = mesh(new THREE.BoxGeometry(width + 0.12, frameThickness, 0.1), MAT.ironDark(), 0, height, 0);
-  g.add(header);
-  const sill = mesh(new THREE.BoxGeometry(width + 0.12, frameThickness, 0.1), MAT.ironDark(), 0, 0, 0);
-  g.add(sill);
+  // Frame: lintel (post-top → into the masonry) + two full-height jamb posts.
+  const lintel = mesh(new THREE.BoxGeometry(width + 0.12, 0.2, 0.1), MAT.ironDark(), 0, height + 0.1, 0);
+  g.add(lintel);
   [-width / 2 - 0.03, width / 2 + 0.03].forEach((x) => {
     const post = mesh(new THREE.BoxGeometry(0.06, height, 0.1), MAT.ironDark(), x, height / 2, 0);
     g.add(post);
@@ -532,14 +544,16 @@ export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORL
 
   const doorFrame = new THREE.Group();
   hinge.add(doorFrame);
-  const top = mesh(new THREE.BoxGeometry(width, 0.05, 0.04), MAT.iron(), width / 2, height, 0);
+  // Top rail sits 6 cm BELOW the frame lintel's underside so the swinging
+  // leaf never clips it (rail spans [height−0.085, height−0.035]).
+  const top = mesh(new THREE.BoxGeometry(width, 0.05, 0.04), MAT.iron(), width / 2, height - 0.06, 0);
   doorFrame.add(top);
   const bottom = mesh(new THREE.BoxGeometry(width, 0.05, 0.04), MAT.iron(), width / 2, 0.05, 0);
   doorFrame.add(bottom);
   const midRail = mesh(new THREE.BoxGeometry(width, 0.04, 0.04), MAT.iron(), width / 2, height * 0.55, 0);
   doorFrame.add(midRail);
   [0, width].forEach((x) => {
-    const post = mesh(new THREE.BoxGeometry(0.045, height, 0.045), MAT.iron(), x, height / 2, 0);
+    const post = mesh(new THREE.BoxGeometry(0.045, height - 0.035, 0.045), MAT.iron(), x, (height - 0.035) / 2, 0);
     doorFrame.add(post);
   });
 
@@ -610,63 +624,116 @@ export function buildCellCot(): THREE.Group {
   return g;
 }
 
-/** Wall-mounted rack holding three long guns. */
+/**
+ * Floor-standing WESTERN GUN RACK: plinth + backboard + two stiles + top
+ * cap, a butt shelf with brass pegs, and a front retaining rail. Four long
+ * guns stand muzzle-up, butts RESTING on the pegs (nothing floats), barrels
+ * clear of the cap, ≥10 cm spacing, zero intersection with the frame or
+ * the wall. Origin at the base center, back plane at local z = 0.
+ */
 export function buildGunRack(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'gun-rack';
 
-  const backing = mesh(new THREE.BoxGeometry(0.9, 0.16, 0.05), MAT.woodDark(), 0, 0, 0);
-  g.add(backing);
+  const W = 0.85;
+  const D = 0.24;
+  const H = 1.62;
 
-  for (let i = 0; i < 2; i++) {
-    const bracket = mesh(new THREE.TorusGeometry(0.07, 0.012, 8, 12, Math.PI), MAT.iron(), -0.3 + i * 0.6, -0.02, 0.06);
-    bracket.rotation.z = Math.PI;
-    g.add(bracket);
+  // Carcass: plinth, backboard, stiles, top cap.
+  g.add(mesh(new THREE.BoxGeometry(W, 0.1, D), MAT.woodDark(), 0, 0.05, D / 2));
+  g.add(mesh(new THREE.BoxGeometry(W, 1.44, 0.035), MAT.woodDark(), 0, 0.82, 0.0175));
+  for (const sx of [-1, 1] as const) {
+    g.add(mesh(new THREE.BoxGeometry(0.06, H, 0.05), MAT.woodTrim(), sx * (W / 2 - 0.03), H / 2, 0.045));
   }
+  g.add(mesh(new THREE.BoxGeometry(W, 0.04, D), MAT.woodTrim(), 0, 1.6, D / 2));
 
-  for (let i = 0; i < 3; i++) {
+  // Butt shelf (top y 0.34) + 4 brass pegs the butts rest on + front rail.
+  g.add(mesh(new THREE.BoxGeometry(W - 0.12, 0.035, D - 0.04), MAT.woodMed(), 0, 0.3225, D / 2));
+  g.add(mesh(new THREE.BoxGeometry(W - 0.12, 0.05, 0.035), MAT.woodMed(), 0, 0.78, D - 0.0175));
+
+  // Four rifles, muzzle-up, 16 cm apart, butts ON the pegs (y = 0.36).
+  for (let i = 0; i < 4; i++) {
+    const x = -0.24 + i * 0.16;
+    const peg = mesh(new THREE.BoxGeometry(0.05, 0.02, 0.05), MAT.brassDark(), x, 0.35, D / 2 - 0.02);
+    g.add(peg);
     const rifle = buildRifle();
-    rifle.position.set(-0.3 + i * 0.05, 0.04, 0.08 + i * 0.03);
-    rifle.rotation.y = 0.08 * (i - 1);
-    rifle.rotation.z = 0.03;
+    rifle.rotation.z = Math.PI / 2;
+    rifle.rotation.y = 0.02 * (i - 1.5);
+    rifle.position.set(x, 1.0, 0.12);
     g.add(rifle);
   }
 
   return g;
 }
 
-/** Free-standing glass-front cabinet displaying rifles. */
+/**
+ * Glazed GUN DISPLAY CABINET (real case, not a painted box): plinth +
+ * open carcass (sides / deck / back / top / crown) + a wood-framed glass
+ * front with the pane INSET 2.75 cm behind the frame face (never coplanar)
+ * + three vertical rifles on brass pegs inside, butts resting on the deck,
+ * ≥8 cm clear of the glass. Origin at the plinth bottom, front toward +z.
+ */
 export function buildGunCabinet(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'gun-cabinet';
 
-  const w = 0.9 * WORLD_SCALE;
-  const h = 1.9 * WORLD_SCALE;
-  const d = 0.3 * WORLD_SCALE;
+  const W = 0.95;
+  const D = 0.34;
 
-  const body = mesh(new THREE.BoxGeometry(w, h, d), MAT.woodDark(), 0, h / 2, 0);
-  g.add(body);
+  // Plinth + reveal strip.
+  const plinth = mesh(new THREE.BoxGeometry(W, 0.15, D), MAT.woodDark(), 0, 0.075, 0);
+  g.add(plinth);
+  const reveal = mesh(new THREE.BoxGeometry(W + 0.06, 0.04, D + 0.05), MAT.woodTrim(), 0, 0.17, 0);
+  g.add(reveal);
 
-  const pediment = mesh(new THREE.BoxGeometry(w + 0.08, 0.1, d + 0.05), MAT.woodTrim(), 0, h + 0.05, 0);
-  g.add(pediment);
+  // Carcass: sides, deck (interior floor), back panel, top, crown.
+  for (const sx of [-1, 1] as const) {
+    const side = mesh(new THREE.BoxGeometry(0.04, 1.36, 0.3), MAT.woodDark(), sx * 0.435, 0.87, 0.15);
+    g.add(side);
+  }
+  const deck = mesh(new THREE.BoxGeometry(W - 0.08, 0.04, 0.3), MAT.woodMed(), 0, 0.21, 0.15);
+  g.add(deck);
+  const backPanel = mesh(new THREE.BoxGeometry(W - 0.08, 1.36, 0.03), MAT.woodDark(), 0, 0.87, 0.015);
+  g.add(backPanel);
+  const top = mesh(new THREE.BoxGeometry(W, 0.08, 0.3), MAT.woodDark(), 0, 1.59, 0.15);
+  g.add(top);
+  const crown = mesh(new THREE.BoxGeometry(W + 0.06, 0.07, D), MAT.woodTrim(), 0, 1.665, 0);
+  g.add(crown);
 
-  const glass = mesh(new THREE.PlaneGeometry(w * 0.8, h * 0.75), MAT.glassClear(), 0, h * 0.55, d / 2 + 0.01);
+  // Glazed front: stiles + rails (front face 0.32), glass INSET (front face
+  // 0.2925 — 2.75 cm behind the frame), a mid glazing bar 2.5 mm clear of
+  // the glass, brass knob + key plate on the right stile.
+  for (const sx of [-1, 1] as const) {
+    const stile = mesh(new THREE.BoxGeometry(0.05, 1.36, 0.07), MAT.woodMed(), sx * 0.435, 0.87, 0.285);
+    g.add(stile);
+  }
+  for (const ry of [0.26, 1.48] as const) {
+    const rail = mesh(new THREE.BoxGeometry(W - 0.1, 0.06, 0.07), MAT.woodMed(), 0, ry, 0.285);
+    g.add(rail);
+  }
+  const glass = mesh(new THREE.BoxGeometry(0.86, 1.16, 0.015), MAT.glassClear(), 0, 0.87, 0.285);
+  glass.castShadow = false;
   g.add(glass);
-  const glassFrame = mesh(new THREE.BoxGeometry(w * 0.85, h * 0.8, 0.02), MAT.woodMed(), 0, h * 0.55, d / 2);
-  g.add(glassFrame);
+  const glazingBar = mesh(new THREE.BoxGeometry(0.86, 0.03, 0.02), MAT.woodMed(), 0, 0.9, 0.305);
+  g.add(glazingBar);
+  const knob = mesh(new THREE.SphereGeometry(0.015, 8, 8), MAT.brassDark(), 0.435, 0.9, 0.335);
+  g.add(knob);
+  const keyPlate = mesh(new THREE.BoxGeometry(0.03, 0.06, 0.01), MAT.brassDark(), 0.435, 0.82, 0.325);
+  g.add(keyPlate);
 
-  for (let i = 0; i < 4; i++) {
+  // Three display rifles: muzzle-up on brass pegs, butts ON the deck
+  // (deck top 0.23 → rifle origin y 0.87), 26 cm apart, ≥8 cm from the glass.
+  for (let i = 0; i < 3; i++) {
+    const x = -0.26 + i * 0.26;
+    for (const py of [0.5, 1.2] as const) {
+      const peg = mesh(new THREE.BoxGeometry(0.025, 0.025, 0.07), MAT.brassDark(), x, py, 0.065);
+      g.add(peg);
+    }
     const rifle = buildRifle();
-    rifle.rotation.z = Math.PI / 2 - 0.05;
-    rifle.rotation.y = Math.PI / 2;
-    rifle.position.set(-w / 2 + 0.15 + i * (w - 0.3) / 3, h * 0.2, 0);
+    rifle.rotation.z = Math.PI / 2 - 0.04;
+    rifle.position.set(x, 0.87, 0.13);
     g.add(rifle);
   }
-
-  const baseTrim = mesh(new THREE.BoxGeometry(w + 0.06, 0.08, d + 0.06), MAT.woodTrim(), 0, 0.04, 0);
-  g.add(baseTrim);
-  const handle = mesh(new THREE.SphereGeometry(0.015, 8, 8), MAT.brassDark(), w * 0.3, h * 0.45, d / 2 + 0.02);
-  g.add(handle);
 
   return g;
 }

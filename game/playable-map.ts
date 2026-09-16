@@ -579,6 +579,9 @@ function updateCellDoors(delta: number): void {
   setYaw: (yaw: number) => playerController.setBodyYaw(yaw),
   player: () => playerController.getPosition(),
   yaw: () => ({ camera: playerController.getYaw(), body: playerController.getBodyYaw() }),
+  // Read-only scene handle for screenshot harnesses (spectator close-ups:
+  // hide the character root so it never occludes the inspected object).
+  scene: () => scene,
   boundsNear: (x: number, z: number) => collisionWorld
     .getCollisionBounds()
     .filter((b) => b.min.x - 0.6 <= x && x <= b.max.x + 0.6 && b.min.z - 0.6 <= z && z <= b.max.z + 0.6)
@@ -633,6 +636,62 @@ function updateCellDoors(delta: number): void {
     };
   },
   has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
+  // --- geometry-verify probes (read-only, harness-only) ---------------------
+  // World AABB of one managed object + the y-span of every mesh part — used
+  // to prove the cell-door frames carry NO floating strip (the old header at
+  // y≈2.25 and the floor sill read as two stray "stains" once open).
+  probe: (uuid: string) => {
+    const root = scene.getObjectByProperty('uuid', uuid);
+    if (!root) return null;
+    root.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(root);
+    const parts: { name: string; y: [number, number] }[] = [];
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const b = new THREE.Box3().setFromObject(m);
+      parts.push({ name: m.name || m.parent?.name || '<part>', y: [+b.min.y.toFixed(3), +b.max.y.toFixed(3)] });
+    });
+    return {
+      min: { x: +box.min.x.toFixed(3), y: +box.min.y.toFixed(3), z: +box.min.z.toFixed(3) },
+      max: { x: +box.max.x.toFixed(3), y: +box.max.y.toFixed(3), z: +box.max.z.toFixed(3) },
+      parts,
+    };
+  },
+  // Census of every MESH whose world position falls inside a box, attributed
+  // to its managed object — proves nothing foreign floats in a door gap.
+  strays: (min: [number, number, number], max: [number, number, number]) => {
+    const out: Record<string, number> = {};
+    for (const uuid of adapter.getActiveUUIDs()) {
+      const root = scene.getObjectByProperty('uuid', uuid);
+      if (!root) continue;
+      root.updateWorldMatrix(true, true);
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        const p = m.getWorldPosition(new THREE.Vector3());
+        if (p.x < min[0] || p.x > max[0] || p.y < min[1] || p.y > max[1] || p.z < min[2] || p.z > max[2]) return;
+        const key = `${manager.getObject(uuid)?.metadata.name ?? uuid} / ${m.name || '<part>'}`;
+        out[key] = (out[key] ?? 0) + 1;
+      });
+    }
+    return out;
+  },
+  // World centers of every window-glass mesh in the sheriff shell — proves
+  // the panes sit INSIDE their wall bands (east/west used to float mid-room).
+  windowGlass: () => {
+    const shell = scene.getObjectByProperty('uuid', SHERIFF_OBJECT_IDS.building);
+    if (!shell) return null;
+    shell.updateWorldMatrix(true, true);
+    const out: { name: string; x: number; y: number; z: number }[] = [];
+    shell.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.name !== 'window-glass') return;
+      const p = m.getWorldPosition(new THREE.Vector3());
+      out.push({ name: m.parent?.name ?? '', x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3) });
+    });
+    return out;
+  },
 };
 
 const raycaster = new THREE.Raycaster();

@@ -195,6 +195,63 @@ const ok = (name, pass, detail) => {
   ok('boot: cell door B closed + collider armed', b.swing === 0 && b.collider === true && Math.abs(b.hingeYaw) < 1e-6,
     `swing=${b.swing} collider=${b.collider} hinge=${b.hingeYaw}`);
 
+  // --- 1b) WINDOWS: every glass pane must sit INSIDE its wall band ----------
+  // (the old build mounted the west/east assemblies at the facade offset —
+  // they floated mid-room at x 9.3 / 16.7 facing INWARD)
+  const glassPanes = await page.evaluate(() => window.__westTest.windowGlass());
+  const bandOf = (n) => n.startsWith('window-south-') ? ['z', 2.125]
+    : n.startsWith('window-north-') ? ['z', -5.125]
+      : n.startsWith('window-west-') ? ['x', 7.875]
+        : n.startsWith('window-east-') ? ['x', 18.125] : null;
+  const offGlass = (glassPanes ?? []).filter((g) => {
+    const band = bandOf(g.name);
+    return !band || Math.abs(g[band[0]] - band[1]) > 0.02;
+  });
+  ok('windows: all 6 glass panes lined INTO their wall openings (none floating mid-room)',
+    glassPanes && glassPanes.length === 6 && offGlass.length === 0,
+    offGlass.length ? `OFF-PLANE: ${JSON.stringify(offGlass)}` : glassPanes.map((g) => `${g.name} @ ${bandOf(g.name)[0]}=${g[bandOf(g.name)[0]]}`).join(' | '));
+
+  // --- 1c) DOOR FRAMES: no floating strip (the old "two stains") ------------
+  // The removed frame header floated at world y [2.22, 2.28] and the sill at
+  // [0.12, 0.18]; the new lintel spans [2.25, 2.45] bridging posts → masonry.
+  const frameCheck = async (which, label) => {
+    const uuid = which === 'a' ? ids.cellDoorA : ids.cellDoorB;
+    const probe = await page.evaluate((u) => window.__westTest.probe(u), uuid);
+    const floats = probe.parts.filter((p) => (p.y[0] > 2.2 && p.y[1] < 2.32) || (p.y[0] > 0.1 && p.y[1] < 0.2));
+    const lintel = probe.parts.some((p) => p.y[0] >= 2.24 && p.y[1] <= 2.46);
+    ok(`${label}: frame has a real lintel and NO floating strip (no stain objects)`,
+      lintel && floats.length === 0,
+      floats.length ? `FLOATING PARTS: ${JSON.stringify(floats)}` : `lintel bridged ${lintel}`);
+  };
+  await frameCheck('a', 'cell A frame (closed)');
+  await frameCheck('b', 'cell B frame (closed)');
+
+  /** Census the door gap box; every mesh inside must belong to the door. */
+  const gapCensus = async (which, label) => {
+    const box = which === 'a' ? [[14.62, 0.2, -4.08], [14.78, 2.2, -2.92]] : [[14.62, 0.2, -0.93], [14.78, 2.2, 0.23]];
+    const census = await page.evaluate(([lo, hi]) => window.__westTest.strays(lo, hi), box);
+    const doorName = which === 'a' ? 'در سلول ۱' : 'در سلول ۲';
+    const foreign = Object.keys(census).filter((k) => !k.includes(doorName));
+    ok(`${label}: gap census — only door-owned meshes in the opening`, foreign.length === 0,
+      foreign.length ? `FOREIGN: ${foreign.join(' ; ').slice(0, 300)}` : `${Object.keys(census).length} door parts, all owned`);
+  };
+
+  /** Best-effort mid-swing census: press E and catch the leaf between 15–85%. */
+  const midSwingCensus = async (which) => {
+    await press('KeyE');
+    for (let i = 0; i < 14; i++) {
+      const s = await cell(which);
+      if (s.swing > 0.15 && s.swing < 0.85) {
+        await gapCensus(which, `cell ${which.toUpperCase()} MID-SWING (${s.swing.toFixed(2)})`);
+        return true;
+      }
+      if (s.swing >= 1 || s.swing <= 0) break;
+      await page.waitForTimeout(60);
+    }
+    console.log(`  mid-swing census skipped (swing moved too fast)`);
+    return false;
+  };
+
   // --- 2) exterior shot + the public path: street → porch → front door -------
   await teleport(10.5, 2.3, 9.5, 0);
   await page.waitForTimeout(700);
@@ -208,6 +265,10 @@ const ok = (name, pass, detail) => {
     `player z=${atDesk.z.toFixed(3)} (expected stop −0.2 = desk's yaw-conservative 1×1 box south face −0.55 + radius)`,
   );
   await shot('02-office-desk');
+  // Office interior: the rebuilt gun cabinet + gun rack + badge line.
+  await teleport(12.1, 2.3, 0.4, -Math.PI / 2 + 0.5);
+  await page.waitForTimeout(600);
+  await shot('02b-office-cabinet-rack');
 
   // --- 3) walk around the desk, then office → jail corridor ------------------
   await teleport(11.9, 2.3, 0.2, 0);
@@ -244,6 +305,12 @@ const ok = (name, pass, detail) => {
     a.swing >= 1 && a.collider === false && Math.abs(a.hingeYaw - 1.396) < 1e-3,
     `swing=${a.swing.toFixed(3)} collider=${a.collider} hinge=${a.hingeYaw.toFixed(3)}`);
   await shot('04-cellA-open');
+  await gapCensus('a', 'cell A OPEN');
+  await pressUntil('a', (s) => s.swing <= 0.02, 'cell A re-closed for mid-swing probe');
+  await midSwingCensus('a');
+  await pressUntil('a', (s) => s.swing <= 0 && s.collider === true, 'cell A closed again');
+  await gapCensus('a', 'cell A CLOSED');
+  await pressUntil('a', (s) => s.swing >= 1 && s.collider === false, 'cell A reopened for walk-in');
   await teleport(13.65, 2.3, -3.5, -Math.PI / 2);
   await page.waitForTimeout(400);
   const inA = await walk('x', 1, 15.6, 45000, 'through the open cell A door');
@@ -284,6 +351,12 @@ const ok = (name, pass, detail) => {
   b = await cell('b');
   ok('cell B: open — swing complete + collider off', b.swing >= 1 && b.collider === false,
     `swing=${b.swing.toFixed(3)} collider=${b.collider}`);
+  await gapCensus('b', 'cell B OPEN');
+  await pressUntil('b', (s) => s.swing <= 0.02, 'cell B re-closed for mid-swing probe');
+  await midSwingCensus('b');
+  await pressUntil('b', (s) => s.swing <= 0 && s.collider === true, 'cell B closed again');
+  await gapCensus('b', 'cell B CLOSED');
+  await pressUntil('b', (s) => s.swing >= 1 && s.collider === false, 'cell B reopened for walk-in');
   await teleport(13.65, 2.3, -0.35, -Math.PI / 2);
   await page.waitForTimeout(400);
   const inB = await walk('x', 1, 15.6, 45000, 'through the open cell B door');

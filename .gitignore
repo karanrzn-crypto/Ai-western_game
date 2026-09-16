@@ -138,3 +138,4 @@ $RECYCLE.BIN/
 
 # Browser-verification screenshot artifacts (agent sessions)
 shots-*/
+shots-sheriff/

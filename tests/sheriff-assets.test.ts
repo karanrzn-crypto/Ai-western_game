@@ -576,7 +576,8 @@ test('SHERIFF CELL DOOR SWING: authored closed, opens inward, frame stays fixed'
   assert.ok(Math.abs(hinge.rotation.y - JAIL_CELL_DOOR_OPEN_ANGLE) < 1e-6, 'open pose is the pure hinge rotation');
   const opened = box3of(leaf);
   assert.ok(opened.max.x > closed.max.x + 0.5, 'leaf must swing toward the cell interior (+x)');
-  assert.equal(obj.children.filter((c) => c.name === '').length > 0, true, 'frame parts stay root children');
+  const frameParts = obj.children.filter((c) => c.name === '' || c.name.startsWith('jail-door-'));
+  assert.equal(frameParts.length >= 5, true, 'frame parts (lintel, posts, knuckles) stay root children');
   const sill = obj.children.find((c) => Math.abs((c as THREE.Mesh).position?.y ?? -1) < 1e-6) as THREE.Mesh | undefined;
   if (sill) {
     const sillBox = box3of(sill);
@@ -589,6 +590,44 @@ test('SHERIFF CELL DOOR SWING: authored closed, opens inward, frame stays fixed'
   const shut = box3of(leaf);
   assert.ok(Math.abs(shut.min.x - closed.min.x) < 1e-6 && Math.abs(shut.max.z - closed.max.z) < 1e-6,
     'setJailCellDoorOpen(0) re-closes the cell door');
+});
+
+/* ---- Cell door frame ---------------------------------------------------------------- */
+
+test('SHERIFF CELL DOOR FRAME: knuckles at the hinge, frame faces never flush with the ironwork', async () => {
+  const registry = makeRegistry();
+  const defs = buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z);
+  for (const uuid of [SHERIFF_OBJECT_IDS.cellDoorA, SHERIFF_OBJECT_IDS.cellDoorB]) {
+    const def = defs.find((d) => d.uuid === uuid)!;
+    const obj = applyDefinition(await registry.create({ ...def, metadata: { ...def.metadata, collider: true } }), def) as THREE.Group;
+
+    // The specks fix: the two hinge knuckles must sit ON the hinge axis
+    // (x = −width/2), mounted proud of the post's corridor face — the old
+    // mid-door placement (x = +0.02) showed as two dark dots on the closed
+    // leaf and floated in the open doorway.
+    const knuckles = obj.children.filter((c) => c.name === 'jail-door-knuckle');
+    assert.equal(knuckles.length, 2, `${uuid}: exactly two hinge knuckles`);
+    for (const k of knuckles) {
+      assert.ok(Math.abs(k.position.x + 0.55) < 1e-6, 'knuckles sit at the hinge axis, never mid-door');
+      assert.ok(k.position.z > 0.03, 'knuckles mount proud of the post corridor face');
+    }
+
+    // The z-fight fix: the lintel's underside (world ≈2.21) sits BELOW both
+    // iron headers' bottoms (2.25 / 2.29) — no flush underside pair above the
+    // doorway — while its top (≈2.39) buries inside both headers; the jamb
+    // posts straddle ±0.59 (2 cm past the ±0.61 segment ends, whose end
+    // faces bury inside them) and stand inset from the headers' ±0.05 faces.
+    const lintel = obj.children.find((c) => c.name === 'jail-door-lintel') as THREE.Mesh;
+    assert.ok(lintel, 'door exposes its lintel');
+    const lb = box3of(lintel);
+    assert.ok(lb.min.y < 2.24 && lb.max.y > 2.3 && lb.max.y < 3.4,
+      `lintel must span [~2.21, ~2.39] world (got [${lb.min.y.toFixed(3)}, ${lb.max.y.toFixed(3)}])`);
+    const posts = obj.children.filter((c) => c.name === 'jail-door-post');
+    assert.equal(posts.length, 2, 'door carries two jamb posts');
+    for (const p of posts) {
+      assert.ok(Math.abs(Math.abs(p.position.x) - 0.59) < 1e-6, 'posts straddle ±0.59 — 2 cm past the ±0.61 gap edges');
+    }
+  }
 });
 
 /* ---- Geometry (z-fighting) ------------------------------------------------------------- */
@@ -609,8 +648,14 @@ test('SHERIFF GEOMETRY: no coplanar same-normal overlapping faces with different
       // porch shed) and curved surfaces can't be judged by AABBs (same rule
       // as the bank scan).
       if ((m.geometry as THREE.BufferGeometry).type !== 'BoxGeometry') return;
+      // Axis-aligned world rotations only (identity and ±90°/180° yaws):
+      // their world AABBs stay exact, so face-plane equality is meaningful.
+      // The cell doors (yaw −90°) USED to be excluded here — exactly where
+      // the door↔header z-fights hid.
       const q = m.getWorldQuaternion(new THREE.Quaternion());
-      if (q.angleTo(new THREE.Quaternion()) > 1e-6) return;
+      const el = new THREE.Matrix4().makeRotationFromQuaternion(q).elements;
+      const axisAligned = el.every((v) => Math.abs(v) < 1e-6 || Math.abs(Math.abs(v) - 1) < 1e-6);
+      if (!axisAligned) return;
       const mat = Array.isArray(m.material) ? m.material[0] : m.material;
       boxes.push({ box: box3of(m), mat, name: `${def.metadata.name}/${m.name}` });
     });

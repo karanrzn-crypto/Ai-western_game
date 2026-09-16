@@ -213,12 +213,14 @@ const ok = (name, pass, detail) => {
 
   // --- 1c) DOOR FRAMES: no floating strip (the old "two stains") ------------
   // The removed frame header floated at world y [2.22, 2.28] and the sill at
-  // [0.12, 0.18]; the new lintel spans [2.25, 2.45] bridging posts → masonry.
+  // [0.12, 0.18]. The lintel now spans [2.21, 2.39]: its underside sits BELOW
+  // both masonry headers (2.25 / 2.29 — no flush pair → no z-fight) while its
+  // top buries inside them, bridging posts → masonry exactly as before.
   const frameCheck = async (which, label) => {
     const uuid = which === 'a' ? ids.cellDoorA : ids.cellDoorB;
     const probe = await page.evaluate((u) => window.__westTest.probe(u), uuid);
     const floats = probe.parts.filter((p) => (p.y[0] > 2.2 && p.y[1] < 2.32) || (p.y[0] > 0.1 && p.y[1] < 0.2));
-    const lintel = probe.parts.some((p) => p.y[0] >= 2.24 && p.y[1] <= 2.46);
+    const lintel = probe.parts.some((p) => p.y[0] > 2.15 && p.y[0] < 2.24 && p.y[1] > 2.3 && p.y[1] < 2.5);
     ok(`${label}: frame has a real lintel and NO floating strip (no stain objects)`,
       lintel && floats.length === 0,
       floats.length ? `FLOATING PARTS: ${JSON.stringify(floats)}` : `lintel bridged ${lintel}`);

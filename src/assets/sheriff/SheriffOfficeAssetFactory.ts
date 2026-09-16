@@ -516,23 +516,38 @@ export function buildSheriffChair(): THREE.Group {
 
 /** Barred jail cell door on a hinge group, with a heavy lock plate.
  *
- *  Frame = two FULL-HEIGHT jamb posts + one Lintel that bridges the post
- *  tops (y = height) up INTO the masonry headers above the bars gap (the
- *  layout's user-Final headers start at y 2.25 / 2.29 world; the lintel
- *  spans [height, height + 0.2] so it buries 5 cm (door A) / 1 cm (door B)
- *  into them — no slit, no floating strip). The old thin header floating
- *  at y = height and the floor sill were REMOVED: once the leaf swung open
- *  they read as two stray dark strips (the user's "stain" objects) — the
- *  posts + lintel + masonry now close the opening completely. */
+ *  Frame = two FULL-HEIGHT jamb posts + one Lintel. Every frame face either
+ *  BURIES into the layout's ironwork or stands INSET from it — never coplanar
+ *  with it (the old build's flush faces z-fought against the user-Final iron
+ *  headers y 2.25/2.29 and the bar segments' ±0.61 ends, and its hinge
+ *  knuckles sat at mid-door where they read as two dark specks on the closed
+ *  leaf and floated in the doorway once it swung open):
+ *    • posts span ±[0.55, 0.63] along the wall — 2 cm PAST the segments'
+ *      ±0.61 ends, whose end faces bury inside the posts (this also covers
+ *      the 2 cm slits between segment ends and header ends) — and stand
+ *      ±0.04 deep, 1 cm inset from the headers'/rails' ±0.05 faces;
+ *    • lintel spans y [height−0.04, height+0.14] (world [2.21, 2.39]: its
+ *      bottom sits 4–8 cm BELOW the header bottoms 2.25/2.29 — no flush
+ *      underside pair — and its top buries inside both headers), length
+ *      ±0.59 (its end faces bury inside the posts / headers), depth ±0.035
+ *      (inset from posts and headers alike).
+ *  The leaf's rails are 5 cm shorter than the gap and its top rail sits
+ *  3.5 cm below the lintel underside, so nothing on the swinging leaf shares
+ *  a plane with the static frame it slides out from. */
 export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORLD_SCALE): THREE.Group {
   const g = new THREE.Group();
   g.name = 'jail-cell-door';
 
-  // Frame: lintel (post-top → into the masonry) + two full-height jamb posts.
-  const lintel = mesh(new THREE.BoxGeometry(width + 0.12, 0.2, 0.1), MAT.ironDark(), 0, height + 0.1, 0);
+  // Frame: lintel (buried over the posts, up into both masonry headers)
+  // + two full-height jamb posts standing 2 cm proud past the segment ends.
+  const lintel = mesh(new THREE.BoxGeometry(width + 0.08, 0.18, 0.07), MAT.ironDark(), 0, height + 0.05, 0);
+  lintel.name = 'jail-door-lintel';
   g.add(lintel);
-  [-width / 2 - 0.03, width / 2 + 0.03].forEach((x) => {
-    const post = mesh(new THREE.BoxGeometry(0.06, height, 0.1), MAT.ironDark(), x, height / 2, 0);
+  [-width / 2 - 0.04, width / 2 + 0.04].forEach((x) => {
+    // 2 cm leg buried into the plank floor — bolted-down iron, and the post
+    // bottom never shares the floor-plane pair the rail bottoms stand on.
+    const post = mesh(new THREE.BoxGeometry(0.08, height + 0.02, 0.08), MAT.ironDark(), x, height / 2 - 0.01, 0);
+    post.name = 'jail-door-post';
     g.add(post);
   });
 
@@ -544,16 +559,18 @@ export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORL
 
   const doorFrame = new THREE.Group();
   hinge.add(doorFrame);
-  // Top rail sits 6 cm BELOW the frame lintel's underside so the swinging
-  // leaf never clips it (rail spans [height−0.085, height−0.035]).
-  const top = mesh(new THREE.BoxGeometry(width, 0.05, 0.04), MAT.iron(), width / 2, height - 0.06, 0);
+  // Rails are 5 cm shorter than the gap (2.5 cm clear of each jamb post's
+  // inner end face — the closed leaf never shares a plane with the frame it
+  // slides out of); the top rail sits 3.5 cm below the lintel's underside so
+  // the swinging leaf never clips it (rail top at height − 0.075).
+  const top = mesh(new THREE.BoxGeometry(width - 0.05, 0.05, 0.04), MAT.iron(), width / 2, height - 0.1, 0);
   doorFrame.add(top);
-  const bottom = mesh(new THREE.BoxGeometry(width, 0.05, 0.04), MAT.iron(), width / 2, 0.05, 0);
+  const bottom = mesh(new THREE.BoxGeometry(width - 0.05, 0.05, 0.04), MAT.iron(), width / 2, 0.05, 0);
   doorFrame.add(bottom);
-  const midRail = mesh(new THREE.BoxGeometry(width, 0.04, 0.04), MAT.iron(), width / 2, height * 0.55, 0);
+  const midRail = mesh(new THREE.BoxGeometry(width - 0.05, 0.04, 0.04), MAT.iron(), width / 2, height * 0.55, 0);
   doorFrame.add(midRail);
   [0, width].forEach((x) => {
-    const post = mesh(new THREE.BoxGeometry(0.045, height - 0.035, 0.045), MAT.iron(), x, (height - 0.035) / 2, 0);
+    const post = mesh(new THREE.BoxGeometry(0.045, height - 0.06, 0.045), MAT.iron(), x, (height - 0.06) / 2, 0);
     doorFrame.add(post);
   });
 
@@ -564,9 +581,13 @@ export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORL
     doorFrame.add(bar);
   }
 
-  // hinge knuckles (visual, on the frame post side)
+  // Hinge knuckles mounted ON the west jamb post's corridor face at the
+  // hinge axis (x = −width/2, 3.5 cm proud of the post face). The old build
+  // parked them at x = +0.02 — mid-door — where they showed as two stray
+  // dark specks on the closed leaf and floated in the open doorway.
   [height * 0.15, height * 0.85].forEach((y) => {
-    const knuckle = mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.1, 10), MAT.ironDark(), 0.02, y, 0);
+    const knuckle = mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.1, 10), MAT.ironDark(), -width / 2, y, 0.05);
+    knuckle.name = 'jail-door-knuckle';
     g.add(knuckle);
   });
 

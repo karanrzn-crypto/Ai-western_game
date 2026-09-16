@@ -58,6 +58,11 @@ import {
   BANK_OBJECT_IDS,
   setSecureGateOpen,
   setBankVaultDoorOpen,
+  registerAllSheriffFactories,
+  buildSheriffMapObjects,
+  SHERIFF_SITE,
+  SHERIFF_OBJECT_IDS,
+  setJailCellDoorOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -170,6 +175,7 @@ const assets = new AssetRegistry();
 registerPrimitiveFactories(assets);
 registerSaloonFactories(assets);
 registerAllBankFactories(assets);
+registerAllSheriffFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -196,16 +202,11 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 };
 
 const persistence = new PersistenceManager();
-// Storage key v9: the bank interior moved to its final user-designed form —
-// the big vault door now hangs on the office/vault divider's WEST face (user
-// Final world (1.475, 0.600, −26.000) rotY −90), the divider gained a real
-// masonry doorway + two new segments + a header, the south line's middle
-// segment widened to seal the old open vault slot, and a second divider lamp
-// was added. Scene load REPLACES the whole registry, so old v8 saves (solid
-// divider, old door position, no new segments) would resurrect a vault that
-// cannot be entered — the key must move for every existing save to re-base
-// on the new layout.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v9' });
+// Storage key history: v9 moved for the bank's final vault-door interior;
+// v10 moves for the Sheriff Office block being added to the map. Scene load
+// REPLACES the whole registry, so old saves would load a scene WITHOUT the
+// sheriff building — the key must move for every existing save to pick it up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v10' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -421,6 +422,18 @@ for (const bankDef of buildBankMapObjects(BANK_SITE.x, BANK_SITE.z)) {
   manager.registerObject(bankDef);
 }
 
+// --- The SHERIFF OFFICE (western law building + two-cell jail) ---------------
+// Side-gable wood-frame office on the street's east side, facing south: porch
+// + SHERIFF sign over the public door, a full office interior (desk facing
+// the door, wanted board + badge behind it, gun rack/cabinet, stove with a
+// real stovepipe, wash stand, coat rack, key rack, ammo crates, kerosene
+// lamp) and a two-cell jail block behind a barred corridor — both cell doors
+// are genuinely openable (E). All placement data comes from the sheriff
+// layout module — the SAME list the sheriff tests assert against.
+for (const sheriffDef of buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z)) {
+  manager.registerObject(sheriffDef);
+}
+
 // --- The bank's barred iron gate (truly openable manager doorway) ------------
 // The gate spawns CLOSED across the manager doorway. E swings both leaves
 // toward the lobby (~0.9 s). The collider is released the moment the leaves
@@ -503,6 +516,53 @@ function updateVaultDoor(delta: number): void {
   }
 }
 
+// --- The jail's two cell doors (truly openable, E) ---------------------------
+// Both spawn CLOSED in the bars line. E swings the barred leaf INWARD into
+// the cell (~0.8 s — a lighter, clankier feel than the big vault door). The
+// collider releases past half-open and re-arms past half-closed, so a CLOSED
+// cell always blocks the corridor and an OPEN cell never does. The 1.1 m
+// corridor lies west of the bars, so the inward swing never blocks it.
+const cellDoorSpecs = [
+  { uuid: SHERIFF_OBJECT_IDS.cellDoorA, open: 'Open cell one', close: 'Close cell one' },
+  { uuid: SHERIFF_OBJECT_IDS.cellDoorB, open: 'Open cell two', close: 'Close cell two' },
+] as const;
+const cellSwings = new Map<string, { value: number; target: number; speed: number }>();
+for (const spec of cellDoorSpecs) {
+  cellSwings.set(spec.uuid, { value: 0, target: 0, speed: 1 / 0.8 });
+  interactions.register({
+    uuid: spec.uuid,
+    get label() {
+      const swing = cellSwings.get(spec.uuid)!;
+      return swing.target > 0.5 ? spec.close : spec.open;
+    },
+    range: 2.0,
+    getPosition: () => manager.getObject(spec.uuid)?.transform.position
+      ?? { x: SHERIFF_SITE.x, y: 0, z: SHERIFF_SITE.z },
+    canInteract: () => Boolean(manager.getObject(spec.uuid)),
+    onInteract: () => {
+      const swing = cellSwings.get(spec.uuid)!;
+      swing.target = swing.target > 0.5 ? 0 : 1;
+      showStatusMessage(swing.target > 0.5 ? 'The cell door clanks open.' : 'The cell door slams shut.');
+    },
+  });
+}
+/** Advance both cell door swings and sync their colliders to the leaves. */
+function updateCellDoors(delta: number): void {
+  for (const spec of cellDoorSpecs) {
+    const swing = cellSwings.get(spec.uuid)!;
+    if (swing.value === swing.target) continue;
+    const dir = Math.sign(swing.target - swing.value);
+    swing.value = THREE.MathUtils.clamp(swing.value + dir * swing.speed * delta, 0, 1);
+    const root = scene.getObjectByProperty('uuid', spec.uuid);
+    if (root) setJailCellDoorOpen(root, swing.value);
+    const opened = swing.value > 0.5;
+    const def = manager.getObject(spec.uuid);
+    if (def && Boolean(def.metadata.collider) === opened) {
+      manager.updateObjectMetadata(spec.uuid, { collider: !opened });
+    }
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -510,10 +570,24 @@ function updateVaultDoor(delta: number): void {
 (window as unknown as Record<string, unknown>).__westTest = {
   teleport: (x: number, y: number, z: number) => {
     playerController.setPosition({ x, y, z });
+    // setPosition intentionally preserves momentum (editor placement API) —
+    // a harness teleport must NOT: the previous walk's residual velocity
+    // survives the jump and wedges the player circle into door jambs.
+    playerController.freezeMotion();
     playerController.setBodyYaw(Math.PI); // face +Z (south, the camera default)
   },
   setYaw: (yaw: number) => playerController.setBodyYaw(yaw),
   player: () => playerController.getPosition(),
+  yaw: () => ({ camera: playerController.getYaw(), body: playerController.getBodyYaw() }),
+  boundsNear: (x: number, z: number) => collisionWorld
+    .getCollisionBounds()
+    .filter((b) => b.min.x - 0.6 <= x && x <= b.max.x + 0.6 && b.min.z - 0.6 <= z && z <= b.max.z + 0.6)
+    .map((b) => ({
+      uuid: b.uuid,
+      name: manager.getObject(b.uuid)?.metadata.name ?? '',
+      min: { x: +b.min.x.toFixed(3), y: +b.min.y.toFixed(3), z: +b.min.z.toFixed(3) },
+      max: { x: +b.max.x.toFixed(3), y: +b.max.y.toFixed(3), z: +b.max.z.toFixed(3) },
+    })),
   gateBounds: () => collisionWorld
     .getCollisionBounds()
     .filter((b) => b.uuid === gateUuid)
@@ -542,6 +616,18 @@ function updateVaultDoor(delta: number): void {
       swing: vaultSwing.value,
       target: vaultSwing.target,
       collider: manager.getObject(vaultDoorUuid)?.metadata.collider ?? null,
+      hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  cell: (which: 'a' | 'b') => {
+    const uuid = which === 'a' ? SHERIFF_OBJECT_IDS.cellDoorA : SHERIFF_OBJECT_IDS.cellDoorB;
+    const root = scene.getObjectByProperty('uuid', uuid);
+    const hinge = root?.getObjectByName('jail-cell-door-hinge');
+    return {
+      swing: cellSwings.get(uuid)?.value ?? null,
+      target: cellSwings.get(uuid)?.target ?? null,
+      collider: manager.getObject(uuid)?.metadata.collider ?? null,
       hingeYaw: hinge ? hinge.rotation.y : null,
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
@@ -870,6 +956,13 @@ function loadSavedScene(): void {
   const vaultDef = manager.getObject(vaultDoorUuid);
   if (vaultDef && vaultDef.metadata.collider !== true) {
     manager.updateObjectMetadata(vaultDoorUuid, { collider: true });
+  }
+  // Cell doors likewise rebuild closed every boot.
+  for (const spec of cellDoorSpecs) {
+    const def = manager.getObject(spec.uuid);
+    if (def && def.metadata.collider !== true) {
+      manager.updateObjectMetadata(spec.uuid, { collider: true });
+    }
   }
   updateSaveStatus();
 }
@@ -1745,6 +1838,7 @@ function animate(): void {
   syncHorse(delta, horseSnap);
   updateSecureGate(delta); // iron gate swing + collider/walkability sync
   updateVaultDoor(delta); // big vault door swing + collider/walkability sync
+  updateCellDoors(delta); // jail cell door swings + collider/walkability sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

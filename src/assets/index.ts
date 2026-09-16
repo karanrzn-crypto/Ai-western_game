@@ -10,3 +10,4 @@ export { AssetRegistry } from './AssetRegistry.js';
 export { CubeAssetFactory, GroundAssetFactory, registerPrimitiveFactories } from './PrimitiveAssetFactory.js';
 export * from './saloon/index.js';
 export * from './bank/index.js';
+export * from './sheriff/index.js';

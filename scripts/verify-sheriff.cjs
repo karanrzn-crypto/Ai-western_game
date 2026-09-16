@@ -2,10 +2,12 @@
  * The headless SwiftShader harness runs the RAF loop at a very low fps, so
  * every wait POLLS game state instead of sleeping fixed wall times.
  * Proves the full acceptance chain in a live browser:
- *   1. boot: the building + the 14 user assets exist; both cell doors spawn
- *      CLOSED with their colliders armed
- *   2. the public path works: street → porch → front doorway → office,
- *      where the desk physically blocks the straight-on approach
+ *   1. boot: the building + the 14 user assets + the openable front door
+ *      exist; the cell doors AND the front door spawn CLOSED with colliders
+ *   2. the public path: street → porch → the CLOSED front door BLOCKS → [E]
+ *      opens it (smooth swing, collider released) → walk in → [E] close from
+ *      inside blocks → re-open → the desk physically blocks the straight-on
+ *      approach
  *   3. the office → jail corridor path works (divider doorway), and the
  *      corridor lane is clear between the two CLOSED cell doors
  *   4. cell A: [E] prompt, closed door blocks, E opens (collider released),
@@ -51,6 +53,7 @@ const ok = (name, pass, detail) => {
   const shot = (name) => page.screenshot({ path: `${OUT}/${name}.png` });
   const player = () => page.evaluate(() => window.__westTest.player());
   const cell = (which) => page.evaluate((w) => window.__westTest.cell(w), which);
+  const door = () => page.evaluate(() => window.__westTest.door());
   const teleport = (x, y, z, yaw) => page.evaluate(([a, b, c, d]) => {
     window.__westTest.teleport(a, b, c);
     window.__westTest.setYaw(d);
@@ -92,6 +95,20 @@ const ok = (name, pass, detail) => {
       if (!pred(state)) console.log(`  ${label} try ${i + 1} failed: prompt="${state.prompt}" swing=${state.swing} collider=${state.collider}`);
     }
     if (!pred(state)) state = await waitFor(() => cell(which), pred, 30000, label);
+    return state;
+  };
+
+  /** Press E until the FRONT door state flips to pred (same discipline as
+   *  pressUntil — the player must be fully stopped and inside the 2 m range). */
+  const pressDoorUntil = async (pred, label) => {
+    await settle();
+    let state = await door();
+    for (let i = 0; i < 4 && !pred(state); i++) {
+      await press('KeyE');
+      state = await waitFor(door, pred, 9000, `${label} (try ${i + 1})`);
+      if (!pred(state)) console.log(`  ${label} try ${i + 1} failed: prompt="${state.prompt}" swing=${state.swing} collider=${state.collider}`);
+    }
+    if (!pred(state)) state = await waitFor(door, pred, 30000, label);
     return state;
   };
 
@@ -179,6 +196,7 @@ const ok = (name, pass, detail) => {
     ammoCrate: '90000000-0000-4000-9000-000000000022',
     badge: '90000000-0000-4000-9000-00000000001e',
     deskLamp: '90000000-0000-4000-9000-00000000001c',
+    frontDoor: '90000000-0000-4000-9000-000000000029',
   };
   const presence = await page.evaluate((ids) => {
     const out = {};
@@ -186,7 +204,7 @@ const ok = (name, pass, detail) => {
     return out;
   }, ids);
   const missing = Object.entries(presence).filter(([, v]) => !v).map(([k]) => k);
-  ok('boot: building + all 14 user assets registered', missing.length === 0,
+  ok('boot: building + all 14 user assets + the openable front door registered', missing.length === 0,
     missing.length ? `MISSING: ${missing.join(', ')}` : `${Object.keys(presence).length} key objects present`);
   let a = await cell('a');
   let b = await cell('b');
@@ -254,23 +272,70 @@ const ok = (name, pass, detail) => {
     return false;
   };
 
-  // --- 2) exterior shot + the public path: street → porch → front door -------
+  // --- 2) exterior shot + the public path through the OPENABLE front door ----
   await teleport(10.5, 2.3, 9.5, 0);
   await page.waitForTimeout(700);
   await shot('01-exterior-facade');
+  let d = await door();
+  ok('boot: front door CLOSED + collider armed + hinge at rest',
+    d.swing === 0 && d.collider === true && d.state === 'closed' && Math.abs(d.hingeYaw) < 1e-6,
+    `swing=${d.swing} collider=${d.collider} state=${d.state} hinge=${d.hingeYaw}`);
   await teleport(10.5, 2.3, 6.0, 0);
   await page.waitForTimeout(500);
-  const atDesk = await walk('z', -1, -1.0, 45000, 'street → porch → office, at the desk');
+  const atFront = await walk('z', -1, 1.0, 30000, 'street → porch → the CLOSED front door');
   ok(
-    'public path: walked in through the front doorway; the desk BLOCKS straight-on',
-    Math.abs(atDesk.z - (-0.2)) < 0.16 && atDesk.z < 0,
-    `player z=${atDesk.z.toFixed(3)} (expected stop −0.2 = desk's yaw-conservative 1×1 box south face −0.55 + radius)`,
+    'front door: CLOSED door BLOCKS the public entrance (stops at the door box + radius)',
+    Math.abs(atFront.z - 2.975) < 0.1,
+    `player z=${atFront.z.toFixed(3)} (expected stop 2.975 = door box south face 2.625 + radius)`,
   );
-  await shot('02-office-desk');
+  await settle();
+  d = await door();
+  ok('front door: [E] prompt shows at the closed door', d.prompt.includes('Open the office door'),
+    `prompt="${d.prompt}"`);
+  // Best-effort smoothness probe: catch the interpolation between the frames.
+  await press('KeyE');
+  let sawOpening = false;
+  for (let i = 0; i < 12; i++) {
+    const s = await door();
+    if (s.state === 'opening') { sawOpening = true; break; }
+    if (s.swing >= 1) break;
+    await page.waitForTimeout(50);
+  }
+  d = await pressDoorUntil((s) => s.swing >= 1 && s.collider === false, 'front door open');
+  ok('front door: OPEN — swing complete + collider released + hinge +100° inward',
+    d.swing >= 1 && d.collider === false && Math.abs(d.hingeYaw - 1.7453) < 0.01,
+    `swing=${d.swing.toFixed(3)} collider=${d.collider} hinge=${d.hingeYaw.toFixed(3)}`);
+  ok('front door: smooth interpolation observed (opening state caught between frames)',
+    sawOpening, sawOpening ? 'opening state observed mid-swing' : 'swing completed inside one frame gap (1 fps harness)');
+  await shot('02-front-door-open-exterior');
+  const inOffice = await walk('z', -1, -1.0, 45000, 'through the open front doorway, at the desk');
+  ok(
+    'public path: walked IN through the open doorway; the desk BLOCKS straight-on',
+    Math.abs(inOffice.z - (-0.2)) < 0.16 && inOffice.z < 0,
+    `player z=${inOffice.z.toFixed(3)} (expected stop −0.2 = desk's yaw-conservative 1×1 box south face −0.55 + radius)`,
+  );
+  await shot('02b-office-desk');
+  // Close the door FROM INSIDE and prove it blocks again, then re-open.
+  await teleport(10.5, 2.3, 1.15, Math.PI);
+  await page.waitForTimeout(500);
+  d = await pressDoorUntil((s) => s.swing <= 0 && s.collider === true, 'front door closed from inside');
+  ok('front door: re-closed from inside — collider re-armed',
+    d.swing <= 0 && d.collider === true && d.state === 'closed',
+    `swing=${d.swing.toFixed(3)} collider=${d.collider} state=${d.state}`);
+  const heldOut = await walk('z', 1, 2.6, 20000, 'south into the closed front door (from inside)');
+  ok('front door: the CLOSED door blocks from the OFFICE side too',
+    Math.abs(heldOut.z - 1.275) < 0.12,
+    `player z=${heldOut.z.toFixed(3)} (expected stop 1.275 = door box north face 1.625 − radius)`);
+  await pressDoorUntil((s) => s.swing >= 1 && s.collider === false, 'front door re-opened for the interior tour');
+  await shot('02d-front-door-interior-open');
+  // Wanted board closeup (the z-fight fix: 4 posters on distinct z planes).
+  await teleport(10.5, 2.3, -2.7, Math.PI);
+  await page.waitForTimeout(700);
+  await shot('02f-wanted-board');
   // Office interior: the rebuilt gun cabinet + gun rack + badge line.
   await teleport(12.1, 2.3, 0.4, -Math.PI / 2 + 0.5);
   await page.waitForTimeout(600);
-  await shot('02b-office-cabinet-rack');
+  await shot('02e-office-cabinet-rack');
 
   // --- 3) walk around the desk, then office → jail corridor ------------------
   await teleport(11.9, 2.3, 0.2, 0);

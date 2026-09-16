@@ -50,6 +50,8 @@
 
 import * as THREE from 'three';
 
+import { SHERIFF_LAYOUT } from './SheriffLayout.js';
+
 const WORLD_SCALE = 1;
 
 // ---------------------------------------------------------------------------
@@ -603,6 +605,106 @@ export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORL
   return g;
 }
 
+/* ========================================================================== */
+/* The Sheriff OFFICE FRONT DOOR — a real openable door (E), spawns CLOSED     */
+/* ========================================================================== */
+
+/**
+ * Panelled wood front door for the office's south doorway, hung on a REAL
+ * hinge pivot. The layout places this asset's root at the doorway center on
+ * the wall mid-plane; inside, the 'front-door-hinge' group (the user's
+ * DoorRoot) sits at the actual hinge axis — 4 cm off the WEST jamb — and the
+ * leaf meshes are its children, so opening the door is a pure rotation of
+ * that pivot: no synthetic mesh-center spin, no transform accumulation.
+ *
+ * Geometry discipline (all dims from SHERIFF_LAYOUT.frontDoor — dw 1.1, dh 2.3):
+ *   • leaf 1.01 × 2.25 × 0.06, hinge edge 4 cm off the west jamb, latch edge
+ *     5 cm off the east jamb, top 1 cm under the casing's 2 cm hang-down,
+ *     bottom 2 cm over the threshold — the 100° inward sweep grazes NOTHING:
+ *     the swept hinge disc (r = 3 cm) stays 1 cm clear of the wall face and
+ *     only grazes the casing hang's boundary plane at exactly 90° (zero-area
+ *     contact), and the tip never crosses the jambs (verified against the
+ *     wall band z ∈ [3.55, 3.70] and both casing rings).
+ *   • the glass pane is mounted 3 cm PROUD of the leaf's street face inside
+ *     a trim frame — the old build sat its front face EXACTLY on the leaf
+ *     face (same-normal coplanar pair → the entrance "color flicker").
+ *   • strap hinges + a wrought knob dress the street face; everything on the
+ *     leaf is proud of it (back-to-back contacts only, never flush-coplanar).
+ */
+export function buildSheriffFrontDoor(): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'sheriff-front-door';
+
+  const dw = SHERIFF_LAYOUT.frontDoor.xMax - SHERIFF_LAYOUT.frontDoor.xMin;
+  const dh = SHERIFF_LAYOUT.frontDoor.height;
+  const hingeOffX = 0.04;                    // hinge axis 4 cm off the west jamb
+  const leafW = dw - hingeOffX - 0.05;       // 1.01 — latch edge 5 cm off the east jamb
+  const leafH = dh - 0.05;                   // 2.25 — top 1 cm under the casing hang
+  const leafT = 0.06;
+  const bottomLift = 0.02;                   // leaf bottom 2 cm over the threshold
+
+  // The DoorRoot: an independent pivot AT the real hinge axis. Everything
+  // that swings is a child; setSheriffFrontDoorOpen rotates ONLY this group.
+  const hinge = new THREE.Group();
+  hinge.name = 'front-door-hinge';
+  hinge.position.set(-dw / 2 + hingeOffX, 0, 0);
+  g.add(hinge);
+
+  // Leaf slab.
+  const slab = mesh(new THREE.BoxGeometry(leafW, leafH, leafT), MAT.woodTrim(), leafW / 2, bottomLift + leafH / 2, 0);
+  slab.name = 'front-door-leaf';
+  slab.castShadow = true;
+  slab.receiveShadow = true;
+  hinge.add(slab);
+
+  // Glazed upper section: glass pane 3 cm PROUD of the street face inside a
+  // trim frame 4.5 cm proud — the old flush pane front was the z-fight.
+  const glassW = leafW * 0.55;
+  const glassH = 0.6;
+  const upperGlassY = bottomLift + leafH - 0.62; // glass band center
+  const glass = mesh(new THREE.BoxGeometry(glassW, glassH, 0.03), MAT.glassClear(), leafW / 2, upperGlassY, leafT / 2 + 0.015);
+  glass.name = 'front-door-glass';
+  glass.castShadow = false;
+  hinge.add(glass);
+  const frT = 0.045; // frame depth (z), proud of the glass front by 1.5 cm
+  const frZ = leafT / 2 + frT / 2; // back face exactly ON the slab face (back-to-back)
+  const frW = glassW + 0.1;
+  const frH = glassH + 0.1;
+  hinge.add(mesh(new THREE.BoxGeometry(frW, 0.05, frT), MAT.woodDark(), leafW / 2, upperGlassY + frH / 2 - 0.025, frZ));
+  hinge.add(mesh(new THREE.BoxGeometry(frW, 0.05, frT), MAT.woodDark(), leafW / 2, upperGlassY - frH / 2 + 0.025, frZ));
+  hinge.add(mesh(new THREE.BoxGeometry(0.05, glassH, frT), MAT.woodDark(), leafW / 2 - frW / 2 + 0.025, upperGlassY, frZ));
+  hinge.add(mesh(new THREE.BoxGeometry(0.05, glassH, frT), MAT.woodDark(), leafW / 2 + frW / 2 - 0.025, upperGlassY, frZ));
+
+  // Two wrought-iron strap hinges ON the street face at the hinge edge
+  // (proud plates, back-to-back with the slab — the mounted-hinge look).
+  [bottomLift + 0.42, bottomLift + leafH - 0.42].forEach((sy) => {
+    const strap = mesh(new THREE.BoxGeometry(0.3, 0.05, 0.015), MAT.ironDark(), 0.15, sy, leafT / 2 + 0.0075);
+    strap.name = 'front-door-strap';
+    hinge.add(strap);
+  });
+
+  // Wrought knob + rose on the street face near the latch edge.
+  const knob = mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.05, 10), MAT.ironDark(), leafW - 0.09, 1.02, leafT / 2 + 0.02);
+  knob.rotation.x = Math.PI / 2;
+  knob.name = 'front-door-knob';
+  hinge.add(knob);
+  hinge.add(mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.014, 10), MAT.ironDark(), leafW - 0.09, 1.02, leafT / 2 + 0.007));
+  // Interior thumb latch (the office side reads as a finished door too).
+  const thumb = mesh(new THREE.BoxGeometry(0.09, 0.05, 0.02), MAT.ironDark(), leafW - 0.09, 1.02, -leafT / 2 - 0.01);
+  thumb.name = 'front-door-thumb';
+  hinge.add(thumb);
+
+  // Hinge knuckles ON the axis (like the cell doors — never mid-door specks).
+  [bottomLift + 0.42, bottomLift + leafH - 0.42].forEach((sy) => {
+    const knuckle = mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.09, 10), MAT.ironDark(), -dw / 2 + hingeOffX, sy, 0);
+    knuckle.rotation.z = Math.PI / 2;
+    knuckle.name = 'front-door-knuckle';
+    g.add(knuckle); // mounted on the ROOT (static jamb side), not the leaf
+  });
+
+  return g;
+}
+
 /** Iron-framed jail cot with a striped mattress and a flat pillow. */
 export function buildCellCot(): THREE.Group {
   const g = new THREE.Group();
@@ -759,7 +861,15 @@ export function buildGunCabinet(): THREE.Group {
   return g;
 }
 
-/** Wood bulletin board layered with a handful of painted wanted posters. */
+/** Wood bulletin board layered with a handful of painted wanted posters.
+ *
+ *  Z-FIGHT DISCIPLINE (the user-reported flicker): every poster used to sit
+ *  at the SAME z (0.017) — several of them OVERLAP each other, so overlapping
+ *  same-normal planes fought the depth buffer and the board "changed color"
+ *  as the camera moved. Now each poster carries its OWN real depth offset
+ *  (6 mm steps, nearest 6 mm off the board face) — stacked papers, never
+ *  coplanar; the pin nails are CHILDREN of their poster (they ride the
+ *  poster's rotation and always poke through its own plane). */
 export function buildWantedBoard(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'wanted-board';
@@ -777,22 +887,29 @@ export function buildWantedBoard(): THREE.Group {
     ['ONE-EYE PETE', '$350 REWARD'],
     ['THE KID', '$600 REWARD'],
   ];
-  const positions: [number, number, number][] = [
-    [-0.32, 0.08, 0.03],
-    [0.05, 0.15, -0.02],
-    [0.3, -0.05, 0.04],
-    [-0.05, -0.18, 0.02],
+  // [x, y, rot, z] — the 4th entry is the poster's REAL plane offset: strict
+  // 6 mm ladder off the board face (board front = +0.015), so no two posters
+  // (nor any poster and the board) ever share a z plane.
+  const positions: [number, number, number, number][] = [
+    [-0.32, 0.08, 0.03, 0.021],
+    [0.05, 0.15, -0.02, 0.027],
+    [0.3, -0.05, 0.04, 0.033],
+    [-0.05, -0.18, 0.02, 0.039],
   ];
   names.forEach(([name, reward], i) => {
     const tex = wantedPosterTexture(name, reward, 220);
-    const [px, py, rot] = positions[i];
-    const poster = mesh(new THREE.PlaneGeometry(0.34, 0.44), stdMat(PARCHMENT_AGED, tex), px, h / 2 + 0.4 + py, 0.017);
+    const [px, py, rot, pz] = positions[i];
+    const poster = mesh(new THREE.PlaneGeometry(0.34, 0.44), stdMat(PARCHMENT_AGED, tex), px, h / 2 + 0.4 + py, pz);
     poster.rotation.z = rot;
+    poster.name = `wanted-poster-${i}`;
     g.add(poster);
-    // small nail pins at the top corners
+    // small nail pins at the top corners — CHILDREN of the poster so they
+    // rotate with it and sit proud of ITS plane (never re-coplanar with the
+    // board face when the poster offset changes)
     [-0.13, 0.13].forEach((nx) => {
-      const nail = mesh(new THREE.SphereGeometry(0.008, 6, 6), MAT.ironDark(), px + nx, h / 2 + 0.4 + py + 0.2, 0.02);
-      g.add(nail);
+      const nail = mesh(new THREE.SphereGeometry(0.008, 6, 6), MAT.ironDark(), nx, 0.2, 0.004);
+      nail.name = `wanted-poster-${i}-nail`;
+      poster.add(nail);
     });
   });
 
@@ -1160,7 +1277,8 @@ export const SHERIFF_OFFICE_ASSET_TYPES = Object.freeze([
 
 export type SheriffOfficeAssetType = (typeof SHERIFF_OFFICE_ASSET_TYPES)[number];
 
-/** Register the 14 user-supplied asset types (the building shell registers separately). */
+/** Register the 14 user-supplied asset types (the building shell + the
+ *  openable front door register separately). */
 export function registerSheriffAssetFactories(registry: AssetRegistry): void {
   registry.register('sheriff-desk', new SheriffAssetFactory(() => buildSheriffDesk()), 'Sheriff Desk');
   registry.register('sheriff-chair', new SheriffAssetFactory(() => buildSheriffChair()), 'Sheriff Chair');
@@ -1198,4 +1316,27 @@ export const JAIL_CELL_DOOR_OPEN_ANGLE = 1.396;
 export function setJailCellDoorOpen(root: THREE.Object3D, t: number): void {
   const hinge = root.getObjectByName('jail-cell-door-hinge');
   if (hinge) hinge.rotation.y = THREE.MathUtils.clamp(t, 0, 1) * JAIL_CELL_DOOR_OPEN_ANGLE;
+}
+
+/* ---------------------------------------------------------------------------
+ * Sheriff FRONT door — open/close API (the office's public entrance).
+ * The door spawns CLOSED across the south doorway; E swings the leaf INWARD
+ * into the office around the real hinge pivot ('front-door-hinge', 4 cm off
+ * the west jamb). 100° — the sweep was verified against the wall band, both
+ * casing rings and every furniture line: the leaf grazes nothing. Pure pose-
+ * from-t rotation (position is RE-DERIVED from the state every frame, never
+ * accumulated) — shared verbatim by the interaction system and the tests.
+ * ------------------------------------------------------------------------- */
+
+/** Swing angle (radians) the office front door opens through: 100° inward. */
+export const SHERIFF_FRONT_DOOR_OPEN_ANGLE = (100 * Math.PI) / 180;
+
+/**
+ * Pose the front door between CLOSED (t = 0) and FULLY OPEN (t = 1).
+ * Positive rotation about the hinge pivot's local +Y swings the leaf tip
+ * INTO the office (the root's +z faces the street; +yaw turns +x toward −z).
+ */
+export function setSheriffFrontDoorOpen(root: THREE.Object3D, t: number): void {
+  const hinge = root.getObjectByName('front-door-hinge');
+  if (hinge) hinge.rotation.y = THREE.MathUtils.clamp(t, 0, 1) * SHERIFF_FRONT_DOOR_OPEN_ANGLE;
 }

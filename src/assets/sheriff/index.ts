@@ -44,12 +44,15 @@ export {
   buildWashStand,
   buildCoatRack,
   buildAmmoCrate,
+  buildSheriffFrontDoor,
   buildSheriffOfficeScene,
   SheriffAssetFactory,
   SHERIFF_OFFICE_ASSET_TYPES,
   registerSheriffAssetFactories,
   JAIL_CELL_DOOR_OPEN_ANGLE,
   setJailCellDoorOpen,
+  SHERIFF_FRONT_DOOR_OPEN_ANGLE,
+  setSheriffFrontDoorOpen,
 } from './SheriffOfficeAssetFactory.js';
 export type { SheriffOfficeAssetType } from './SheriffOfficeAssetFactory.js';
 export {

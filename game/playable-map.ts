@@ -63,6 +63,7 @@ import {
   SHERIFF_SITE,
   SHERIFF_OBJECT_IDS,
   setJailCellDoorOpen,
+  setSheriffFrontDoorOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -563,6 +564,47 @@ function updateCellDoors(delta: number): void {
   }
 }
 
+// --- The office FRONT door (truly openable public entrance, E) ---------------
+// Spawns CLOSED across the south doorway. E swings the leaf INWARD into the
+// office around its real hinge pivot (~0.9 s — the vault-door feel; it is a
+// heavier public door than the cell gates). The pose is RE-DERIVED from the
+// swing state every frame (setSheriffFrontDoorOpen(root, value)) so repeated
+// toggles can never accumulate transform error, and pressing E mid-swing
+// merely flips the TARGET — the value keeps interpolating from where it is
+// (deterministic Closed→Opening→Open / Open→Closing→Closed state machine).
+// Collider == the cell-door policy: the def's yaw-conservative 1×1 box is
+// ARMED while the door is (at least half) closed and RELEASED past half-open,
+// synced through the same metadata invalidation the gate/vault use.
+const frontDoorUuid = SHERIFF_OBJECT_IDS.frontDoor;
+const frontSwing = { value: 0, target: 0, speed: 1 / 0.9 };
+interactions.register({
+  uuid: frontDoorUuid,
+  get label() {
+    return frontSwing.target > 0.5 ? 'Close the office door' : 'Open the office door';
+  },
+  range: 2.0,
+  getPosition: () => manager.getObject(frontDoorUuid)?.transform.position
+    ?? { x: SHERIFF_SITE.x, y: 0, z: SHERIFF_SITE.z },
+  canInteract: () => Boolean(manager.getObject(frontDoorUuid)),
+  onInteract: () => {
+    frontSwing.target = frontSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(frontSwing.target > 0.5 ? 'The office door creaks open.' : 'The office door swings shut.');
+  },
+});
+/** Advance the front door swing and sync its collider to the visible leaf. */
+function updateSheriffFrontDoor(delta: number): void {
+  if (frontSwing.value === frontSwing.target) return;
+  const dir = Math.sign(frontSwing.target - frontSwing.value);
+  frontSwing.value = THREE.MathUtils.clamp(frontSwing.value + dir * frontSwing.speed * delta, 0, 1);
+  const root = scene.getObjectByProperty('uuid', frontDoorUuid);
+  if (root) setSheriffFrontDoorOpen(root, frontSwing.value);
+  const opened = frontSwing.value > 0.5;
+  const def = manager.getObject(frontDoorUuid);
+  if (def && Boolean(def.metadata.collider) === opened) {
+    manager.updateObjectMetadata(frontDoorUuid, { collider: !opened });
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -631,6 +673,21 @@ function updateCellDoors(delta: number): void {
       swing: cellSwings.get(uuid)?.value ?? null,
       target: cellSwings.get(uuid)?.target ?? null,
       collider: manager.getObject(uuid)?.metadata.collider ?? null,
+      hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  // The office front door: swing + explicit 4-state machine readout for the
+  // verify harness (closed → opening → open → closing → closed).
+  door: () => {
+    const root = scene.getObjectByProperty('uuid', frontDoorUuid);
+    const hinge = root?.getObjectByName('front-door-hinge');
+    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    return {
+      swing: frontSwing.value,
+      target: frontSwing.target,
+      state: at(frontSwing.value, frontSwing.target),
+      collider: manager.getObject(frontDoorUuid)?.metadata.collider ?? null,
       hingeYaw: hinge ? hinge.rotation.y : null,
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
@@ -1898,6 +1955,7 @@ function animate(): void {
   updateSecureGate(delta); // iron gate swing + collider/walkability sync
   updateVaultDoor(delta); // big vault door swing + collider/walkability sync
   updateCellDoors(delta); // jail cell door swings + collider/walkability sync
+  updateSheriffFrontDoor(delta); // office front door swing + collider/walkability sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

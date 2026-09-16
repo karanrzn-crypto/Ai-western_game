@@ -48,8 +48,12 @@ import {
   SHERIFF_SITE,
   SHERIFF_OBJECT_IDS,
   buildSheriffMapObjects,
+  buildSheriffFrontDoor,
+  buildWantedBoard,
   setJailCellDoorOpen,
   JAIL_CELL_DOOR_OPEN_ANGLE,
+  setSheriffFrontDoorOpen,
+  SHERIFF_FRONT_DOOR_OPEN_ANGLE,
 } from '../src/index.js';
 import type { ObjectDefinition } from '../src/index.js';
 
@@ -164,9 +168,11 @@ test('SHERIFF ASSETS: the 14 user builders keep their signatures', async () => {
     && ((c as THREE.Mesh).material as THREE.MeshStandardMaterial).transparent);
   assert.ok(glass, 'gun cabinet must carry its glass front');
 
-  // Wanted board: 4 painted posters + nails.
+  // Wanted board: 4 painted posters + nails (each poster named, nails are
+  // its children — the z-ladder itself is asserted in the dedicated test).
   const board = (await create('wanted-board')) as THREE.Group;
-  const posterCount = board.children.filter((c) => c.name === '' && (c as THREE.Mesh).isMesh
+  const posterCount = board.children.filter((c) => c.name.startsWith('wanted-poster-')
+    && (c as THREE.Mesh).isMesh
     && (c as THREE.Mesh).geometry instanceof THREE.PlaneGeometry
     && Math.abs(((c as THREE.Mesh).geometry as THREE.PlaneGeometry).parameters.width - 0.34) < 1e-6).length;
   assert.equal(posterCount, 4, 'wanted board must layer exactly four posters');
@@ -200,7 +206,7 @@ test('SHERIFF ASSETS: the 14 user builders keep their signatures', async () => {
 
 /* ---- Shell ----------------------------------------------------------------- */
 
-test('SHERIFF SHELL: porch, gable roof, sign, door leaf, barred cages, stovepipe', async () => {
+test('SHERIFF SHELL: porch, gable roof, sign, door casing rings, barred cages, stovepipe', async () => {
   const registry = makeRegistry();
   const obj = (await registry.create(movedDef({ assetType: 'sheriff-building' }))) as THREE.Group;
   assert.ok(obj.isObject3D, 'the shell must build an Object3D');
@@ -209,12 +215,16 @@ test('SHERIFF SHELL: porch, gable roof, sign, door leaf, barred cages, stovepipe
   for (const part of [
     'porch-post', 'porch-roof', 'roof-slab-south', 'roof-slab-north',
     'gable-infill-east', 'gable-infill-west', 'ridge-cap',
-    'sign-face', 'city-jail-plaque', 'front-door-leaf', 'door-glass',
+    'sign-face', 'city-jail-plaque', 'door-casing-west-in', 'door-casing-west-out',
     'stovepipe', 'stovepipe-cap', 'foundation-south',
     'frieze-south', 'water-table-south', 'corner-board-wn',
   ]) {
     assert.ok(names.has(part), `shell must contain "${part}"`);
   }
+  // The openable LEAF is its own 'sheriff-front-door' asset — the shell must
+  // NOT carry a door leaf anymore (the old propped-open static leaf).
+  assert.ok(!names.has('front-door-leaf'), 'shell must NOT own the door leaf (it is a separate openable asset)');
+  assert.ok(!names.has('door-glass'), 'shell must NOT own the door glass (it moved with the leaf)');
   // The shell owns NO wall geometry — the six windows exist, walls do not.
   assert.ok([...names].some((n) => n.startsWith('window-')), 'shell must carry the window assemblies');
   assert.ok(!names.has('wall'), 'shell must NOT own wall boxes (unit-box walls own the colliders)');
@@ -277,6 +287,8 @@ test('SHERIFF COLLISION: masonry and solid furniture carry colliders, decor does
   // The cell doors spawn CLOSED — they ARE the cell walkability switches.
   assert.equal(flag(SHERIFF_OBJECT_IDS.cellDoorA), true, 'closed cell door A must be a collider');
   assert.equal(flag(SHERIFF_OBJECT_IDS.cellDoorB), true, 'closed cell door B must be a collider');
+  // The front door spawns CLOSED — it is the office's public walkability switch.
+  assert.equal(flag(SHERIFF_OBJECT_IDS.frontDoor), true, 'closed front door must be a collider');
   // Solid furniture.
   for (const id of [SHERIFF_OBJECT_IDS.desk, SHERIFF_OBJECT_IDS.gunCabinet,
     SHERIFF_OBJECT_IDS.stove, SHERIFF_OBJECT_IDS.cotA, SHERIFF_OBJECT_IDS.cotB]) {
@@ -327,8 +339,44 @@ test('SHERIFF WALKABILITY: porch step, doorway, around-desk paths, jail corridor
     return p;
   };
 
-  // 1) Street → porch deck (0.15 step) → through the front door into the office.
-  let p = walk({ x: doorX, y: PLAYER_HEIGHT, z: S.z + 7.0 }, { x: 0, y: 0, z: -0.2 }, 45);
+  // 1) The CLOSED front door blocks the public entrance at its collider box's
+  // south face (the def's yaw-conservative 1×1 box centered on the doorway).
+  let p: { x: number; y: number; z: number };
+  const frontDoorDef = defs.find((d) => d.uuid === SHERIFF_OBJECT_IDS.frontDoor)!;
+  const doorBoxFaceZ = frontDoorDef.transform.position.z + 0.5 + 0.35;
+  const atDoor = walk({ x: doorX, y: PLAYER_HEIGHT, z: S.z + 7.0 }, { x: 0, y: 0, z: -0.2 }, 45);
+  assert.ok(
+    Math.abs(atDoor.z - doorBoxFaceZ) < 0.06,
+    `closed front door must block at z≈${doorBoxFaceZ.toFixed(2)} (stopped z=${atDoor.z.toFixed(2)})`,
+  );
+
+  // 1b) With the door OPEN (collider released — exactly what the E interaction
+  // does) the same walk steps onto the porch, crosses the facade line through
+  // the doorway and stands on the office floor.
+  const entryDefs = defs.map((d) => (d.uuid === SHERIFF_OBJECT_IDS.frontDoor
+    ? { ...d, metadata: { ...d.metadata, collider: false } }
+    : d));
+  const entryWorld = new CollisionWorld(entryDefs);
+  const entryWalk = (
+    from: { x: number; y: number; z: number },
+    delta: { x: number; y: number; z: number },
+    steps: number,
+  ): { x: number; y: number; z: number } => {
+    let p = { ...from };
+    for (let i = 0; i < steps; i += 1) {
+      const r = entryWorld.movePlayer(p, delta);
+      if (!r.blockedX && !r.blockedZ) { p = r.position; continue; }
+      const lifted = entryWorld.movePlayer(p, { x: 0, y: PLAYER_STEP_HEIGHT, z: 0 });
+      const moved = entryWorld.movePlayer(lifted.position, delta);
+      const settled = entryWorld.movePlayer(moved.position, { x: 0, y: -(PLAYER_STEP_HEIGHT + 0.05), z: 0 });
+      const progressed = Math.abs(settled.position.x - p.x) > 1e-6 || Math.abs(settled.position.z - p.z) > 1e-6;
+      const oneRise = settled.position.y - p.y <= PLAYER_STEP_HEIGHT + 1e-6;
+      if (progressed && oneRise) p = settled.position;
+      else break;
+    }
+    return p;
+  };
+  p = entryWalk({ x: doorX, y: PLAYER_HEIGHT, z: S.z + 7.0 }, { x: 0, y: 0, z: -0.2 }, 45);
   assert.ok(p.y > L.floorTop, `player must stand on the porch/floor slab (y=${p.y.toFixed(2)})`);
   assert.ok(p.z < S.z + L.depth / 2, 'player must pass the facade line through the doorway');
 
@@ -627,6 +675,184 @@ test('SHERIFF CELL DOOR FRAME: knuckles at the hinge, frame faces never flush wi
     for (const p of posts) {
       assert.ok(Math.abs(Math.abs(p.position.x) - 0.59) < 1e-6, 'posts straddle ±0.59 — 2 cm past the ±0.61 gap edges');
     }
+  }
+});
+
+/* ---- Wanted board (z-fighting) -------------------------------------------------- */
+
+test('SHERIFF WANTED BOARD: every poster rides its OWN z plane — no coplanar pair', () => {
+  const board = buildWantedBoard();
+  const posters = board.children.filter((c) => c.name.startsWith('wanted-poster-') && !(c.name.includes('nail')));
+  assert.equal(posters.length, 4, 'the board carries four wanted posters');
+  // Board front face (box depth 0.03 centered z=0 → +0.015).
+  const boardFront = 0.015;
+  const planes = posters.map((p) => p.position.z).sort((a, b) => a - b);
+  for (const z of planes) {
+    assert.ok(z - boardFront >= 0.005, `poster plane z=${z} must sit ≥5 mm off the board face (${boardFront})`);
+  }
+  for (let i = 1; i < planes.length; i++) {
+    assert.ok(planes[i] - planes[i - 1] >= 0.005,
+      `poster planes must differ ≥5 mm (planes ${planes[i - 1]} vs ${planes[i]} — the old all-0.017 build flickered)`);
+  }
+  // Pin nails: exactly 2 per poster, CHILDREN of their poster, sitting proud
+  // of its own plane so they never re-coplanar with the board face.
+  for (const poster of posters) {
+    const nails = poster.children.filter((c) => c.name.endsWith('-nail'));
+    assert.equal(nails.length, 2, `${poster.name}: exactly two pin nails`);
+    for (const nail of nails) {
+      assert.ok(nail.position.z > 0.002, `${poster.name}: nail must poke proud of its poster plane`);
+    }
+  }
+});
+
+/* ---- Front door (open/close system) ---------------------------------------------- */
+
+test('SHERIFF FRONT DOOR: real def, spawns CLOSED on a genuine hinge pivot', async () => {
+  const registry = makeRegistry();
+  const defs = buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z);
+  const def = defs.find((d) => d.uuid === SHERIFF_OBJECT_IDS.frontDoor);
+  assert.ok(def, 'the layout must place the front door');
+  assert.equal(def!.assetType, 'sheriff-front-door');
+  assert.equal(def!.metadata.collider, true, 'the door spawns CLOSED → collider armed');
+
+  const L = SHERIFF_LAYOUT;
+  const S = SHERIFF_SITE;
+  // The def sits at the doorway center on the wall mid-plane (z = 3.625 local).
+  const doorMidX = (L.frontDoor.xMin + L.frontDoor.xMax) / 2;
+  assert.ok(Math.abs(def!.transform.position.x - (S.x + doorMidX)) < 1e-6, 'door def centered on the doorway');
+  assert.ok(Math.abs(def!.transform.position.z - (S.z + (L.depth - L.wallThickness) / 2)) < 1e-6,
+    'door def on the wall mid-plane');
+  assert.ok(Math.abs(def!.transform.scale.x - 1) < 1e-6, 'unit scale (visual built at real size)');
+
+  const obj = applyDefinition(await registry.create(def!), def!) as THREE.Group;
+  const hinge = obj.getObjectByName('front-door-hinge');
+  assert.ok(hinge, "the asset must expose the 'front-door-hinge' DoorRoot pivot");
+  assert.equal(hinge!.rotation.y, 0, 'the door spawns CLOSED (zero hinge yaw)');
+  // The pivot sits 4 cm off the WEST jamb (local x = −dw/2 + 0.04), everything
+  // else is its child — a real hinge axis, never a mesh-center spin.
+  const dw = L.frontDoor.xMax - L.frontDoor.xMin;
+  assert.ok(Math.abs(hinge!.position.x - (-dw / 2 + 0.04)) < 1e-6, 'pivot at the real hinge axis (4 cm off the west jamb)');
+  const slab = hinge!.children.find((c) => c.name === 'front-door-leaf') as THREE.Mesh;
+  assert.ok(slab, 'the swinging leaf must be a child of the pivot');
+});
+
+test('SHERIFF FRONT DOOR: pose API is a pure hinge rotation, monotonic and bounded', () => {
+  const root = buildSheriffFrontDoor();
+  const hinge = root.getObjectByName('front-door-hinge')!;
+  const closedYaw = hinge.rotation.y;
+  setSheriffFrontDoorOpen(root, 0);
+  assert.equal(hinge.rotation.y, 0, 't=0 fully closed');
+  setSheriffFrontDoorOpen(root, 1);
+  assert.ok(Math.abs(hinge.rotation.y - SHERIFF_FRONT_DOOR_OPEN_ANGLE) < 1e-9, 't=1 exactly the open angle');
+  assert.ok(SHERIFF_FRONT_DOOR_OPEN_ANGLE > 1.5 && SHERIFF_FRONT_DOOR_OPEN_ANGLE < 1.8,
+    'open angle ≈ 100° inward (got ' + SHERIFF_FRONT_DOOR_OPEN_ANGLE.toFixed(3) + ' rad)');
+  setSheriffFrontDoorOpen(root, 0.5);
+  assert.ok(Math.abs(hinge.rotation.y - SHERIFF_FRONT_DOOR_OPEN_ANGLE / 2) < 1e-9, 'mid-swing pose is exact (no accumulation)');
+  assert.equal(closedYaw, 0, 'the API only touches the hinge group rotation');
+});
+
+test('SHERIFF FRONT DOOR GEOMETRY: glass proud of the leaf; sweep grazes nothing', async () => {
+  const registry = makeRegistry();
+  const defs = buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z);
+  const def = defs.find((d) => d.uuid === SHERIFF_OBJECT_IDS.frontDoor)!;
+  const obj = applyDefinition(await registry.create(def), def) as THREE.Group;
+
+  // 1) The glass pane must NOT share a plane with the leaf slab (the old
+  //    flush mount was the reported entrance flicker).
+  const slab = obj.getObjectByName('front-door-leaf') as THREE.Mesh;
+  const glass = obj.getObjectByName('front-door-glass') as THREE.Mesh;
+  assert.ok(slab && glass, 'leaf slab and glass pane exist');
+  const slabBox = box3of(slab);
+  const glassBox = box3of(glass);
+  const sepFront = Math.abs(glassBox.max.z - slabBox.max.z);
+  const sepBack = Math.abs(glassBox.min.z - slabBox.min.z);
+  assert.ok(sepFront >= 0.02, `glass front must sit ≥2 cm off the slab front (got ${sepFront.toFixed(3)})`);
+  assert.ok(sepBack >= 0.02, `glass back must sit ≥2 cm off the slab back (got ${sepBack.toFixed(3)})`);
+
+  // 2) The closed leaf sits inside the doorway: clear of the wall band's
+  //    faces, both casing rings, the header and the threshold.
+  const L = SHERIFF_LAYOUT;
+  const S = SHERIFF_SITE;
+  const worldSlab = box3of(slab);
+  const innerFace = S.z + L.depth / 2 - L.wallThickness; // 3.55 local → world
+  const outerFace = S.z + L.depth / 2;
+  assert.ok(worldSlab.min.z > innerFace + 0.02 && worldSlab.max.z < outerFace - 0.02,
+    `closed leaf inside the wall band with margins (z [${worldSlab.min.z.toFixed(3)}, ${worldSlab.max.z.toFixed(3)}])`);
+  // The casing head pieces hang 2 cm down into the opening (bottom at
+  // floorTop + dh − 0.02); the leaf top must stay clear of that band.
+  const casingHangBottom = L.floorTop + L.frontDoor.height - 0.02;
+  assert.ok(worldSlab.max.y <= casingHangBottom,
+    `leaf top must stay at/below the casing hang line (top ${worldSlab.max.y.toFixed(3)} vs hang ${casingHangBottom.toFixed(3)})`);
+  assert.ok(worldSlab.min.y > L.floorTop - 0.001, 'leaf bottom above the floor line');
+
+  // 3) The full-open sweep: sample the leaf's boundary around the whole
+  //    0→100° swing and prove NO point ever enters the west jamb wall
+  //    segment, either casing ring, the header or the threshold (2 mm
+  //    safety margin — the geometric analysis promises ≥5 mm everywhere).
+  const wallBox = new THREE.Box3(
+    new THREE.Vector3(S.x - 6, 0, S.z + L.depth / 2 - L.wallThickness),
+    new THREE.Vector3(S.x + L.frontDoor.xMin, L.wallHeight, S.z + L.depth / 2),
+  );
+  const shellDef2 = defs.find((d) => d.uuid === SHERIFF_OBJECT_IDS.building)!;
+  const shell2 = applyDefinition(await registry.create(shellDef2), shellDef2) as THREE.Group;
+  shell2.updateWorldMatrix(true, true);
+  const forbidden: THREE.Box3[] = [wallBox];
+  for (const c of shell2.children) {
+    if (c.name.startsWith('door-casing-')) forbidden.push(box3of(c));
+  }
+  const slabGeo = slab.geometry as THREE.BoxGeometry;
+  const hw = slabGeo.parameters.width / 2;
+  const hh = slabGeo.parameters.height / 2;
+  const ht = slabGeo.parameters.depth / 2;
+  for (let step = 0; step <= 20; step++) {
+    const t = step / 20;
+    setSheriffFrontDoorOpen(obj, t);
+    obj.updateWorldMatrix(true, true);
+    slab.updateWorldMatrix(true, false);
+    // Boundary sample: both faces × 5 stations along the leaf, mid-thickness
+    // and both faces, at three heights (base/mid/top).
+    for (const u of [-hw, -hw / 2, 0, hw / 2, hw]) {
+      for (const v of [-ht, 0, ht]) {
+        for (const dy of [-hh + 0.01, 0, hh - 0.01]) {
+          // p is in SLAB-LOCAL space (origin = the slab center).
+          const p = new THREE.Vector3(u, dy, v);
+          slab.localToWorld(p);
+          for (const fb of forbidden) {
+            const inside = p.x > fb.min.x + 0.002 && p.x < fb.max.x - 0.002
+              && p.y > fb.min.y + 0.002 && p.y < fb.max.y - 0.002
+              && p.z > fb.min.z + 0.002 && p.z < fb.max.z - 0.002;
+            assert.ok(!inside,
+              `leaf boundary point (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}) at t=${t.toFixed(2)} enters a forbidden box`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('SHERIFF FRONT DOOR CASINGS: trim rings proud of their faces, never coplanar with the walls', async () => {
+  const registry = makeRegistry();
+  const defs = buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z);
+  const shellDef = defs.find((d) => d.uuid === SHERIFF_OBJECT_IDS.building)!;
+  const shell = applyDefinition(await registry.create(shellDef), shellDef) as THREE.Group;
+  const casingBoxes = shell.children.filter((c) => c.name.startsWith('door-casing-')) as THREE.Mesh[];
+  assert.equal(casingBoxes.length, 6, 'three casing pieces × inner/outer rings');
+  const L = SHERIFF_LAYOUT;
+  const S = SHERIFF_SITE;
+  const innerFace = S.z + L.depth / 2 - L.wallThickness;
+  const outerFace = S.z + L.depth / 2;
+  const EPS = 0.005;
+  for (const c of casingBoxes) {
+    const b = box3of(c);
+    const isInner = c.name.endsWith('-in');
+    const proud = isInner ? innerFace - b.min.z : b.max.z - outerFace;
+    const buried = isInner ? b.max.z - innerFace : outerFace - b.min.z;
+    assert.ok(proud >= 0.015, `${c.name}: must stand ≥1.5 cm proud of its face (got ${proud.toFixed(3)})`);
+    assert.ok(buried >= 0.03, `${c.name}: must bury ≥3 cm into the wall band (got ${buried.toFixed(3)})`);
+    // No plane shared with either wall face.
+    assert.ok(Math.abs(b.min.z - innerFace) > EPS && Math.abs(b.min.z - outerFace) > EPS &&
+      Math.abs(b.max.z - innerFace) > EPS && Math.abs(b.max.z - outerFace) > EPS,
+      `${c.name}: no casing face coplanar with a wall face`);
   }
 });
 

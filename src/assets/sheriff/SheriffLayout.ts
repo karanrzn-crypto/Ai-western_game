@@ -158,6 +158,7 @@ export const SHERIFF_OBJECT_IDS = Object.freeze({
   keyRack: sheriffUuid('26'),
   corridorLantern: sheriffUuid('27'),
   exteriorLantern: sheriffUuid('28'),
+  frontDoor: sheriffUuid('29'),
 });
 
 const identity = () => ({ x: 0, y: 0, z: 0 });
@@ -394,6 +395,23 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
       scale: { x: 1, y: 1, z: 1 },
     }, { collider: true });
   }
+
+  // --- Front door (the office's public entrance — TRULY OPENABLE, E) ---------
+  // Spawns CLOSED across the south doorway; E swings the leaf INWARD into
+  // the office around the real hinge pivot ('front-door-hinge' — 4 cm off
+  // the WEST jamb; 100° sweep, verified clear of the wall band, both casing
+  // rings and every furniture line). Collider policy == the cell doors': a
+  // yaw-conservative 1×1 box at the doorway center that is ARMED while the
+  // door is closed and RELEASED past half-open — the doorway's 5 cm side
+  // slits (against the wall segments) stay impassable for the player circle
+  // either way. The builder (buildSheriffFrontDoor) reads SHERIFF_LAYOUT
+  // directly — this def carries no duplicate dimensions.
+  push(SHERIFF_OBJECT_IDS.frontDoor, 'sheriff-front-door', 'کلانتری — در ورودی', {
+    position: { x: originX + doorMidX, y: floorY, z: originZ + wc(L.depth) },
+    rotation: identity(),
+    scale: { x: 1, y: 1, z: 1 },
+  }, { collider: true });
+
   // Cots inside each cell — the user's Final transforms applied VERBATIM
   // (world (17.022, 0.15, −2.645) / (16.85, 0.15, 1.455) minus the site;
   // rotY 180; scale 1.1/1.1/1.7). Cot A's north edge lands flush on the cell

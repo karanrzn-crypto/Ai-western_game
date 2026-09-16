@@ -31,7 +31,7 @@ import type { IAssetFactory } from '../IAssetFactory.js';
 import type { AssetRegistry } from '../AssetRegistry.js';
 import { SHERIFF_LAYOUT } from './SheriffLayout.js';
 import { createSheriffMaterials, makeCanvas, toTexture } from './SheriffMaterials.js';
-import { SheriffAssetFactory } from './SheriffOfficeAssetFactory.js';
+import { SheriffAssetFactory, buildSheriffFrontDoor } from './SheriffOfficeAssetFactory.js';
 
 /* ========================================================================== */
 /* Small helpers                                                              */
@@ -211,7 +211,8 @@ function buildWindowAssembly(
  *   porch (deck-side posts + shed roof + fascia + brackets) · gable roof
  *   (two sloped slabs + gable infills + ridge cap + eave fascia) · stone
  *   foundation skirt · corner boards + water table + frieze · front door
- *   (casing + leaf held open) · SHERIFF sign + CITY JAIL plaque · stovepipe
+ *   (casing only — the leaf is the separate openable 'sheriff-front-door'
+ *   asset) · SHERIFF sign + CITY JAIL plaque · stovepipe
  *   through the roof with flashing + cap.
  *
  * Deliberately EXCLUDES the walls / floor / ceiling / bar fronts (separate
@@ -326,32 +327,31 @@ export function buildSheriffShell(dims: ShellDims): THREE.Group {
     }
   }
 
-  // --- Front door: casing + threshold + leaf held OPEN against the west jamb --
+  // --- Front door: casing + threshold (the LEAF is its own openable asset) ----
+  // Z-FIGHT / PLACEMENT DISCIPLINE (the user-reported entrance flicker):
+  // the old casings used z = facadeZ ± (t/2 + 0.035) with depth 0.07 — but
+  // the real wall band is [facadeZ − t, facadeZ] = [3.55, 3.70], so the
+  // "outer" ring floated 7.5 cm OFF the facade and the "inner" ring was
+  // buried fully inside the band (invisible). Now each ring is a real trim
+  // reveal: 2 cm proud of ITS face, 4 cm buried into the band — no plane
+  // shared with either wall face (3.55 / 3.70), no floating trim. The
+  // openable leaf itself lives in the 'sheriff-front-door' managed asset
+  // (E to open/close — see SheriffOfficeAssetFactory.buildSheriffFrontDoor).
   {
     const dxm = (L.frontDoor.xMin + L.frontDoor.xMax) / 2;
     const dw = L.frontDoor.xMax - L.frontDoor.xMin;
     const dh = L.frontDoor.height;
     const casing = 0.1;
-    // Casing (both faces — the door reads from the porch AND the office).
-    for (const sz of [-1, 1] as const) {
-      const z = facadeZ + sz * (L.wallThickness / 2 + 0.035);
-      addBox(g, M.trim, dw + casing * 2, casing, 0.07, dxm, floorTop + dh + casing / 2 - 0.02, z, `door-casing-top-${sz < 0 ? 'in' : 'out'}`);
-      addBox(g, M.trim, casing, dh, 0.07, L.frontDoor.xMin - casing / 2 + 0.01, floorTop + dh / 2, z, `door-casing-west-${sz < 0 ? 'in' : 'out'}`);
-      addBox(g, M.trim, casing, dh, 0.07, L.frontDoor.xMax + casing / 2 - 0.01, floorTop + dh / 2, z, `door-casing-east-${sz < 0 ? 'in' : 'out'}`);
+    const casingDepth = 0.06;
+    // Inner ring: 2 cm proud of the inner face (facadeZ − t) into the room;
+    // outer ring: 2 cm proud of the facade. Both bury 4 cm into the band.
+    const innerZ = facadeZ - L.wallThickness + 0.01; // center 3.56 → span [3.53, 3.59]
+    const outerZ = facadeZ - 0.01;                   // center 3.69 → span [3.66, 3.72]
+    for (const [sz, z] of [[-1, innerZ], [1, outerZ]] as const) {
+      addBox(g, M.trim, dw + casing * 2, casing, casingDepth, dxm, floorTop + dh + casing / 2 - 0.02, z, `door-casing-top-${sz < 0 ? 'in' : 'out'}`);
+      addBox(g, M.trim, casing, dh, casingDepth, L.frontDoor.xMin - casing / 2 + 0.01, floorTop + dh / 2, z, `door-casing-west-${sz < 0 ? 'in' : 'out'}`);
+      addBox(g, M.trim, casing, dh, casingDepth, L.frontDoor.xMax + casing / 2 - 0.01, floorTop + dh / 2, z, `door-casing-east-${sz < 0 ? 'in' : 'out'}`);
     }
-    // Door leaf: wood with an upper glass pane + strap hinges + handle.
-    const leaf = new THREE.Group();
-    leaf.name = 'front-door-leaf';
-    // Hinge on the WEST jamb; swung 100° into the office (propped open).
-    leaf.position.set(L.frontDoor.xMin + 0.02, floorTop, wallHalfD);
-    leaf.rotation.y = 100 * (Math.PI / 180);
-    const leafW = dw - 0.06;
-    addBox(leaf, M.trim, leafW, dh - 0.06, 0.06, leafW / 2, (dh - 0.06) / 2 + 0.02, 0, 'door-leaf');
-    addBox(leaf, M.glass, leafW * 0.55, 0.6, 0.03, leafW / 2, dh - 0.5, 0.015, 'door-glass');
-    addBox(leaf, M.iron, 0.3, 0.05, 0.02, leafW * 0.2, dh - 0.9, 0.04, 'door-strap-hinge');
-    const knob = addCyl(leaf, M.iron, 0.03, 0.03, 0.05, 10, leafW - 0.08, 1.0, 0.05, 'door-knob');
-    knob.rotation.x = Math.PI / 2;
-    g.add(leaf);
   }
 
   // --- SHERIFF sign above the porch + CITY JAIL plaque over the barred window -
@@ -575,6 +575,7 @@ export const SHERIFF_BUILDING_ASSET_TYPES = Object.freeze([
   'sheriff-ceiling',
   'sheriff-bar-segment',
   'sheriff-lantern',
+  'sheriff-front-door',
 ] as const);
 
 export type SheriffBuildingAssetType = (typeof SHERIFF_BUILDING_ASSET_TYPES)[number];
@@ -587,6 +588,7 @@ export function registerSheriffBuildingFactories(registry: AssetRegistry): void 
   registry.register('sheriff-ceiling', new SheriffCeilingFactory(), 'Sheriff Ceiling');
   registry.register('sheriff-bar-segment', new SheriffBarSegmentFactory(), 'Sheriff Bar Segment');
   registry.register('sheriff-lantern', new SheriffAssetFactory(() => buildSheriffLantern()), 'Sheriff Lantern');
+  registry.register('sheriff-front-door', new SheriffAssetFactory(() => buildSheriffFrontDoor()), 'Sheriff Front Door');
 }
 
 export class SheriffBuildingFactory implements IAssetFactory {

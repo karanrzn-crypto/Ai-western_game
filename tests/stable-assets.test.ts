@@ -217,6 +217,51 @@ test('STABLE SHELL KIT: roof, gables, loft — decor is independent objects now'
 
 /* -------------------------------------------------------------------------- */
 
+test('STABLE GEOMETRY: the loft rope hook mounts on the loft-edge board — no floater', async () => {
+  const { defs, roots } = await buildWorld();
+  const ropeDef = defs.find((d) => (d.metadata as Record<string, unknown>).kind === 'rope-coil'
+    && Boolean(((d.metadata as Record<string, unknown>).params as Record<string, unknown> | undefined)?.hook));
+  assert.ok(ropeDef, 'the loft rope coil def must exist');
+  const ropeRoot = roots.get(ropeDef.uuid);
+  assert.ok(ropeRoot, 'the loft rope coil object must exist');
+  const hook = ropeRoot.getObjectByName('loft-rope-hook');
+  const shell = roots.get(STABLE_OBJECT_IDS.building);
+  assert.ok(hook && shell, 'the hooked rope variant and the shell kit must exist');
+  const edgeBoard = shell!.getObjectByName('loft-edge-board');
+  assert.ok(edgeBoard, 'the loft edge board must exist');
+
+  // The hook must physically overlap the edge board (a real mount, not a
+  // mid-air floater): the regression that shipped the hook 3 cm below and
+  // 4 cm south of the board, attached to nothing.
+  const hookBox = box3of(hook!);
+  const boardBox = box3of(edgeBoard!);
+  assert.ok(
+    hookBox.intersectsBox(boardBox),
+    `hook ${fmtBox(hookBox)} must overlap the edge board ${fmtBox(boardBox)}`,
+  );
+  // The overlap must be a real MOUNT: the peg embeds INTO the board face
+  // (z overlap > 0 — the regression had a 4 mm air gap) and sits ≥ 2 cm
+  // tall against it (y overlap), so it reads as nailed on, not grazing.
+  const zOverlap = Math.min(hookBox.max.z, boardBox.max.z) - Math.max(hookBox.min.z, boardBox.min.z);
+  assert.ok(zOverlap > 0, `hook must embed into the board face (z overlap ${zOverlap.toFixed(3)})`);
+  const yOverlap = Math.min(hookBox.max.y, boardBox.max.y) - Math.max(hookBox.min.y, boardBox.min.y);
+  assert.ok(yOverlap >= 0.02, `hook/board y overlap must be ≥ 2 cm (got ${yOverlap.toFixed(3)})`);
+
+  // The coil hangs below the hook, clear of the deck structure.
+  const coil = ropeRoot!.getObjectByName('rope-torus');
+  assert.ok(coil, 'the rope coil torus must exist');
+  const coilBox = box3of(coil!);
+  assert.ok(coilBox.max.y < hookBox.min.y + 0.09, 'the coil hangs beneath the hook');
+  assert.ok(coilBox.min.z >= boardBox.min.z - 0.01, 'the coil stays in front of / pressed on the board');
+});
+
+function fmtBox(b: THREE.Box3): string {
+  const f = (v: THREE.Vector3) => `(${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)})`;
+  return `${f(b.min)}…${f(b.max)}`;
+}
+
+/* -------------------------------------------------------------------------- */
+
 test('STABLE STALLS: six stalls, nameplates, troughs, controlled variation', async () => {
   const { defs, roots } = await buildWorld();
 

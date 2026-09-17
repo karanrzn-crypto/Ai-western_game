@@ -13,6 +13,7 @@ import {
   LocalSceneStorage,
   PlayerController,
   ObjectEditorController,
+  AuthoredLayout,
   TransformGizmo,
   ContactIndicator,
   makeSceneAxisClamp,
@@ -217,6 +218,44 @@ const persistence = new PersistenceManager();
 // old saves would load a scene WITHOUT the stable — the key must move for
 // every existing save to pick it up.
 const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v12' });
+
+// --- Authored-layout snapshot (the editor's "put it back" source) -----------
+// Captured in loadSavedScene() AFTER every building module registered its
+// default defs and BEFORE a saved scene replaces the registry. Restores go
+// through SceneStateManager.updateObjectTransform — the ONE mutation funnel —
+// so a reset is renderer-synced, change-logged and autosaved like any edit.
+const authoredLayout = new AuthoredLayout();
+
+/**
+ * Restore ONE object to its authored layout transform. UI + harness path:
+ * goes through AuthoredLayout.restore (manager.updateObjectTransform), then
+ * persists, pulses the shadow refresh and refreshes every selection UI.
+ */
+function resetObjectToAuthored(uuid: string): boolean {
+  if (!authoredLayout.restore(manager, uuid)) return false;
+  storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
+  updateSaveStatus();
+  editShadowPulse = 0.25;
+  refreshSelectionHelper();
+  updateSelectionPanel();
+  updateEditorHud();
+  return true;
+}
+
+/** Restore EVERY deviating object; returns how many actually moved. */
+function resetAllToAuthored(): number {
+  const restored = authoredLayout.restoreAll(manager);
+  if (restored > 0) {
+    storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
+    updateSaveStatus();
+    editShadowPulse = 0.25;
+    refreshSelectionHelper();
+    updateSelectionPanel();
+    updateEditorHud();
+  }
+  return restored;
+}
+
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -803,6 +842,19 @@ function updateStableDoors(delta: number): void {
     };
   },
   has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
+  // Read-only registry dump for the harness probes: every managed definition
+  // (uuid/assetType/transform/metadata) exactly as the editor sees it.
+  objects: () => manager.getAllObjects(),
+  // --- Authored-layout reset (the editor's "put it back" action) ------------
+  // Same code path as the selection panel's reset buttons: restore through
+  // updateObjectTransform, then persist. Harness-only mirror for the probes.
+  authoredCount: () => authoredLayout.size,
+  isModifiedVsAuthored: (uuid: string) => {
+    const def = manager.getObject(uuid);
+    return def ? authoredLayout.isModified(def) : null;
+  },
+  resetObject: (uuid: string) => resetObjectToAuthored(uuid),
+  resetAll: () => resetAllToAuthored(),
   // --- geometry-verify probes (read-only, harness-only) ---------------------
   // World AABB of one managed object + the y-span of every mesh part — used
   // to prove the cell-door frames carry NO floating strip (the old header at
@@ -985,6 +1037,15 @@ function updateSelectionPanel(): void {
     if (document.activeElement === input) continue;
     input.value = formatPanelNumber(definition.transform[binding.group][binding.axis]);
   }
+  // Reset actions: «بازنشانی شیء» applies only when the selection deviates
+  // from its authored transform (and edit mode owns the mouse); «بازگردانی
+  // همه» is armed whenever edit mode is active. Both refresh at HUD rate.
+  if (selResetButton) {
+    selResetButton.disabled = !modes.isEdit() || !definition
+      || !authoredLayout.has(definition.uuid)
+      || !authoredLayout.isModified(definition);
+  }
+  if (selResetAllButton) selResetAllButton.disabled = !modes.isEdit() || authoredLayout.size === 0;
 }
 
 // Editable numeric fields of the selection panel (Position/Rotation/Scale).
@@ -1016,6 +1077,42 @@ for (const binding of PANEL_INPUTS) {
   // immediately through ObjectEditorController -> updateObjectTransform.
   input.addEventListener('input', () => applyPanelInput(binding, input));
 }
+
+// --- Authored-layout reset buttons (selection panel actions row) ------------
+// «بازنشانی شیء» puts the SELECTED object back to the transform its layout
+// table authored; «بازگردانی همه» puts EVERY deviating object back. Both run
+// through resetObjectToAuthored / resetAllToAuthored — the official
+// updateObjectTransform funnel — so renderer sync, the change log and the
+// autosave behave exactly like a hand edit. Reset keeps user renames: only
+// transforms are restored, metadata never.
+const selResetButton = document.getElementById('sel-reset') as HTMLButtonElement | null;
+const selResetAllButton = document.getElementById('sel-reset-all') as HTMLButtonElement | null;
+let selResetFlashTimer = 0;
+function flashResetFeedback(button: HTMLButtonElement | null, label: string): void {
+  if (!button) return;
+  const original = button.dataset.originalLabel ?? button.textContent ?? label;
+  button.dataset.originalLabel = original;
+  button.textContent = 'انجام شد ✓';
+  button.classList.add('done');
+  window.clearTimeout(selResetFlashTimer);
+  selResetFlashTimer = window.setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove('done');
+  }, 1400);
+}
+selResetButton?.addEventListener('click', () => {
+  const uuid = editor.getSelectedUuid();
+  if (!uuid || !modes.isEdit()) return;
+  if (resetObjectToAuthored(uuid)) flashResetFeedback(selResetButton, 'بازنشانی شیء');
+});
+selResetAllButton?.addEventListener('click', () => {
+  if (!modes.isEdit()) return;
+  const restored = resetAllToAuthored();
+  if (restored > 0) flashResetFeedback(selResetAllButton, 'بازگردانی همه');
+  showStatusMessage(restored > 0
+    ? `${restored} شیء به چیدمان اصلی بازگشت.`
+    : 'همهٔ اشیاء از قبل سر جای اصلی خود هستند.');
+});
 
 function updateSaveStatus(): void {
   const saved = document.getElementById('save-status');
@@ -1180,6 +1277,10 @@ objLogCopyButton?.addEventListener('click', () => {
 });
 
 function loadSavedScene(): void {
+  // Snapshot the AUTHORED layout first: at this point every building module
+  // has registered its default defs and nothing user-made has been applied.
+  // The editor's reset actions restore exactly these transforms.
+  authoredLayout.capture(manager.getAllObjects());
   try {
     storage.loadInto(manager);
   } catch (err) {

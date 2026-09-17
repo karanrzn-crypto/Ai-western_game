@@ -76,6 +76,7 @@ export { LocalSceneStorage, MemoryStorage } from './persistence/LocalSceneStorag
 export type { LocalSceneStorageOptions, StorageLike } from './persistence/LocalSceneStorage.js';
 export { ObjectEditorController } from './editor/ObjectEditorController.js';
 export type { ObjectEditorControllerOptions, EditorMoveCommand, EditorRotationSign } from './editor/ObjectEditorController.js';
+export { AuthoredLayout } from './editor/AuthoredLayout.js';
 export { createDebugAxes, isDebugHelper, DEBUG_HELPER_KEY } from './editor/DebugAxes.js';
 export type { DebugAxesOptions } from './editor/DebugAxes.js';
 export { TransformGizmo } from './editor/TransformGizmo.js';

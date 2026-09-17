@@ -327,7 +327,14 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   { uuid: propUuid(), kind: 'crate', name: 'جعبه شیروانی', x: -4.5, y: 3.0, z: -3.3, ry: deg(0.3), params: { w: 0.55, h: 0.6 } },
   { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -5.8, params: { radius: 0.5, height: 0.32, seed: 5 } },
   { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (شیروانی)', x: 1.4, y: 3.002, z: -3.6, params: { w: 2.4, d: 2.0, seed: 7 } },
-  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب آویز', x: -0.6, y: 2.5, z: -0.5, params: { radius: 0.13, thick: 0.04, hook: true } },
+  // Loft rope coil: the hook MOUNTS on the loft-edge board (hook box spans
+  // y 2.755…2.805 × z −0.55…−0.51 vs the board y 2.775…3.055 × z
+  // −0.605…−0.545 — real overlap, no coplanar pair) and the coil presses
+  // against the board face. The old (2.5, −0.5) spot left hook + coil hanging
+  // on NOTHING — a mid-air floater — and x −0.6 threaded the coil straight
+  // THROUGH the HORSES sign (sign spans x −1.3…−0.4 at the same height);
+  // x −0.25 hangs it on clear fascia east of the sign.
+  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب آویز', x: -0.25, y: 2.56, z: -0.51, params: { radius: 0.13, thick: 0.04, hook: true } },
 ] as const);
 
 /* -------------------------------------------------------------------------- */

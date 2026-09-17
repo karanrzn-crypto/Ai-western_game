@@ -52,7 +52,6 @@ export {
   pitchfork,
   shovel,
   broom,
-  ropeCoil,
   wallHook,
   hammer,
   tongs,

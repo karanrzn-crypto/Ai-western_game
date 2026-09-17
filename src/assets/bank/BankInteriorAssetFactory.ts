@@ -420,6 +420,8 @@ export function buildBankVaultDoor(): THREE.Group {
   // on the frame.
   const hinge = new THREE.Group();
   hinge.name = 'bank-vault-door-hinge';
+  // Runtime-rotated pivot (setBankVaultDoorOpen) — see MergeStatic contract.
+  hinge.userData.dynamic = true;
   hinge.position.set(-doorRadius, centerY, doorZ);
   g.add(hinge);
 
@@ -724,12 +726,22 @@ export function buildBankersChair(): THREE.Group {
   return g;
 }
 
-/** Wall panel of small numbered brass safe-deposit-box doors.
- *  Origin contract: the backing's BOTTOM rests on y = 0, so the placement's
- *  y IS the base height (y = 0.59 seats the base 1 cm into the raised floor).
- *  The old origin sat 0.35 m above the base, forcing placement arithmetic
- *  (floorTop − 0.35) that broke the moment the user's Final scale (1.1)
- *  rescaled that offset to 0.385 — the panel would have floated. */
+/**
+ * Wall panel of small numbered brass safe-deposit-box doors.
+ * Origin contract: the backing's BOTTOM rests on y = 0, so the placement's
+ * y IS the base height (y = 0.59 seats the base 1 cm into the raised floor).
+ * The old origin sat 0.35 m above the base, forcing placement arithmetic
+ * (floorTop − 0.35) that broke the moment the user's Final scale (1.1)
+ * rescaled that offset to 0.385 — the panel would have floated.
+ *
+ * DRAW-CALL DISCIPLINE (weak-laptop revision): every door used to build its
+ * OWN brassTexture canvas (fixed seed → bit-identical output per door) and
+ * every number plate its own signTexture — 48 unique materials that the
+ * static-geometry merge could never fold. Now the doors share ONE material
+ * and the numbers live on ONE atlas canvas (per-plate UV windows), so the
+ * whole panel renders in ~4 draw calls instead of ~50. Visual output is
+ * identical: same canvas pixels, same fonts, same colors.
+ */
 export function buildSafeDepositWall(cols = 6, rows = 4): THREE.Group {
   const g = new THREE.Group();
   g.name = 'safe-deposit-wall';
@@ -742,14 +754,43 @@ export function buildSafeDepositWall(cols = 6, rows = 4): THREE.Group {
   const backing = mesh(new THREE.BoxGeometry(panelW + 0.1, panelH + 0.1, 0.06), MAT.woodDark(), 0, panelH / 2 + 0.05, 0);
   g.add(backing);
 
+  // ONE shared brass material for every door (brassTexture's fixed seed made
+  // the per-door canvases identical — hoisting changes no pixel).
+  const doorMat = metalMat(BRASS, brassTexture(BRASS));
+
+  // ONE atlas canvas for every numbered plate: each cell draws exactly the
+  // signTexture the old per-plate canvas drew (bg, fg, font, size 80×50).
+  const count = cols * rows;
+  const cellW = 80;
+  const cellH = 50;
+  const atlasCols = Math.min(6, count);
+  const atlasRows = Math.ceil(count / atlasCols);
+  const plateCanvas = makeCanvas(atlasCols * cellW, atlasRows * cellH);
+  let plateTexture: THREE.CanvasTexture | null = null;
+  if (plateCanvas) {
+    const { canvas, ctx } = plateCanvas;
+    for (let i = 0; i < count; i++) {
+      const cx = (i % atlasCols) * cellW;
+      const cy = Math.floor(i / atlasCols) * cellH;
+      ctx.fillStyle = '#171717';
+      ctx.fillRect(cx, cy, cellW, cellH);
+      ctx.fillStyle = BRASS;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 26px Georgia, serif';
+      ctx.fillText(String(i + 1), cx + cellW / 2, cy + cellH / 2);
+    }
+    plateTexture = toTexture(canvas, 1, 1);
+  }
+  const plateMat = stdMat('#171717', plateTexture);
+
   let n = 1;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const x = -panelW / 2 + c * (boxSize + gap) + boxSize / 2;
       const y = panelH - r * (boxSize + gap) - boxSize / 2 + 0.05;
 
-      const doorTex = brassTexture(BRASS);
-      const door = mesh(new THREE.BoxGeometry(boxSize, boxSize, 0.03), metalMat(BRASS, doorTex), x, y, 0.045);
+      const door = mesh(new THREE.BoxGeometry(boxSize, boxSize, 0.03), doorMat, x, y, 0.045);
       g.add(door);
 
       const dial = mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.015, 12), MAT.brassDark(), x - boxSize * 0.22, y, 0.06);
@@ -759,10 +800,24 @@ export function buildSafeDepositWall(cols = 6, rows = 4): THREE.Group {
       const handle = mesh(new THREE.BoxGeometry(0.03, 0.012, 0.012), MAT.brassDark(), x + boxSize * 0.28, y, 0.065);
       g.add(handle);
 
-      // tiny engraved number plate
+      // tiny engraved number plate — a plane whose UVs window into the atlas
       if (n <= 999) {
-        const numTex = signTexture({ text: String(n), bg: '#171717', fg: BRASS, w: 80, h: 50, border: false, font: 'bold 26px Georgia, serif' });
-        const plate = mesh(new THREE.PlaneGeometry(0.06, 0.03), stdMat('#171717', numTex), x, y - boxSize * 0.3, 0.061);
+        const plateGeo = new THREE.PlaneGeometry(0.06, 0.03);
+        const i = n - 1;
+        const u0 = (i % atlasCols) / atlasCols;
+        const v1 = 1 - Math.floor(i / atlasCols) / atlasRows;
+        const uv = plateGeo.attributes.uv as THREE.BufferAttribute;
+        // PlaneGeometry uv order: (0,1) (1,1) (0,0) (1,0)
+        uv.setXY(0, u0, v1);
+        uv.setXY(1, u0 + 1 / atlasCols, v1);
+        uv.setXY(2, u0, v1 - 1 / atlasRows);
+        uv.setXY(3, u0 + 1 / atlasCols, v1 - 1 / atlasRows);
+        uv.needsUpdate = true;
+        const plate = new THREE.Mesh(plateGeo, plateMat);
+        plate.position.set(x, y - boxSize * 0.3, 0.061);
+        plate.castShadow = false;
+        plate.receiveShadow = true;
+        plate.name = 'deposit-plate';
         g.add(plate);
       }
       n++;
@@ -908,13 +963,15 @@ export function buildMarbleColumn(height = 2.6 * WORLD_SCALE): THREE.Group {
   const shaft = mesh(new THREE.CylinderGeometry(radius, radius * 1.05, height - 0.5, 20), MAT.marble(), 0, 0.15 + (height - 0.5) / 2, 0);
   g.add(shaft);
 
-  // flutes: thin vertical grooves suggested via darker inset strips
+  // flutes: thin vertical grooves suggested via darker inset strips (ONE
+  // shared singleton material — 16 per-call clones defeated the merge).
+  const fluteMat = lazyMat(() => stdMat(MARBLE_VEIN, null, { roughness: 0.3 }));
   const fluteCount = 16;
   for (let i = 0; i < fluteCount; i++) {
     const a = (i / fluteCount) * Math.PI * 2;
     const flute = mesh(
       new THREE.BoxGeometry(0.012, height - 0.6, 0.012),
-      stdMat(MARBLE_VEIN, null, { roughness: 0.3 }),
+      fluteMat(),
       Math.cos(a) * radius * 0.98,
       0.2 + (height - 0.6) / 2,
       Math.sin(a) * radius * 0.98
@@ -1075,6 +1132,8 @@ export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD
   // west leaf: hinged at −width/2, authored CLOSED across the opening
   const westHinge = new THREE.Group();
   westHinge.name = 'secure-gate-leaf-w';
+  // Runtime-rotated pivot (setSecureGateOpen) — see MergeStatic contract.
+  westHinge.userData.dynamic = true;
   westHinge.position.set(-width / 2, 0, 0);
   westHinge.rotation.y = 0; // closed
   westHinge.add(buildLeaf());
@@ -1083,6 +1142,8 @@ export function buildSecureGate(width = 1.0 * WORLD_SCALE, height = 2.05 * WORLD
   // east leaf: identical geometry, mirrored closed by a π group rotation
   const eastHinge = new THREE.Group();
   eastHinge.name = 'secure-gate-leaf-e';
+  // Runtime-rotated pivot (setSecureGateOpen) — see MergeStatic contract.
+  eastHinge.userData.dynamic = true;
   eastHinge.position.set(width / 2, 0, 0);
   eastHinge.rotation.y = Math.PI; // closed (mirrored)
   eastHinge.add(buildLeaf());

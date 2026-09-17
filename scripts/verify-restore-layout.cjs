@@ -1,25 +1,28 @@
-/* VERIFY: authored-layout restore — the fix for the two user-reported floaters.
+/* VERIFY: authored-layout restore — the fix for the user-reported floaters.
  *
- * Reproduces the user's polluted save IN BROWSER (the exact strays their
- * screenshots show), proves the new editor "put it back" buttons clean it,
- * and checks the fresh-build rope-hook mount + an FPS baseline.
+ * Reproduces a polluted save IN BROWSER through the REAL editor UI path
+ * (click-select + numeric panel), proves the "put it back" buttons clean it,
+ * and takes an FPS baseline. The old rope-coil probe target was REMOVED —
+ * every rope coil is deleted from the build (user order «کلا انرا پاک کن»),
+ * so the click-select/pollute/restore path now proves itself on the tack-room
+ * saddle instead; the zero-coils census lives in verify-coil-and-lamps.cjs.
  *
  *   1. boot: authored snapshot == registry size (nothing lost)
- *   2. pollute like the user's save through the REAL UI path (click-select +
- *     numeric panel): rope coil → mid-aisle near stall 4 at eye height;
+ *   2. pollute through the REAL UI path (click-select + numeric panel):
+ *     tack-room saddle → mid-aisle near stall 4 at eye height;
  *     hanging blanket → inside stall 1 at head height
- *   3. POV screenshots match the user's two reports (torus + salmon ∏)
+ *   3. POV screenshots match the user's original two reports
  *   4. «بازنشانی شیء» returns the selected object to its authored spot
  *   5. «بازگردانی همه» → EVERY def reads unmodified vs authored; screenshot
- *   6. live geometry: the rope hook overlaps the loft-edge board
  *   7. FPS baseline at the stable POV (play mode, no editor)
- * Run: node scripts/verify-restore-layout.cjs   (dev server on :5176)
+ * Run: node scripts/verify-restore-layout.cjs   (dev server on :5173)
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-two-issues';
-const URL = 'http://localhost:5176/';
+const URL = 'http://localhost:5173/';
 
-const ROPE = '10000000-0000-4000-8000-0000000000b8';
+// The saddle's uuid is resolved at runtime by name (the prop cursor assigns
+// sequential uuids — name lookup is the stable contract).
 const BLANKET = '10000000-0000-4000-8000-00000000008e';
 
 const results = [];
@@ -114,31 +117,48 @@ const ok = (name, pass, detail) => {
 
   await page.evaluate(() => window.__westTest.setDayTime(18.6));
 
-  /* ---------- 2a) ROPE: aim (play) → TAB → click-select → panel-pollute ----- */
-  await page.evaluate(() => { window.__westTest.teleport(-15.9, 0.12, 8.6); window.__hideRanger(); });
+  /* ---------- 2a) SADDLE: aim (play) → TAB → click-select → panel-pollute --- */
+  const saddleUuid = await page.evaluate(() => {
+    // kind filter — 'زین ۱' is also a substring of the RACK's «پایه زین ۱».
+    const d = window.__westTest.objects().find((o) => o.metadata?.kind === 'saddle'
+      && String(o.metadata?.name).includes('زین ۱'));
+    return d ? d.uuid : null;
+  });
+  await page.evaluate(() => { window.__westTest.teleport(-20.4, 0.15, 9.8); window.__hideRanger(); });
   await page.waitForTimeout(1000);
-  // aim + click the coil's BOTTOM TUBE (a ray through the ring's center would
-  // pass through the hole and select the wall behind it)
-  await aimAt(-16.25, 2.43, 5.5);
-  await toggleEdit(); // enter edit mode; the camera parks on the rope view
-  await clickWorldPoint(-16.25, 2.43, 5.5);
+  // The tack room is a closed box: go FIRST PERSON or the parked third-person
+  // camera outside/behind lets a wall eat the click (same as the blanket path).
+  await page.evaluate(() => window.__k('keydown', 'KeyV'));
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__k('keyup', 'KeyV'));
+  await page.waitForTimeout(800);
+  // aim + click the saddle seat (tack room west wall rack 1; world = site
+  // origin (-16, 0, 6) + local (-5.02, 0.845, 4.35))
+  await aimAt(-21.02, 1.0, 10.35);
+  await toggleEdit(); // enter edit mode; the camera parks on the saddle view
+  await clickWorldPoint(-21.02, 1.0, 10.35);
   const selName = await page.evaluate(() => document.getElementById('editor-selection')?.textContent ?? '');
-  ok('edit: the rope coil is click-selectable', selName.includes('طناب'), `selected="${selName}"`);
+  ok('edit: the tack-room saddle is click-selectable', selName.includes('زین'), `selected="${selName}"`);
 
   await setPanel('sel-pos-x', '-14.6');
   await setPanel('sel-pos-y', '1.45');
   await setPanel('sel-pos-z', '1.5');
   await page.waitForTimeout(500);
-  ok('pollute: rope moved off its authored spot (the user\'s torus)', await modified(ROPE) === true, `pos=${JSON.stringify(await defPos(ROPE))}`);
+  ok('pollute: saddle moved off its authored rack', await modified(saddleUuid) === true, `pos=${JSON.stringify(await defPos(saddleUuid))}`);
 
   const resetArmed = await page.evaluate(() => !document.getElementById('sel-reset')?.disabled);
   ok('UI: «بازنشانی شیء» armed for a deviating selection', resetArmed === true, `disabled=${!resetArmed}`);
   await page.click('#sel-reset');
   await page.waitForTimeout(900);
-  const ropeBack = await defPos(ROPE);
-  ok('restore: rope back at its authored hook', await modified(ROPE) === false
-    && Math.abs(ropeBack.x - (-16.25)) < 1e-6 && Math.abs(ropeBack.y - 2.56) < 1e-6,
-    `pos=${JSON.stringify(ropeBack)}`);
+  const saddleBack = await defPos(saddleUuid);
+  const saddleAuthored = await page.evaluate((u) => {
+    const t = window.__westTest.authoredTransform ? window.__westTest.authoredTransform(u) : null;
+    return t ? t.position : null;
+  }, saddleUuid);
+  ok('restore: saddle back at its authored rack', await modified(saddleUuid) === false
+    && saddleAuthored !== null
+    && Math.abs(saddleBack.x - saddleAuthored.x) < 1e-6 && Math.abs(saddleBack.y - saddleAuthored.y) < 1e-6,
+    `pos=${JSON.stringify(saddleBack)}`);
   await toggleEdit(); // back to play for the next aim
 
   /* ---------- 2b) BLANKET: same UI pollution path --------------------------- */
@@ -183,27 +203,6 @@ const ok = (name, pass, detail) => {
   ok('restore-all: blanket back on its bar', await modified(BLANKET) === false, `pos=${JSON.stringify(await defPos(BLANKET))}`);
   await page.screenshot({ path: `${OUT}/verify3-restored.png` });
   await toggleEdit();
-
-  /* ---------- 6) live geometry: hook mounts on the edge board --------------- */
-  const hookLive = await page.evaluate(() => {
-    const scene = window.__westTest.scene();
-    const ropeRoot = scene.getObjectByProperty('uuid', '10000000-0000-4000-8000-0000000000b8');
-    const shell = scene.getObjectByProperty('uuid', '10000000-0000-4000-8000-000000000001');
-    const hook = ropeRoot?.getObjectByName('loft-rope-hook');
-    const board = shell?.getObjectByName('loft-edge-board');
-    if (!hook || !board) return { ok: false };
-    hook.updateWorldMatrix(true, true); board.updateWorldMatrix(true, true);
-    const boxOf = (o) => {
-      o.geometry.computeBoundingBox();
-      return o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
-    };
-    const h = boxOf(hook), b = boxOf(board);
-    const ov = (c) => Math.min(h.max[c], b.max[c]) - Math.max(h.min[c], b.min[c]);
-    return { ok: true, x: ov('x'), y: ov('y'), z: ov('z') };
-  });
-  ok('geometry: rope hook embedded in the loft-edge board',
-    hookLive.ok && hookLive.x > 0 && hookLive.y >= 0.02 && hookLive.z > 0,
-    `overlap x=${hookLive.x?.toFixed(3)} y=${hookLive.y?.toFixed(3)} z=${hookLive.z?.toFixed(3)}`);
 
   /* ---------- 7) FPS baseline at the stable (play mode) ---------------------- */
   await page.evaluate(() => { window.__westTest.teleport(-15.3, 0.15, 2.7); window.__hideRanger(); });

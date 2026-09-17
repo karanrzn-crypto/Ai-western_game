@@ -217,21 +217,35 @@ test('STABLE SHELL KIT: roof, gables, loft — decor is independent objects now'
 
 /* -------------------------------------------------------------------------- */
 
-test('STABLE GEOMETRY: the hanging loft rope coil is DELETED (user request) — and stays deleted', async () => {
+test('STABLE GEOMETRY: every rope coil is DELETED (user order «کلا انرا پاک کن») — and stays deleted', async () => {
   const { defs } = await buildWorld();
-  // The «طناب آویز» (hooked loft rope coil) was removed ENTIRELY on user
-  // request: after an editor drag it floated mid-aisle in their save and they
-  // asked for deletion, not restoration. Nothing may re-introduce it. (Def
-  // names carry the «اسطبل — » zone prefix, so match by substring.)
-  const hooked = defs.filter((d) => (d.metadata as Record<string, unknown>).kind === 'rope-coil'
-    && Boolean(((d.metadata as Record<string, unknown>).params as Record<string, unknown> | undefined)?.hook));
-  assert.equal(hooked.length, 0, 'no hooked rope-coil def may exist (the loft «طناب آویز» is deleted)');
-  const byName = defs.filter((d) => String(d.metadata.name).includes('طناب آویز'));
-  assert.equal(byName.length, 0, 'no def may carry the deleted «طناب آویز» name');
-  // The DIFFERENT, wall-mounted coil («طناب پیچیده», no hook) must survive.
-  const mounted = defs.filter((d) => (d.metadata as Record<string, unknown>).kind === 'rope-coil');
-  assert.equal(mounted.length, 1, 'exactly one (mounted) rope coil remains: «طناب پیچیده»');
-  assert.ok(String(mounted[0]!.metadata.name).includes('طناب پیچیده'), 'the surviving coil is the tack-room «طناب پیچیده»');
+  // The user's ring complaints came in two rounds: first the floating loft
+  // coil («طناب آویز»), then — after the aisle coil alone was removed — the
+  // verdict that the problem was STILL unsolved and the rings must go
+  // COMPLETELY. So ALL rope-coil geometry is banned: the tack-room
+  // wall coil («طناب پیچیده») AND the per-stall door-side tori (the former
+  // `rope` extras of stalls 01/04, which stayed behind when the doors
+  // swung). Zero defs of the kind may exist; the builder itself is deleted.
+  const coils = defs.filter((d) => (d.metadata as Record<string, unknown>).kind === 'rope-coil');
+  assert.equal(coils.length, 0, 'no rope-coil def may exist (ALL coils deleted on user order)');
+  for (const needle of ['طناب آویز', 'طناب پیچیده']) {
+    const byName = defs.filter((d) => String(d.metadata.name).includes(needle));
+    assert.equal(byName.length, 0, `no def may carry the deleted «${needle}» name`);
+  }
+  // The former per-stall extras must not respawn either: no rope torus may
+  // exist in ANY stable root (the coil builder used TorusGeometry(·,·,8,18)).
+  const { roots } = await buildWorld();
+  let ropeTori = 0;
+  for (const root of roots.values()) {
+    root.traverse((o) => {
+      if (!(o as THREE.Mesh).isMesh) return;
+      const g = (o as THREE.Mesh).geometry;
+      if (o.name === 'rope-torus' || (g && g.type === 'TorusGeometry' && (g as THREE.TorusGeometry).parameters
+        && (g as THREE.TorusGeometry).parameters.radialSegments === 8
+        && (g as THREE.TorusGeometry).parameters.tubularSegments === 18)) ropeTori += 1;
+    });
+  }
+  assert.equal(ropeTori, 0, 'no rope-coil torus may exist anywhere in the stable');
 });
 
 /* -------------------------------------------------------------------------- */

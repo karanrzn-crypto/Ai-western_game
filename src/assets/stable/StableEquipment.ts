@@ -48,7 +48,6 @@ import {
   bridleHanging,
   horseCollar,
   leatherStrap,
-  ropeCoil,
   drapedBlanket,
 } from './StableProps.js';
 
@@ -137,19 +136,6 @@ function buildWaterBarrel(r: number, h: number): THREE.Group {
   return g;
 }
 
-/** Rope coil; the loft variant hangs from its own hook (hook rides the coil). */
-function buildRopeCoil(radius: number, thick: number, hook: boolean): THREE.Group {
-  const M_ = createStableMaterials();
-  const g = new THREE.Group();
-  g.name = 'rope-coil-unit';
-  if (hook) {
-    const h = addBox(g, M_.iron, 0.03, 0.05, 0.04, 0, radius === 0.13 ? 0.22 : 0.24, -0.02, 'loft-rope-hook');
-    h.castShadow = false;
-  }
-  g.add(ropeCoil(radius, thick));
-  return g;
-}
-
 /* -------------------------------------------------------------------------- */
 /* The generic prop factory                                                   */
 /* -------------------------------------------------------------------------- */
@@ -179,7 +165,6 @@ export class StablePropFactory implements IAssetFactory {
       case 'bridle': return bridleHanging();
       case 'collar': return horseCollar();
       case 'strap': return leatherStrap(num('len', 0.5));
-      case 'rope-coil': return buildRopeCoil(num('radius', 0.14), num('thick', 0.045), Boolean(p('hook')));
       case 'tack-board': return buildTackBoard();
       case 'tack-shelf': return buildTackShelf();
       case 'blanket-bar': {

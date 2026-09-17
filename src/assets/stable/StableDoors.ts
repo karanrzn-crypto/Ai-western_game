@@ -98,6 +98,9 @@ export function buildStableGate(): THREE.Group {
   const buildLeaf = (side: -1 | 1, name: string): THREE.Group => {
     const hinge = new THREE.Group();
     hinge.name = name;
+    // Runtime-rotated pivot (setStableGateOpen) — the merge pass buckets this
+    // subtree to ITSELF so nothing static ever bakes across the swing axis.
+    hinge.userData.dynamic = true;
     // hinge axis: outer jamb, 2 cm inboard
     hinge.position.set(side * (openW / 2 - hingeSeat), 0.03, 0);
     // leaf extends TOWARD THE CENTER: local +x for the west leaf, -x for east
@@ -201,6 +204,8 @@ export function buildStableLeafDoor(meta: LeafDoorMeta): THREE.Group {
 
   const hinge = new THREE.Group();
   hinge.name = 'door-hinge';
+  // Runtime-rotated pivot (setStableLeafDoorOpen) — see MergeStatic contract.
+  hinge.userData.dynamic = true;
   hinge.position.set(hingeX, 0.025, 0);
   hinge.userData.openSign = meta.openSign;
   hinge.userData.openDeg = meta.openDeg;

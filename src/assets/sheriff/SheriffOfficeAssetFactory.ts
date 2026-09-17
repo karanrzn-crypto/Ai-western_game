@@ -579,6 +579,8 @@ export function buildJailCellDoor(width = 1.1 * WORLD_SCALE, height = 2.1 * WORL
   // hinge group for the swinging barred door
   const hinge = new THREE.Group();
   hinge.name = 'jail-cell-door-hinge';
+  // Runtime-rotated pivot (setJailCellDoorOpen) — see MergeStatic contract.
+  hinge.userData.dynamic = true;
   hinge.position.set(-width / 2, 0, 0);
   g.add(hinge);
 
@@ -670,6 +672,8 @@ export function buildSheriffFrontDoor(): THREE.Group {
   // that swings is a child; setSheriffFrontDoorOpen rotates ONLY this group.
   const hinge = new THREE.Group();
   hinge.name = 'front-door-hinge';
+  // Runtime-rotated pivot (setSheriffFrontDoorOpen) — see MergeStatic contract.
+  hinge.userData.dynamic = true;
   hinge.position.set(-dw / 2 + hingeOffX, 0, 0);
   g.add(hinge);
 

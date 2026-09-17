@@ -239,7 +239,7 @@ export const STABLE_OBJECT_IDS = Object.freeze({
 /* -------------------------------------------------------------------------- */
 
 export type StablePropKind =
-  | 'saddle-rack' | 'saddle' | 'bridle' | 'collar' | 'strap' | 'rope-coil'
+  | 'saddle-rack' | 'saddle' | 'bridle' | 'collar' | 'strap'
   | 'tack-board' | 'tack-shelf' | 'blanket-bar' | 'blanket' | 'shoe-rack'
   | 'crate' | 'tool-box' | 'sign' | 'hay-bale' | 'grain-sack' | 'grain-bin'
   | 'bucket' | 'straw' | 'small-barrel' | 'hay-pile' | 'hammer' | 'tongs'
@@ -266,6 +266,11 @@ const deg = (rad: number): number => (rad * 180) / Math.PI;
 let propCursor = 0x82;
 const propUuid = (): string => stableUuid((propCursor++).toString(16).padStart(2, '0'));
 
+// Slot 0x8b belonged to the deleted tack-room rope coil («طناب پیچیده»). It
+// is RETIRED here — consumed but unused — so the table below keeps every
+// historical uuid: saved-scene anchors can never drift after a deletion.
+void propUuid();
+
 /** THE zone-prop placement table (single source, consumed by the map). */
 export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   // --- TACK ROOM (SW corner) ---
@@ -278,7 +283,6 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۲', x: -4.35, y: 2.22, z: 3.605, rz: deg(0.08) },
   { uuid: propUuid(), kind: 'collar', name: 'یلغه', x: -3.85, y: 1.9, z: 3.61 },
   { uuid: propUuid(), kind: 'strap', name: 'تسمه چرمی', x: -3.45, y: 1.95, z: 3.605, params: { len: 0.42 } },
-  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب پیچیده', x: -3.5, y: 1.65, z: 3.6, params: { radius: 0.12, thick: 0.035 } },
   { uuid: propUuid(), kind: 'tack-shelf', name: 'قفسه قوطی', x: -3.1, y: 1.6, z: 3.63 },
   { uuid: propUuid(), kind: 'blanket-bar', name: 'میله پتو', x: -5.32, y: 1.65, z: 5.8 },
   { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.28, y: 1.645, z: 5.8, ry: 90, params: { color: 0x7a4a3a } },
@@ -327,10 +331,14 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   { uuid: propUuid(), kind: 'crate', name: 'جعبه شیروانی', x: -4.5, y: 3.0, z: -3.3, ry: deg(0.3), params: { w: 0.55, h: 0.6 } },
   { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -5.8, params: { radius: 0.5, height: 0.32, seed: 5 } },
   { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (شیروانی)', x: 1.4, y: 3.002, z: -3.6, params: { w: 2.4, d: 2.0, seed: 7 } },
-  // The hanging loft rope coil («طناب آویز») was REMOVED on user request:
-  // after an editor drag it floated mid-aisle in their save and they asked
-  // for it to be gone entirely (not restored — deleted). The coiled rope on
-  // the tack-room wall ('طناب پیچیده') is a different, mounted prop and stays.
+  // ROPE COILS — ALL deleted on user request. The hanging loft coil
+  // («طناب آویز») went first (it floated mid-aisle in their save); the user
+  // then reported the ring problem STILL unsolved and ordered «کلا انرا پاک
+  // کن» — delete them COMPLETELY. So the wall-mounted tack-room coil
+  // («طناب پیچیده») AND the per-stall `rope` extras (stalls 01/04, whose
+  // tori hung beside the stall doors and stayed behind when the doors
+  // swung — they read as stray door rings) are gone too. NO rope-coil
+  // geometry may exist anywhere in the world; the census test locks zero.
 ] as const);
 
 /* -------------------------------------------------------------------------- */
@@ -368,10 +376,10 @@ const stallZRows: ReadonlyArray<readonly [number, number]> = [
 ];
 
 const stallVariation: ReadonlyArray<Omit<StableStallSpec, 'index' | 'side' | 'zMin' | 'zMax' | 'defX' | 'doorGapCenter' | 'troughZ'>> = [
-  { troughHay: 0.8, bucket: { kind: 'wood', full: true }, rack: 'full', pile: false, floor: 'dirt', tool: 'pitchfork', extra: 'rope' },
+  { troughHay: 0.8, bucket: { kind: 'wood', full: true }, rack: 'full', pile: false, floor: 'dirt', tool: 'pitchfork', extra: null },
   { troughHay: 0.5, bucket: { kind: 'wood', full: true }, rack: 'half', pile: false, floor: 'worn', tool: null, extra: 'blanket' },
   { troughHay: 0.25, bucket: { kind: 'metal', full: true }, rack: null, pile: true, floor: 'straw', tool: null, extra: 'brush' },
-  { troughHay: 0.7, bucket: { kind: 'wood', full: true }, rack: 'full', pile: true, floor: 'dirt', tool: null, extra: 'rope' },
+  { troughHay: 0.7, bucket: { kind: 'wood', full: true }, rack: 'full', pile: true, floor: 'dirt', tool: null, extra: null },
   { troughHay: 0.4, bucket: { kind: 'metal', full: true }, rack: 'half', pile: false, floor: 'worn', tool: null, extra: 'bridle' },
   { troughHay: 0.15, bucket: null, rack: null, pile: true, floor: 'straw', tool: 'shovel', extra: null },
 ];

@@ -35,7 +35,6 @@ import {
   bucket,
   pitchfork,
   shovel,
-  ropeCoil,
   horseBrush,
   bridleHanging,
   drapedBlanket,
@@ -179,16 +178,10 @@ export function buildStallContents(spec: StableStallSpec): THREE.Group {
   }
 
   /* --- Extras ------------------------------------------------------------------ */
+  // NOTE: the former `rope` extra (a rope coil + iron hook hung on the
+  // wainscot beside the stall door) was DELETED on user request — its torus
+  // read as a stray «door ring» that stayed behind when the door swung.
   switch (spec.extra) {
-    case 'rope': {
-      const hook = addBox(g, M_.iron, 0.02, 0.06, 0.05, faceX + aisleX * 0.012, FLOOR + 1.35, southZ - 0.45, 'rope-hook');
-      hook.castShadow = false;
-      const coil = ropeCoil();
-      coil.rotation.y = Math.PI / 2; // flat against the wainscot face
-      coil.position.set(faceX + aisleX * 0.065, FLOOR + 1.13, southZ - 0.45);
-      g.add(coil);
-      break;
-    }
     case 'blanket': {
       // draped over the partition top (visible through the grill bars)
       const blanket = drapedBlanket(0.7, 0x7a4a3a);

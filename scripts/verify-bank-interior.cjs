@@ -9,7 +9,7 @@
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-bank-interior';
-const URL = 'http://localhost:5175/';
+const URL = 'http://localhost:5173/';
 const results = [];
 const ok = (name, pass, detail) => {
   results.push({ name, pass, detail });

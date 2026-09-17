@@ -221,7 +221,11 @@ const persistence = new PersistenceManager();
 // gone from the authored layout, and an OLD save still contains it (saves
 // rebuild the registry wholesale), so the key moves to drop the polluted
 // v12 saves — the floating coil AND every other editor-moved stray in them.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v13' });
+// v14 moves for the COMPLETE rope-coil deletion («کلا انرا پاک کن»): the
+// tack-room coil def and the stall rope extras are gone from the build, and
+// a v13 save still carries the 'rope-coil' def the factory no longer knows
+// (it would throw on materialisation). The key move drops those saves too.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v14' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -867,6 +871,9 @@ function updateStableDoors(delta: number): void {
     const def = manager.getObject(uuid);
     return def ? authoredLayout.isModified(def) : null;
   },
+  // Read-only authored transform clone (restore-verify harness compares the
+  // restored position against it).
+  authoredTransform: (uuid: string) => authoredLayout.getTransform(uuid),
   resetObject: (uuid: string) => resetObjectToAuthored(uuid),
   resetAll: () => resetAllToAuthored(),
   // --- geometry-verify probes (read-only, harness-only) ---------------------

@@ -25,6 +25,7 @@ import * as THREE from 'three';
 import type { IRendererAdapter, RendererChange } from './IRendererAdapter.js';
 import type { ObjectDefinition, ObjectMetadata, Transform } from '../core/types.js';
 import type { AssetRegistry } from '../assets/AssetRegistry.js';
+import { mergeStaticGeometry } from '../assets/MergeStatic.js';
 import { logger } from '../utils/Logger.js';
 
 export interface ThreeRendererAdapterOptions {
@@ -177,6 +178,23 @@ export class ThreeRendererAdapter implements IRendererAdapter {
     this.applyTransform(mesh, def.transform);
     mesh.uuid = def.uuid;
     mesh.name = def.metadata.name;
+    // Static-geometry merge pass (draw-call budget, see MergeStatic.ts):
+    // one mesh per (material × mount) bucket inside the def. Runs AFTER the
+    // registry transform so the bake reads final matrices; an opt-out def
+    // (metadata.noMerge) and any dynamic subtree are excluded by contract.
+    if ((def.metadata as Record<string, unknown> | undefined)?.noMerge !== true) {
+      try {
+        mergeStaticGeometry(mesh);
+      } catch (err) {
+        // The pass must never break asset creation — worst case the def
+        // renders unmerged (correct, just slower).
+        this.log.error('mergeStaticGeometry failed — def renders unmerged', {
+          uuid: def.uuid,
+          assetType: def.assetType,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     this.scene.add(mesh);
     this.meshes.set(def.uuid, mesh);
 

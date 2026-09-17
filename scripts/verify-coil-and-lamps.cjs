@@ -1,14 +1,16 @@
-/* BROWSER VERIFICATION (§10) — the two user asks of this session:
- *   1) the hanging rope coil («طناب آویز») is GONE from the fresh scene —
- *      registry truth + live geometry near its old loft-edge spot
+/* BROWSER VERIFICATION (§10) — the user asks of this session:
+ *   1) EVERY rope coil is GONE from the fresh scene («کلا انرا پاک کن» —
+ *      the tack-room wall coil and the stall extras included) — registry
+ *      truth + live geometry census
  *   2) the lamp policy is live: day boot → 0 visible point lights;
  *      night → all lamps burn (visual sanity via screenshots)
- *   3) no page errors; storage key moved to v13 (a stale v12 save is dropped)
- * Run: node scripts/verify-coil-and-lamps.cjs (dev server on :5176)
+ *   3) no page errors; storage key moved to v14 (stale v12/v13 saves dropped)
+ * Run: node scripts/verify-coil-and-lamps.cjs (dev server on :5176 or :5173)
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-coil-lamps';
-const URL = 'http://localhost:5176/';
+const PORT = process.argv[2] || '5176';
+const URL = `http://localhost:${PORT}/`;
 const fs = require('fs');
 if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
 
@@ -19,7 +21,7 @@ if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
-  // stale-v12 save: a def with the OLD rope uuid at a MOVED position — must be ignored
+  // stale-v13 save: a def with the OLD rope uuid at a MOVED position — must be ignored
   await page.goto(URL);
   await page.evaluate(() => {
     const stale = {
@@ -28,9 +30,9 @@ if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
       sceneMetadata: { map: 'playable-map', mode: 'development' },
       objects: [{ uuid: '10000000-0000-4000-8000-0000000000b8', assetType: 'stable-prop',
         transform: { position: { x: -16.0, y: 1.5, z: 3.0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
-        metadata: { name: 'اسطبل — طناب آویز', collider: false, kind: 'rope-coil', params: { hook: true } } }],
+        metadata: { name: 'اسطبل — طناب پیچیده', collider: false, kind: 'rope-coil', params: { radius: 0.12, thick: 0.035 } } }],
     };
-    localStorage.setItem('ai-western-game.playable-map.scene.v12', JSON.stringify(stale));
+    localStorage.setItem('ai-western-game.playable-map.scene.v13', JSON.stringify(stale));
   });
   await page.reload();
   await page.waitForTimeout(4500);
@@ -41,46 +43,40 @@ if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
     console.log((pass ? 'PASS' : 'FAIL') + ' — ' + name + (detail ? '  [' + detail + ']' : ''));
   };
 
-  /* 1) registry truth: no rope-coil def with hook, no «طناب آویز» name */
+  /* 1) registry truth: ZERO rope-coil defs of any kind, no old names */
   const reg = await page.evaluate(() => {
     const defs = window.__westTest.objects();
     const coils = defs.filter((d) => d.metadata && d.metadata.kind === 'rope-coil');
     return {
       total: defs.length,
-      hookedCoils: coils.filter((d) => d.metadata.params && d.metadata.params.hook).length,
-      byOldName: defs.filter((d) => String(d.metadata.name).includes('طناب آویز')).length,
-      mountedCoilNames: coils.map((d) => d.metadata.name),
-      savedKeyIsV13: Object.keys(localStorage).some((k) => k.endsWith('scene.v13')),
-      staleV12StillPresent: Object.keys(localStorage).some((k) => k.endsWith('scene.v12')),
+      coilCount: coils.length,
+      byOldName: defs.filter((d) => ['طناب آویز', 'طناب پیچیده'].some((n) => String(d.metadata.name).includes(n))).length,
+      savedKeyIsV14: Object.keys(localStorage).some((k) => k.endsWith('scene.v14')),
+      staleV13StillPresent: Object.keys(localStorage).some((k) => k.endsWith('scene.v13')),
     };
   });
-  ok('no hooked rope-coil def in registry', reg.hookedCoils === 0, 'hooked=' + reg.hookedCoils);
-  ok('no «طناب آویز»-named def in registry', reg.byOldName === 0);
-  ok('the mounted «طناب پیچیده» survives (1 rope-coil)', reg.mountedCoilNames.length === 1 && reg.mountedCoilNames[0].includes('طناب پیچیده'), JSON.stringify(reg.mountedCoilNames));
-  ok('stale v12 save ignored (its key still present, but never loaded)', reg.staleV12StillPresent, 'v12 kept-but-unused; new saves will land on v13');
+  ok('ZERO rope-coil defs in registry (کلا پاک شد)', reg.coilCount === 0, 'coils=' + reg.coilCount);
+  ok('no «طناب آویز»/«طناب پیچیده»-named def in registry', reg.byOldName === 0);
+  ok('stale v13 save ignored (its key still present, but never loaded)', reg.staleV13StillPresent, 'v13 kept-but-unused; new saves land on v14');
   const staleRespawned = await page.evaluate(() => Boolean(window.__westTest.scene().getObjectByProperty('uuid', '10000000-0000-4000-8000-0000000000b8')));
   ok('the polluted save cannot resurrect the coil uuid', !staleRespawned);
 
-  /* 2) live geometry: the DELETED loft variant (hook + coil at the loft edge)
-   *    must be gone; the MOUNTED wall coils (tack-room def + 2 stall extras)
-   *    are intended design and must survive. */
+  /* 2) live geometry: NO rope torus may exist anywhere (all coils deleted);
+   *    tie rings / pulley / collar / bridle strap tori are different assets
+   *    and are matched only by the deleted builder's exact name. */
   const geom = await page.evaluate(() => {
     const scene = window.__westTest.scene();
     let loftHookMeshes = 0;
-    const tori = [];
+    let ropeTori = 0;
     scene.traverse((o) => {
       if (!o.isMesh) return;
       if (o.name === 'loft-rope-hook') loftHookMeshes += 1;
-      if (o.name === 'rope-torus') {
-        o.updateWorldMatrix(true, false);
-        tori.push({ y: +o.matrixWorld.elements[13].toFixed(2), x: +o.matrixWorld.elements[12].toFixed(2) });
-      }
+      if (o.name === 'rope-torus') ropeTori += 1;
     });
-    return { loftHookMeshes, tori };
+    return { loftHookMeshes, ropeTori };
   });
   ok('zero loft-rope-hook meshes (the deleted loft variant)', geom.loftHookMeshes === 0, 'found=' + geom.loftHookMeshes);
-  const highTori = geom.tori.filter((t) => t.y > 2.2); // the loft coil hung at y≈2.56
-  ok('no rope torus hangs at loft height (mounted wall coils live at y≈1.1)', highTori.length === 0, 'tori=' + JSON.stringify(geom.tori));
+  ok('ZERO rope-torus meshes in the whole scene (کلا پاک شد)', geom.ropeTori === 0, 'found=' + geom.ropeTori);
 
   /* 3) lamp policy: day (8h) → 0 visible point lights */
   const day = await page.evaluate(() => {

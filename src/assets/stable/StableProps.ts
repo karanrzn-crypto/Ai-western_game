@@ -297,18 +297,6 @@ export function broom(): THREE.Group {
   return g;
 }
 
-/** Coiled rope hanging on a hook (flat coil against the wall). */
-export function ropeCoil(radius = 0.14, thick = 0.045): THREE.Group {
-  const M_ = M();
-  const g = new THREE.Group();
-  g.name = 'rope-coil';
-  const coil = new THREE.Mesh(new THREE.TorusGeometry(radius, thick, 8, 18), M_.hayDark);
-  coil.castShadow = true;
-  coil.name = 'rope-torus';
-  g.add(coil);
-  return g;
-}
-
 /** Wall hook: small iron L (mount plate flush + hook bar). */
 export function wallHook(): THREE.Group {
   const M_ = M();

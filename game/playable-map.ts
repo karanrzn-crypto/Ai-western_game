@@ -217,7 +217,11 @@ const persistence = new PersistenceManager();
 // for the Livery Stable block. Scene load REPLACES the whole registry, so
 // old saves would load a scene WITHOUT the stable — the key must move for
 // every existing save to pick it up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v12' });
+// v13 moved for the hanging rope coil's deletion (user request): the def is
+// gone from the authored layout, and an OLD save still contains it (saves
+// rebuild the registry wholesale), so the key moves to drop the polluted
+// v12 saves — the floating coil AND every other editor-moved stray in them.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v13' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -845,6 +849,16 @@ function updateStableDoors(delta: number): void {
   // Read-only registry dump for the harness probes: every managed definition
   // (uuid/assetType/transform/metadata) exactly as the editor sees it.
   objects: () => manager.getAllObjects(),
+  // Read-only renderer.info snapshot for the perf harness (§9 baseline):
+  // last-frame draw calls / points / triangles exactly as the driver saw them.
+  stats: () => ({
+    calls: renderer.info.render.calls,
+    tris: renderer.info.render.triangles,
+    lines: renderer.info.render.lines,
+    geometries: renderer.info.memory.geometries,
+    textures: renderer.info.memory.textures,
+    programs: renderer.info.programs?.length ?? 0,
+  }),
   // --- Authored-layout reset (the editor's "put it back" action) ------------
   // Same code path as the selection panel's reset buttons: restore through
   // updateObjectTransform, then persist. Harness-only mirror for the probes.
@@ -1307,6 +1321,41 @@ function loadSavedScene(): void {
     }
   }
   updateSaveStatus();
+}
+
+/**
+ * Lamp registration sweep (weak-laptop perf revision). Forward rendering
+ * pays for EVERY visible PointLight in EVERY fragment — count, not range.
+ * The boot build carries 16 real point lights (stable lanterns, saloon
+ * chandeliers, sheriff stove/desk/lanterns, bank lamps); the DayNightCycle's
+ * lamp policy burns them only while the sun is down (their emissive flame
+ * chips keep them visibly "lit" in daylight).
+ *
+ * ASYNC MESH MATERIALIZATION: AssetRegistry.create() awaits every factory
+ * result, so adapter meshes — and the lights inside them — land on
+ * microtasks AFTER this module's bottom executes. The sweep therefore runs
+ * on requestAnimationFrame (microtask queue guaranteed flushed) and retries
+ * until it actually owns lights (capped), self-healing against any future
+ * genuinely-async asset (GLTF). After success it never runs again — the
+ * editor moves whole groups and never spawns or deletes lights.
+ */
+function registerSceneLamps(): number {
+  let registered = 0;
+  scene.traverse((o) => {
+    if (o instanceof THREE.PointLight) {
+      dayNight.registerLamp(o);
+      registered += 1;
+    }
+  });
+  console.debug(`[playable-map] lamp policy: ${registered} point light(s) registered`);
+  return registered;
+}
+
+function scheduleLampSweep(attempt = 0): void {
+  requestAnimationFrame(() => {
+    if (registerSceneLamps() > 0 || attempt >= 10) return;
+    scheduleLampSweep(attempt + 1);
+  });
 }
 
 // --- Mode state machine (camera-ownership revision) -----------------------
@@ -2254,6 +2303,7 @@ window.addEventListener('resize', () => {
 });
 
 loadSavedScene();
+scheduleLampSweep(); // deferred: adapter meshes (and their lights) materialize on microtasks
 applyModeState(); // boot: play mode → input ENABLED (the movement fix)
 setHud();
 updateSelectionPanel();

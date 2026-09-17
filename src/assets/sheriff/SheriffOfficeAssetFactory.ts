@@ -325,26 +325,49 @@ function metalMat(colorHex: string, tex: THREE.CanvasTexture | null, extra: Part
   });
 }
 
+/**
+ * Shadow-caster size floor (weak-laptop perf revision) — see the full note in
+ * StableProps: sub-9 cm parts cast sub-texel noise in the 768²/85 m sun map.
+ * Geometry-size based (arbitrary geo here): bounding-sphere radius ≥ floor.
+ */
+const SHADOW_CASTER_MIN = 0.09;
+
 function mesh(geo: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, material);
   m.position.set(x, y, z);
-  m.castShadow = true;
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  m.castShadow = (geo.boundingSphere?.radius ?? Infinity) >= SHADOW_CASTER_MIN;
   m.receiveShadow = true;
   return m;
 }
 
+/**
+ * LAZY SINGLETON material table (weak-laptop perf revision) — see the full
+ * note in StableMaterials. The old per-call factories built a fresh material
+ * AND a fresh CanvasTexture on EVERY builder invocation; nothing mutates a
+ * sheriff material after creation, so each look is now built once and shared
+ * by every mesh that asks for it.
+ */
+const lazyMat = <T>(fn: () => T): (() => T) => {
+  let cached: T | undefined;
+  return () => {
+    if (cached === undefined) cached = fn();
+    return cached;
+  };
+};
+
 const MAT = {
-  woodDark: () => stdMat(WOOD_DARK, woodTexture(WOOD_DARK, '#20120a')),
-  woodMed: () => stdMat(WOOD_MED, woodTexture(WOOD_MED, WOOD_DARK)),
-  woodTrim: () => stdMat(WOOD_TRIM, woodTexture(WOOD_TRIM, WOOD_MED)),
-  iron: () => metalMat(IRON, ironTexture(), { roughness: 0.6 }),
-  ironDark: () => metalMat('#161616', ironTexture('#161616'), { roughness: 0.65 }),
-  brass: () => metalMat(BRASS, brassTexture()),
-  brassDark: () => metalMat(BRASS_DARK, brassTexture(BRASS_DARK)),
-  leather: () => stdMat(LEATHER, null, { roughness: 0.65 }),
-  parchment: () => stdMat(PARCHMENT, null, { roughness: 1 }),
-  ticking: () => stdMat(TICKING_BASE, tickingTexture(), { roughness: 0.9 }),
-  glassWarm: () =>
+  woodDark: lazyMat(() => stdMat(WOOD_DARK, woodTexture(WOOD_DARK, '#20120a'))),
+  woodMed: lazyMat(() => stdMat(WOOD_MED, woodTexture(WOOD_MED, WOOD_DARK))),
+  woodTrim: lazyMat(() => stdMat(WOOD_TRIM, woodTexture(WOOD_TRIM, WOOD_MED))),
+  iron: lazyMat(() => metalMat(IRON, ironTexture(), { roughness: 0.6 })),
+  ironDark: lazyMat(() => metalMat('#161616', ironTexture('#161616'), { roughness: 0.65 })),
+  brass: lazyMat(() => metalMat(BRASS, brassTexture())),
+  brassDark: lazyMat(() => metalMat(BRASS_DARK, brassTexture(BRASS_DARK))),
+  leather: lazyMat(() => stdMat(LEATHER, null, { roughness: 0.65 })),
+  parchment: lazyMat(() => stdMat(PARCHMENT, null, { roughness: 1 })),
+  ticking: lazyMat(() => stdMat(TICKING_BASE, tickingTexture(), { roughness: 0.9 })),
+  glassWarm: lazyMat(() =>
     new THREE.MeshStandardMaterial({
       color: new THREE.Color(GLASS_WARM),
       transparent: true,
@@ -353,15 +376,15 @@ const MAT = {
       metalness: 0.1,
       emissive: new THREE.Color(GLASS_WARM),
       emissiveIntensity: 0.7,
-    }),
-  glassClear: () =>
+    })),
+  glassClear: lazyMat(() =>
     new THREE.MeshStandardMaterial({
       color: 0xdfeef2,
       transparent: true,
       opacity: 0.18,
       roughness: 0.05,
       metalness: 0.1,
-    }),
+    })),
 };
 
 /** Five-point star built with a real extruded Shape (used for the badge). */

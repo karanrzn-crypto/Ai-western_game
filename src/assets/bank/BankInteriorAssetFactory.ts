@@ -294,27 +294,49 @@ function metalMat(colorHex: string, tex: THREE.CanvasTexture | null, extra: Part
   });
 }
 
+/**
+ * Shadow-caster size floor (weak-laptop perf revision) — see the full note in
+ * StableProps: sub-9 cm parts cast sub-texel noise in the 768²/85 m sun map.
+ * Geometry-size based (arbitrary geo here): bounding-sphere radius ≥ floor.
+ */
+const SHADOW_CASTER_MIN = 0.09;
+
 function mesh(geo: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, material);
   m.position.set(x, y, z);
-  m.castShadow = true;
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  m.castShadow = (geo.boundingSphere?.radius ?? Infinity) >= SHADOW_CASTER_MIN;
   m.receiveShadow = true;
   return m;
 }
 
-// Shared material instances (built once per module load; cheap + consistent look)
+/**
+ * LAZY SINGLETON material table (weak-laptop perf revision) — see the full
+ * note in StableMaterials. The old per-call factories built a fresh material
+ * AND a fresh CanvasTexture on EVERY builder invocation; nothing mutates a
+ * bank-interior material after creation, so each look is now built once and
+ * shared by every mesh that asks for it.
+ */
+const lazyMat = <T>(fn: () => T): (() => T) => {
+  let cached: T | undefined;
+  return () => {
+    if (cached === undefined) cached = fn();
+    return cached;
+  };
+};
+
 const MAT = {
-  woodDark: () => stdMat(WOOD_DARK, woodTexture(WOOD_DARK, '#2f1a0d')),
-  woodMed: () => stdMat(WOOD_MED, woodTexture(WOOD_MED, WOOD_DARK)),
-  woodTrim: () => stdMat(WOOD_TRIM, woodTexture(WOOD_TRIM, WOOD_MED)),
-  marble: () => stdMat(MARBLE_BASE, marbleTexture(), { roughness: 0.25, metalness: 0.05 }),
-  brass: () => metalMat(BRASS, brassTexture()),
-  brassDark: () => metalMat(BRASS_DARK, brassTexture(BRASS_DARK)),
-  iron: () => metalMat(IRON, null, { roughness: 0.55 }),
-  leatherGreen: () => stdMat(LEATHER_GREEN, leatherTexture(LEATHER_GREEN), { roughness: 0.6 }),
-  leatherMaroon: () => stdMat(LEATHER_MAROON, leatherTexture(LEATHER_MAROON), { roughness: 0.6 }),
-  parchment: () => stdMat(PARCHMENT, null, { roughness: 1 }),
-  glassWarm: () =>
+  woodDark: lazyMat(() => stdMat(WOOD_DARK, woodTexture(WOOD_DARK, '#2f1a0d'))),
+  woodMed: lazyMat(() => stdMat(WOOD_MED, woodTexture(WOOD_MED, WOOD_DARK))),
+  woodTrim: lazyMat(() => stdMat(WOOD_TRIM, woodTexture(WOOD_TRIM, WOOD_MED))),
+  marble: lazyMat(() => stdMat(MARBLE_BASE, marbleTexture(), { roughness: 0.25, metalness: 0.05 })),
+  brass: lazyMat(() => metalMat(BRASS, brassTexture())),
+  brassDark: lazyMat(() => metalMat(BRASS_DARK, brassTexture(BRASS_DARK))),
+  iron: lazyMat(() => metalMat(IRON, null, { roughness: 0.55 })),
+  leatherGreen: lazyMat(() => stdMat(LEATHER_GREEN, leatherTexture(LEATHER_GREEN), { roughness: 0.6 })),
+  leatherMaroon: lazyMat(() => stdMat(LEATHER_MAROON, leatherTexture(LEATHER_MAROON), { roughness: 0.6 })),
+  parchment: lazyMat(() => stdMat(PARCHMENT, null, { roughness: 1 })),
+  glassWarm: lazyMat(() =>
     new THREE.MeshStandardMaterial({
       color: new THREE.Color(GLASS_WARM),
       transparent: true,
@@ -323,7 +345,7 @@ const MAT = {
       metalness: 0.1,
       emissive: new THREE.Color(GLASS_WARM),
       emissiveIntensity: 0.6,
-    }),
+    })),
 };
 
 // ---------------------------------------------------------------------------

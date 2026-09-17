@@ -39,6 +39,13 @@ import {
 
 /** Geometric helpers ------------------------------------------------------- */
 
+/**
+ * Shadow-caster size floor (weak-laptop perf revision) — see the twin note in
+ * StableProps. The 768²/85 m sun map ≈ 9 texels/m: a part under ~9 cm casts
+ * sub-texel noise. Explicit opts.cast still wins; receiveShadow unchanged.
+ */
+const SHADOW_CASTER_MIN = 0.09;
+
 interface MeshOptions {
   /** Face +Z (front) semantics stay with the builder; default no rotation. */
   rx?: number;
@@ -61,7 +68,7 @@ function box(
   if (opts.rx) mesh.rotation.x = opts.rx;
   if (opts.ry) mesh.rotation.y = opts.ry;
   if (opts.rz) mesh.rotation.z = opts.rz;
-  mesh.castShadow = opts.cast ?? true;
+  mesh.castShadow = opts.cast ?? Math.max(w, h, d) >= SHADOW_CASTER_MIN;
   mesh.receiveShadow = opts.receive ?? true;
   mesh.name = name;
   parent.add(mesh);
@@ -81,7 +88,7 @@ function cyl(
   if (opts.rx) mesh.rotation.x = opts.rx;
   if (opts.ry) mesh.rotation.y = opts.ry;
   if (opts.rz) mesh.rotation.z = opts.rz;
-  mesh.castShadow = opts.cast ?? true;
+  mesh.castShadow = opts.cast ?? (Math.max(rTop, rBottom) * 2 >= SHADOW_CASTER_MIN || h >= SHADOW_CASTER_MIN);
   mesh.receiveShadow = opts.receive ?? true;
   mesh.name = name;
   parent.add(mesh);

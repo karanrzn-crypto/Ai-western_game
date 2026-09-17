@@ -95,12 +95,28 @@ export function rand(seed: { v: number }): number {
 }
 
 /**
+ * Per-args texture memo (weak-laptop perf revision): the generators bake the
+ * repeat INTO each CanvasTexture, so a keyed cache returns ONE texture per
+ * (generator, repeat) pair instead of a fresh canvas per builder call — and
+ * with the shared material set, every writer of a material member now hands
+ * it the SAME texture instance (no last-wins tile drift).
+ */
+function memoTexByArgs(fn: (rx: number, ry: number) => THREE.CanvasTexture | null): (rx: number, ry: number) => THREE.CanvasTexture | null {
+  const cache = new Map<string, THREE.CanvasTexture | null>();
+  return (rx, ry) => {
+    const key = `${rx}x${ry}`;
+    if (!cache.has(key)) cache.set(key, fn(rx, ry));
+    return cache.get(key)!;
+  };
+}
+
+/**
  * Aged brick: 4 courses × 2 stretcher bricks per canvas tile, mortar joints,
  * per-brick tone variation and faint weathering streaks. `repeat` should be
  * roughly (faceWidthMeters / 1.0, faceHeightMeters / 0.6) so a brick module
  * lands near 0.5 × 0.15 m.
  */
-function brickTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
+function genBrickTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
   const c = makeCanvas(size, size);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -146,7 +162,7 @@ function brickTexture(repeatX: number, repeatY: number, size = 256): THREE.Canva
 /**
  * Cream stone: pale limestone with speckle and faint masons' tooling lines.
  */
-function stoneTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
+function genStoneTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
   const c = makeCanvas(size, size);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -177,7 +193,7 @@ function stoneTexture(repeatX: number, repeatY: number, size = 256): THREE.Canva
  * Interior flagstone floor: large cream flags with darker grout grid.
  * One canvas tile = one 1.2 m flag; repeat = (w/1.2, d/1.2).
  */
-function flagstoneTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
+function genFlagstoneTexture(repeatX: number, repeatY: number, size = 256): THREE.CanvasTexture | null {
   const c = makeCanvas(size, size);
   if (!c) return null;
   const { canvas, ctx } = c;
@@ -200,13 +216,28 @@ function flagstoneTexture(repeatX: number, repeatY: number, size = 256): THREE.C
 }
 
 // ---------------------------------------------------------------------------
-// Material set (per produced object — disposal contract)
+// Material set (SHARED singleton — weak-laptop perf revision)
 // ---------------------------------------------------------------------------
 
 const std = (color: number, roughness = 0.8, metalness = 0.04): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness });
 
+/**
+ * SHARED MATERIAL CACHE (weak-laptop perf revision). The old "per produced
+ * object" contract multiplied identical materials across every bank def;
+ * nothing mutates a bank material after creation, so the set is a
+ * process-lifetime SINGLETON. Visual output is bit-identical.
+ * Disposal contract (revised with ThreeRendererAdapter): shared materials are
+ * NEVER disposed per-object — the adapter disposes geometries only.
+ */
+let bankMaterialsCache: BankMaterials | null = null;
+
 export function createBankMaterials(): BankMaterials {
+  if (!bankMaterialsCache) bankMaterialsCache = buildBankMaterials();
+  return bankMaterialsCache;
+}
+
+function buildBankMaterials(): BankMaterials {
   return {
     brick: new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.02 }),
     brickDark: std(BANK_PALETTE.brickDark, 0.85, 0.02),
@@ -234,6 +265,10 @@ export function createBankMaterials(): BankMaterials {
     roof: std(BANK_PALETTE.roof, 0.95, 0.0),
   };
 }
+
+const brickTexture = memoTexByArgs(genBrickTexture);
+const stoneTexture = memoTexByArgs(genStoneTexture);
+const flagstoneTexture = memoTexByArgs(genFlagstoneTexture);
 
 /**
  * Shared bank canvas kit — the ONE copy used by BankMaterials (exterior

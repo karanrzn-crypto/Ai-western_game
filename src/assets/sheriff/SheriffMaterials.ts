@@ -295,9 +295,22 @@ const stoneTexture = memoTex(genStone);
 const ironTexture = memoTex(genIron);
 const paperTexture = memoTex(genPaper);
 
-/** Build a fresh material set (call once per builder invocation). */
-// (textures are shared; the MATERIALS themselves stay per-object)
+/**
+ * SHARED MATERIAL CACHE (weak-laptop perf revision). The old "call once per
+ * builder invocation" contract multiplied identical sheriff materials across
+ * every def; nothing mutates a sheriff material after creation, so the set
+ * is a process-lifetime SINGLETON. Visual output is bit-identical.
+ * Disposal contract (revised with ThreeRendererAdapter): shared materials are
+ * NEVER disposed per-object — the adapter disposes geometries only.
+ */
+let sheriffMaterialsCache: SheriffMaterials | null = null;
+
 export function createSheriffMaterials(): SheriffMaterials {
+  if (!sheriffMaterialsCache) sheriffMaterialsCache = buildSheriffMaterials();
+  return sheriffMaterialsCache;
+}
+
+function buildSheriffMaterials(): SheriffMaterials {
   return {
     clapboard: stdMat(CLAPBOARD_BASE, clapboardTexture()),
     trim: stdMat(TRIM_PAINT, null, { roughness: 0.7 }),

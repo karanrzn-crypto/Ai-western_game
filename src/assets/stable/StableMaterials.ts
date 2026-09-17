@@ -384,7 +384,28 @@ export interface StableMaterials {
   tin: THREE.MeshStandardMaterial;
 }
 
+/**
+ * SHARED MATERIAL CACHE (weak-laptop perf revision).
+ *
+ * The old contract built a FRESH 17-material set on EVERY builder invocation
+ * — with 323 managed defs that measured 1334 unique materials in the live
+ * scene: massive GPU state churn, uniform uploads, and GC pressure. Nothing
+ * in the codebase mutates a material after creation (verified: no per-frame
+ * emissive/opacity/color writes; stdMat clones textures for repeat variants),
+ * so the set is now a process-lifetime SINGLETON. Visual output is bit-identical;
+ * every mesh simply shares one instance per look.
+ *
+ * Disposal contract (revised with ThreeRendererAdapter): shared materials are
+ * NEVER disposed per-object — the adapter now disposes geometries only.
+ */
+let stableMaterialsCache: StableMaterials | null = null;
+
 export function createStableMaterials(): StableMaterials {
+  if (!stableMaterialsCache) stableMaterialsCache = buildStableMaterials();
+  return stableMaterialsCache;
+}
+
+function buildStableMaterials(): StableMaterials {
   return {
     siding: stdMat(SIDING_BASE, memoBoardBatten(), { roughness: 0.9 }),
     timber: stdMat(TIMBER_BASE, memoPlank(), { roughness: 0.92, repeat: [1.2, 1.2] }),

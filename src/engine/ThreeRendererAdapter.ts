@@ -242,14 +242,23 @@ export class ThreeRendererAdapter implements IRendererAdapter {
     target.scale.set(t.scale.x, t.scale.y, t.scale.z);
   }
 
+  /**
+   * Tear down one object's GPU resources. GEOMETRIES ONLY.
+   *
+   * Disposal contract (weak-laptop perf revision): the asset factories share
+   * one process-lifetime material set per building module (see the SHARED
+   * MATERIAL CACHE notes in StableMaterials/SaloonMaterials/BankMaterials/
+   * SheriffMaterials). Disposing a removed object's materials would therefore
+   * shred the cache every other def still renders with — three.js would
+   * recompile the programs on next use, hitching the frame. Geometries stay
+   * per-object and are disposed here as before; the shared materials live
+   * until the process ends (a bounded, tiny set).
+   * Safe to call multiple times.
+   */
   private disposeObject3D(obj: THREE.Object3D): void {
     obj.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
-      if (mesh.material) {
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const m of mats) m.dispose();
-      }
     });
   }
 }

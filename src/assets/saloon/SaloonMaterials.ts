@@ -110,11 +110,26 @@ const metal = (color: number, roughness = 0.35): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.85 });
 
 /**
- * One material set per produced object. Meshes inside the same object share
- * these instances (material reuse within the object — cheap draw setup),
- * while objects never share instances across the registry.
+ * SHARED MATERIAL CACHE (weak-laptop perf revision).
+ *
+ * The old contract ("one material set per produced object") measured 1334
+ * unique materials across 323 managed defs — pure GPU state churn and GC
+ * pressure for zero visual benefit. Nothing mutates a saloon material after
+ * creation (the flame/lampGlass looks are static emissives), so the set is
+ * now a process-lifetime SINGLETON; meshes inside AND across objects share
+ * one instance per look. Visual output is bit-identical.
+ *
+ * Disposal contract (revised with ThreeRendererAdapter): shared materials are
+ * NEVER disposed per-object — the adapter now disposes geometries only.
  */
+let saloonMaterialsCache: SaloonMaterials | null = null;
+
 export function createSaloonMaterials(): SaloonMaterials {
+  if (!saloonMaterialsCache) saloonMaterialsCache = buildSaloonMaterials();
+  return saloonMaterialsCache;
+}
+
+function buildSaloonMaterials(): SaloonMaterials {
   return {
     woodDark: wood(SALOON_PALETTE.woodDark),
     woodMed: wood(SALOON_PALETTE.woodMed),

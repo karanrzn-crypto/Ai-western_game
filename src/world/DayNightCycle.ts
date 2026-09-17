@@ -85,6 +85,25 @@ export class DayNightCycle {
   private readonly skyColor = new THREE.Color(); private readonly fogColor = new THREE.Color(); private readonly sunColor = new THREE.Color();
   private readonly tmpDir = new THREE.Vector3(); private readonly tmpLightPos = new THREE.Vector3();
   private readonly tmpChannelFrom = new THREE.Color(); private readonly tmpChannelTo = new THREE.Color();
+  /** Persistent background instance — mutated in place every frame. The old
+   *  per-frame `scene.background = skyColor.clone()` allocated a Color object
+   *  60×/s (GC hitches on weak laptops) and swapped the background identity
+   *  every frame for zero visual benefit. */
+  private readonly background = new THREE.Color();
+  // --- Lamp policy (weak-laptop perf revision) ------------------------------
+  // Forward rendering pays for EVERY visible PointLight in EVERY fragment —
+  // a light's range does not matter to cost, only the COUNT does. The map
+  // shipped 18 real point lights, measured as the dominant fill-rate tax on
+  // weak GPUs (≈2.6× frame time headless). The cycle owns the sun timeline,
+  // so it owns the lamp state too: lamps burn only while the sun is
+  // effectively down. Two thresholds form a hysteresis band (no flip-flop at
+  // dawn/dusk); the flame/glass EMISSIVE meshes keep lamps looking lit in
+  // daylight. A visible-count change recompiles material programs ONCE per
+  // transition (cached after the first day).
+  private static readonly LAMPS_ON_BELOW = 0.35;
+  private static readonly LAMPS_OFF_ABOVE = 0.55;
+  private readonly lamps = new Set<THREE.PointLight>();
+  private lampsLit = true;
   constructor(scene: THREE.Scene, sun: THREE.DirectionalLight, hemisphere: THREE.HemisphereLight, options: DayNightCycleOptions = {}) {
     this.scene = scene; this.sun = sun; this.hemisphere = hemisphere; this.dayDuration = Math.max(10, options.dayDurationSeconds ?? 180);
     this.sunDistance = Math.max(10, options.sunDistance ?? 38); this.sunHeight = Math.max(10, options.sunHeight ?? 42);
@@ -96,6 +115,24 @@ export class DayNightCycle {
   update(deltaSeconds: number): void { this.timeOfDay = normalizeHour(this.timeOfDay + (deltaSeconds * 24) / this.dayDuration); this.apply(); }
   getTimeOfDay(): number { return this.timeOfDay; }
   setTimeOfDay(hours: number): void { this.timeOfDay = normalizeHour(hours); this.apply(); }
+  /** Register a real PointLight under the lamp policy (boot sweep — the def
+   *  set is static after load; the editor moves groups, never spawns lights). */
+  registerLamp(light: THREE.PointLight): void {
+    this.lamps.add(light);
+    light.visible = this.lampsLit;
+  }
+  /** How many real lamps the policy currently owns. */
+  get lampCount(): number { return this.lamps.size; }
+  /** Whether lamps burn under the current sun (for tests/harnesses). */
+  get areLampsLit(): boolean { return this.lampsLit; }
+  private updateLamps(): void {
+    if (this.lamps.size === 0) return;
+    const s = this.sun.intensity;
+    if (!this.lampsLit && s < DayNightCycle.LAMPS_ON_BELOW) this.lampsLit = true;
+    else if (this.lampsLit && s > DayNightCycle.LAMPS_OFF_ABOVE) this.lampsLit = false;
+    else return;
+    for (const lamp of this.lamps) lamp.visible = this.lampsLit;
+  }
   getSnapshot(): DayNightSnapshot { return { timeOfDay: this.timeOfDay, sunIntensity: this.sun.intensity, hemisphereIntensity: this.hemisphere.intensity, skyColor: `#${this.skyColor.getHexString()}`, fogColor: `#${this.fogColor.getHexString()}`, sunPosition: { x: this.sun.position.x, y: this.sun.position.y, z: this.sun.position.z } }; }
   private apply(): void {
     const hours = normalizeHour(this.timeOfDay);
@@ -124,6 +161,9 @@ export class DayNightCycle {
     this.sunColor.lerpColors(this.tmpChannelFrom.set(from.sunColor), this.tmpChannelTo.set(to.sunColor), t); this.sun.color.copy(this.sunColor);
     this.skyColor.lerpColors(this.tmpChannelFrom.set(from.skyColor), this.tmpChannelTo.set(to.skyColor), t);
     this.fogColor.lerpColors(this.tmpChannelFrom.set(from.fogColor), this.tmpChannelTo.set(to.fogColor), t);
-    this.scene.background = this.skyColor.clone(); if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(this.fogColor);
+    this.scene.background = this.background; // assigned ONCE — see the field note
+    this.background.copy(this.skyColor);
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(this.fogColor);
+    this.updateLamps();
   }
 }

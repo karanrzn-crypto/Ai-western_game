@@ -39,6 +39,13 @@ import { SheriffAssetFactory, buildSheriffFrontDoor } from './SheriffOfficeAsset
 
 type Mat = THREE.Material;
 
+/**
+ * Shadow-caster size floor (weak-laptop perf revision) — see the full note in
+ * StableProps: the 768²/85 m sun map ≈ 9 texels/m, so sub-9 cm parts cast
+ * invisible noise while costing a depth-pass draw each.
+ */
+const SHADOW_CASTER_MIN = 0.09;
+
 function addBox(
   parent: THREE.Object3D,
   m: Mat,
@@ -48,7 +55,7 @@ function addBox(
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   mesh.position.set(x, y, z);
-  mesh.castShadow = true;
+  mesh.castShadow = Math.max(w, h, d) >= SHADOW_CASTER_MIN;
   mesh.receiveShadow = true;
   mesh.name = name;
   parent.add(mesh);
@@ -64,7 +71,7 @@ function addCyl(
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, seg), m);
   mesh.position.set(x, y, z);
-  mesh.castShadow = true;
+  mesh.castShadow = Math.max(rTop, rBottom) * 2 >= SHADOW_CASTER_MIN || h >= SHADOW_CASTER_MIN;
   mesh.receiveShadow = true;
   mesh.name = name;
   parent.add(mesh);

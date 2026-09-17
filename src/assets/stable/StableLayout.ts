@@ -327,14 +327,10 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   { uuid: propUuid(), kind: 'crate', name: 'جعبه شیروانی', x: -4.5, y: 3.0, z: -3.3, ry: deg(0.3), params: { w: 0.55, h: 0.6 } },
   { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -5.8, params: { radius: 0.5, height: 0.32, seed: 5 } },
   { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (شیروانی)', x: 1.4, y: 3.002, z: -3.6, params: { w: 2.4, d: 2.0, seed: 7 } },
-  // Loft rope coil: the hook MOUNTS on the loft-edge board (hook box spans
-  // y 2.755…2.805 × z −0.55…−0.51 vs the board y 2.775…3.055 × z
-  // −0.605…−0.545 — real overlap, no coplanar pair) and the coil presses
-  // against the board face. The old (2.5, −0.5) spot left hook + coil hanging
-  // on NOTHING — a mid-air floater — and x −0.6 threaded the coil straight
-  // THROUGH the HORSES sign (sign spans x −1.3…−0.4 at the same height);
-  // x −0.25 hangs it on clear fascia east of the sign.
-  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب آویز', x: -0.25, y: 2.56, z: -0.51, params: { radius: 0.13, thick: 0.04, hook: true } },
+  // The hanging loft rope coil («طناب آویز») was REMOVED on user request:
+  // after an editor drag it floated mid-aisle in their save and they asked
+  // for it to be gone entirely (not restored — deleted). The coiled rope on
+  // the tack-room wall ('طناب پیچیده') is a different, mounted prop and stays.
 ] as const);
 
 /* -------------------------------------------------------------------------- */
@@ -862,21 +858,25 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
     });
   }
 
-  // 6 lanterns — the stable's REAL PointLight carriers, now individually
-  // selectable objects (same poses the shell baked in).
+  // 6 lanterns — now individually selectable objects (same poses the shell
+  // baked in). LIGHT BUDGET (restored): exactly 4 real PointLights — the
+  // documented shell-kit budget (StableProps.stableLantern). The two
+  // mid-aisle lanterns ride emissive-only (their flame chips still glow);
+  // forward rendering pays for every real light in EVERY fragment, so the
+  // 4-light budget is a perf contract, not a suggestion.
   {
-    const lanternDefs: Array<{ id: string; name: string; x: number; y: number; z: number; rx: number; ry: number }> = [
-      { id: STABLE_OBJECT_IDS.lanternGate, name: 'فانوس دروازه', x: -1.45, y: 2.45, z: L.depth / 2, rx: 0, ry: 0 },
-      { id: STABLE_OBJECT_IDS.lanternAisle, name: 'فانوس گذر', x: -1.55, y: L.loft.joistBottomY, z: L.loft.zMax + 0.11, rx: 90, ry: 0 },
-      { id: STABLE_OBJECT_IDS.lanternFarrier, name: 'فانوس نعلبندی', x: -1.35, y: 2.2, z: -L.innerHalfZ, rx: 0, ry: 0 },
-      { id: STABLE_OBJECT_IDS.lanternTack, name: 'فانوس اتاق یراق', x: -L.rooms.wallX + L.rooms.thickness / 2, y: 2.2, z: 4.45, rx: 0, ry: 90 },
-      { id: STABLE_OBJECT_IDS.lanternAisleMidW, name: 'فانوس میانی غربی', x: -(L.stallFrontX - 0.12), y: 2.54, z: 0.6, rx: 90, ry: 0 },
-      { id: STABLE_OBJECT_IDS.lanternAisleMidE, name: 'فانوس میانی شرقی', x: L.stallFrontX - 0.12, y: 2.54, z: 0.6, rx: 90, ry: 0 },
+    const lanternDefs: Array<{ id: string; name: string; x: number; y: number; z: number; rx: number; ry: number; lit: boolean }> = [
+      { id: STABLE_OBJECT_IDS.lanternGate, name: 'فانوس دروازه', x: -1.45, y: 2.45, z: L.depth / 2, rx: 0, ry: 0, lit: true },
+      { id: STABLE_OBJECT_IDS.lanternAisle, name: 'فانوس گذر', x: -1.55, y: L.loft.joistBottomY, z: L.loft.zMax + 0.11, rx: 90, ry: 0, lit: true },
+      { id: STABLE_OBJECT_IDS.lanternFarrier, name: 'فانوس نعلبندی', x: -1.35, y: 2.2, z: -L.innerHalfZ, rx: 0, ry: 0, lit: true },
+      { id: STABLE_OBJECT_IDS.lanternTack, name: 'فانوس اتاق یراق', x: -L.rooms.wallX + L.rooms.thickness / 2, y: 2.2, z: 4.45, rx: 0, ry: 90, lit: true },
+      { id: STABLE_OBJECT_IDS.lanternAisleMidW, name: 'فانوس میانی غربی', x: -(L.stallFrontX - 0.12), y: 2.54, z: 0.6, rx: 90, ry: 0, lit: false },
+      { id: STABLE_OBJECT_IDS.lanternAisleMidE, name: 'فانوس میانی شرقی', x: L.stallFrontX - 0.12, y: 2.54, z: 0.6, rx: 90, ry: 0, lit: false },
     ];
     for (const ld of lanternDefs) {
       push(ld.id, 'stable-lantern', `اسطبل — ${ld.name}`,
         { position: { x: originX + ld.x, y: ld.y, z: originZ + ld.z }, rotation: { x: ld.rx, y: ld.ry, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
-        { collider: false, lit: true });
+        { collider: false, lit: ld.lit });
     }
   }
 

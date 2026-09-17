@@ -24,6 +24,17 @@ type Mat = THREE.Material;
 /* Small helpers                                                              */
 /* ========================================================================== */
 
+/**
+ * Shadow-caster size floor (weak-laptop perf revision). The sun's shadow map
+ * is 768² over an 85 m frustum ≈ 9 texels/m — a part under ~9 cm covers less
+ * than ONE depth texel, so its shadow is invisible noise while the cost of
+ * re-rendering it in EVERY scheduled depth pass is real (2706 of 3192 scene
+ * meshes cast). Parts below the floor default to castShadow=false; explicit
+ * `mesh.castShadow = …` assignments after the call still win, and
+ * receiveShadow stays true everywhere (main-pass only, no depth pass).
+ */
+const SHADOW_CASTER_MIN = 0.09;
+
 export function addBox(
   parent: THREE.Object3D,
   m: Mat,
@@ -33,7 +44,7 @@ export function addBox(
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   mesh.position.set(x, y, z);
-  mesh.castShadow = true;
+  mesh.castShadow = Math.max(w, h, d) >= SHADOW_CASTER_MIN;
   mesh.receiveShadow = true;
   mesh.name = name;
   parent.add(mesh);
@@ -49,7 +60,7 @@ export function addCyl(
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, seg), m);
   mesh.position.set(x, y, z);
-  mesh.castShadow = true;
+  mesh.castShadow = Math.max(rTop, rBottom) * 2 >= SHADOW_CASTER_MIN || h >= SHADOW_CASTER_MIN;
   mesh.receiveShadow = true;
   mesh.name = name;
   parent.add(mesh);

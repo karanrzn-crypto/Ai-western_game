@@ -94,6 +94,11 @@ export const SALOON_OBJECT_IDS = Object.freeze({
   spittoon1: saloonUuid('59'),
   spittoon2: saloonUuid('5a'),
   wantedPoster: saloonUuid('5b'),
+  sign: saloonUuid('5d'),
+  windowWest1: saloonUuid('5e'),
+  windowWest2: saloonUuid('5f'),
+  windowEast1: saloonUuid('60'),
+  windowEast2: saloonUuid('61'),
 });
 
 /** Front-wall segment geometry implied by SALOON_LAYOUT (building-local). */
@@ -204,6 +209,25 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   push(SALOON_OBJECT_IDS.swingingDoors, 'saloon-swinging-doors', 'سالون — درهای چرخان', at(0, 0.01, L.depth / 2), {
     collider: false,
   });
+
+  // --- Facade SIGN + WINDOWS (independent selectable entities) ---------------
+  // Same geometry the shell used to bundle, now one managed object each so
+  // the Object Editor can select/move the sign and every window separately.
+  const signY = (L.height + 0.18) + (L.falseFrontTop - (L.height + 0.18)) * 0.42;
+  push(SALOON_OBJECT_IDS.sign, 'saloon-sign', 'سالون — تابلوی سالون', at(0, signY, 0), {
+    collider: false,
+  });
+  const winDefs: Array<{ id: string; side: -1 | 1; off: number; label: string }> = [
+    { id: SALOON_OBJECT_IDS.windowWest1, side: -1, off: L.window.centersFromDoor[0], label: 'غربی ۱' },
+    { id: SALOON_OBJECT_IDS.windowWest2, side: -1, off: L.window.centersFromDoor[1], label: 'غربی ۲' },
+    { id: SALOON_OBJECT_IDS.windowEast1, side: 1, off: L.window.centersFromDoor[0], label: 'شرقی ۱' },
+    { id: SALOON_OBJECT_IDS.windowEast2, side: 1, off: L.window.centersFromDoor[1], label: 'شرقی ۲' },
+  ];
+  for (const w of winDefs) {
+    push(w.id, 'saloon-window', `سالون — پنجره نما (${w.label})`,
+      { position: { x: originX + w.side * w.off, y: 0, z: originZ }, rotation: identity(), scale: unitScale() },
+      { collider: false, side: w.side, offset: w.off });
+  }
 
   // --- Bar corner (rear of the interior, facing the entrance) ----------------
   // Bar-corner placements are the player's finalized in-game arrangement

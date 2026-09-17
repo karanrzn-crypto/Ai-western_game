@@ -152,8 +152,8 @@ test('STABLE TRANSFORM OWNERSHIP: factories never apply the registry transform',
 
 /* -------------------------------------------------------------------------- */
 
-test('STABLE SHELL KIT: roof, gables, signs, loft, lanterns — no wall geometry', async () => {
-  const { roots } = await buildWorld();
+test('STABLE SHELL KIT: roof, gables, loft — decor is independent objects now', async () => {
+  const { defs, roots } = await buildWorld();
   const shell = roots.get(STABLE_OBJECT_IDS.building);
   assert.ok(shell, 'the shell kit must exist');
 
@@ -168,27 +168,44 @@ test('STABLE SHELL KIT: roof, gables, signs, loft, lanterns — no wall geometry
   for (const part of ['foundation-south', 'corner-board-wn', 'water-table-south', 'frieze-north']) {
     assert.ok(names.has(part), `shell must contain ${part}`);
   }
-  // Gable hay door + hoist + the projecting LIVERY sign
-  for (const part of ['haydoor-leaf', 'haydoor-frame-top', 'hoist-beam', 'hoist-pulley', 'livery-sign-board', 'livery-sign-face']) {
+  // Gable hay door + hoist stay with the structure
+  for (const part of ['haydoor-leaf', 'haydoor-frame-top', 'hoist-beam', 'hoist-pulley']) {
     assert.ok(names.has(part), `shell must contain ${part}`);
   }
-  // Windows lined into real openings (9 of them)
-  const windowAssemblies = [...names].filter((n) => /^window-(south|north|west|east)-/.test(n)).length;
-  assert.equal(windowAssemblies, STABLE_LAYOUT.windows.length, 'every layout window gets a real assembly');
   // Structure: posts, beams, rafters, collar ties, ridge beam
   for (const part of ['front-post-w--3', 'aisle-beam-w', 'wall-plate-e', 'rafter-e-5.2', 'collar-tie-2.0', 'ridge-beam']) {
     assert.ok(names.has(part), `shell must contain ${part}`);
   }
-  // Loft: joists, deck, edge board, railing, ladder
-  for (const part of ['loft-joist--6.2', 'loft-deck-3', 'loft-edge-board', 'loft-rail-post', 'loft-ladder', 'ladder-rail', 'ladder-rung-0']) {
-    assert.ok(names.has(part), `shell must contain ${part}`);
-  }
-  // Hanging HORSES sign + 4 lanterns
-  for (const part of ['horses-sign-board', 'lantern-gate', 'lantern-aisle', 'lantern-farrier', 'lantern-tack']) {
+  // Loft: joists, deck, edge board, railing (the LADDER is its own object now)
+  for (const part of ['loft-joist--6.2', 'loft-deck-3', 'loft-edge-board', 'loft-rail-post']) {
     assert.ok(names.has(part), `shell must contain ${part}`);
   }
   // Door casings (gate + staff + 2 rooms)
   assert.ok(names.has('door-casing-header'), 'shell must contain door casings');
+
+  // INDEPENDENT decor: the shell must NOT bundle signs/windows/lanterns/
+  // ladder anymore — each is its own managed object.
+  for (const part of ['livery-sign-board', 'livery-sign-face', 'horses-sign-board', 'loft-ladder', 'window-glass', 'lantern-gate', 'lantern-aisle']) {
+    assert.equal(names.has(part), false, `shell must NOT bundle "${part}" (independent object now)`);
+  }
+
+  // The independent defs exist and carry their parts:
+  const byType = (t: string): ObjectDefinition[] => defs.filter((d) => d.assetType === t);
+  assert.equal(byType('stable-window').length, STABLE_LAYOUT.windows.length, 'one window object per layout window');
+  assert.equal(byType('stable-lantern').length, 6, 'six lantern objects (the light budget)');
+  assert.equal(byType('stable-sign').length, 2, 'two sign objects (LIVERY + HORSES)');
+  assert.equal(byType('stable-ladder').length, 1, 'one ladder object');
+  const windowRoots = byType('stable-window').map((d) => roots.get(d.uuid)!);
+  let glasses = 0;
+  for (const r of windowRoots) r.traverse((o) => { if (o.name === 'window-glass') glasses += 1; });
+  assert.equal(glasses, STABLE_LAYOUT.windows.length, 'every window object carries its glass pane');
+  const ladderRoot = roots.get(STABLE_OBJECT_IDS.ladder)!;
+  assert.ok(ladderRoot.getObjectByName('loft-ladder'), 'the ladder object carries the loft-ladder group');
+  assert.ok(ladderRoot.getObjectByName('ladder-rail'), 'the ladder object carries its rails');
+  const liveryRoot = roots.get(STABLE_OBJECT_IDS.liverySign)!;
+  assert.ok(liveryRoot.getObjectByName('livery-sign-face'), 'the LIVERY sign object carries its canvas face');
+  const lanternRoot = roots.get(STABLE_OBJECT_IDS.lanternGate)!;
+  assert.ok(lanternRoot.getObjectByName('lantern-gate') || lanternRoot.children.length > 0, 'the gate lantern object is built');
 
   // The kit owns NO wall geometry — walls are separate collider unit-boxes.
   let wallMeshes = 0;
@@ -234,6 +251,95 @@ test('STABLE STALLS: six stalls, nameplates, troughs, controlled variation', asy
   // Stall 06 is the deliberately empty-water one.
   const s6 = STABLE_STALLS.find((s) => s.index === 6);
   assert.ok(s6 && s6.bucket === null, 'stall six has no water bucket (variation)');
+});
+
+/* -------------------------------------------------------------------------- */
+
+test('STABLE DOOR CENSUS: swinging a hinge moves every leaf part — nothing stays behind', async () => {
+  // The user report behind this guard: "when the door opens, a piece stays
+  // at its old place / hangs in the air." Every mesh under a leaf hinge MUST
+  // move with it; the only root-level (static) meshes are the whitelisted
+  // frame parts (hinge knuckles on the jamb side + the threshold shoe rail).
+  const { roots } = await buildWorld();
+  const STATIC_OK = new Set([
+    'door-knuckle',        // leaf doors: 2 knuckles on the static root
+    'gate-knuckle-w',      // gate: knuckles on the jambs
+    'gate-knuckle-e',
+    'gate-shoe-rail',      // threshold guide
+  ]);
+
+  for (const spec of STABLE_DOOR_SPECS) {
+    const root = roots.get(spec.uuid);
+    assert.ok(root, `${spec.style} door exists`);
+    root.updateWorldMatrix(true, true);
+
+    // Census every mesh: hinge-child vs static root child.
+    const isUnderHinge = (o: THREE.Object3D): boolean => {
+      let cur: THREE.Object3D | null = o;
+      while (cur && cur !== root) {
+        if (cur.name.includes('hinge')) return true;
+        cur = cur.parent;
+      }
+      return false;
+    };
+    const staticMeshes: string[] = [];
+    root.children.forEach((child) => {
+      child.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh && !isUnderHinge(o)) staticMeshes.push(o.name);
+      });
+    });
+    for (const name of staticMeshes) {
+      assert.ok(
+        STATIC_OK.has(name),
+        `${spec.style} door: unexpected STATIC mesh "${name}" outside the hinge (would stay behind when open)`,
+      );
+    }
+
+    // Swing the hinge (pure pose, full open) and verify every hinge-descendant
+    // mesh actually MOVED. Invariant = at least one world-bbox CORNER moves:
+    // a strap hinge centered ON the axis keeps its center fixed (correct),
+    // but its extremities still swing — a truly orphaned part moves nothing.
+    const collect = (): Map<THREE.Object3D, { corners: THREE.Vector3[] }> => {
+      const map = new Map<THREE.Object3D, { corners: THREE.Vector3[] }>();
+      root.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        const b = new THREE.Box3().setFromObject(o);
+        const corners: THREE.Vector3[] = [];
+        for (const cx of [b.min.x, b.max.x]) {
+          for (const cy of [b.min.y, b.max.y]) {
+            for (const cz of [b.min.z, b.max.z]) corners.push(new THREE.Vector3(cx, cy, cz));
+          }
+        }
+        map.set(o, { corners });
+      });
+      return map;
+    };
+    const before = collect();
+    if (spec.style === 'gate') setStableGateOpen(root, 1);
+    else setStableLeafDoorOpen(root, 1);
+    root.updateWorldMatrix(true, true);
+    for (const [mesh, old] of before) {
+      if (!isUnderHinge(mesh)) continue;
+      const b = new THREE.Box3().setFromObject(mesh);
+      let moved = false;
+      outer: for (const cy of [b.min.y, b.max.y]) {
+        for (const cz of [b.min.z, b.max.z]) {
+          for (const cx of [b.min.x, b.max.x]) {
+            for (const oc of old.corners) {
+              if (oc.distanceTo(new THREE.Vector3(cx, cy, cz)) > 0.05) { moved = true; break outer; }
+            }
+          }
+        }
+      }
+      assert.ok(
+        moved,
+        `${spec.style} door: hinge-child mesh "${mesh.name}" did not move with the swing (floating piece!)`,
+      );
+    }
+    // Restore closed (pure pose).
+    if (spec.style === 'gate') setStableGateOpen(root, 0);
+    else setStableLeafDoorOpen(root, 0);
+  }
 });
 
 /* -------------------------------------------------------------------------- */
@@ -429,11 +535,9 @@ test('STABLE COLLIDER POLICY: structure blocks, decor does not', async () => {
   allTrue(byType('stable-staff-door'), 'staff door');
   allFalse(byType('stable-building'), 'shell kit');
   allFalse(byType('stable-stall-contents'), 'stall contents');
-  allFalse(byType('stable-tack-contents'), 'tack contents');
-  allFalse(byType('stable-feed-contents'), 'feed contents');
-  allFalse(byType('stable-farrier-contents'), 'farrier contents');
-  allFalse(byType('stable-water-contents'), 'water contents');
-  allFalse(byType('stable-loft-contents'), 'loft contents');
+  // The old zone-content groups are gone — every zone prop is its own
+  // 'stable-prop' object now (kind-driven, see STABLE_PROPS in the layout).
+  allFalse(byType('stable-prop'), 'zone props');
 });
 
 /* -------------------------------------------------------------------------- */
@@ -563,16 +667,21 @@ test('STABLE LAYOUT: tiling, windows in bands, ladder reaches, aisle clear', asy
   }
 
   // 2) Every window glass sits INSIDE its wall band (never floating).
-  const shell = defs.find((d) => d.uuid === STABLE_OBJECT_IDS.building)!;
-  void shell;
+  // Windows are independent objects now — gather across ALL stable roots.
   const registry = makeRegistry();
-  const shellRoot = applyDefinition(await registry.create(defs.find((d) => d.uuid === STABLE_OBJECT_IDS.building)!), defs.find((d) => d.uuid === STABLE_OBJECT_IDS.building)!);
-  shellRoot.updateWorldMatrix(true, true);
+  const created: THREE.Object3D[] = [];
+  for (const d of defs) {
+    if (!d.uuid.startsWith('10000000-0000-4000-8000-')) continue; // stable block only
+    created.push(applyDefinition(await registry.create(d), d));
+  }
+  for (const root of created) root.updateWorldMatrix(true, true);
   const glasses: THREE.Box3[] = [];
-  shellRoot.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (mesh.isMesh && mesh.name === 'window-glass') glasses.push(new THREE.Box3().setFromObject(mesh));
-  });
+  for (const root of created) {
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && mesh.name === 'window-glass') glasses.push(new THREE.Box3().setFromObject(mesh));
+    });
+  }
   assert.equal(glasses.length, L.windows.length, 'one glass pane per window');
   const wallT = L.wallThickness;
   for (const g of glasses) {
@@ -588,13 +697,30 @@ test('STABLE LAYOUT: tiling, windows in bands, ladder reaches, aisle clear', asy
     void wallT;
   }
 
-  // 3) The ladder reaches the loft: its top ends AT the deck edge.
+  // 3) The ladder reaches the loft: its top ends AT the deck edge — AND the
+  // rails lean the SAME way as the rungs (the X-crossing regression).
   const { roots } = await buildWorld();
-  const ladder = roots.get(STABLE_OBJECT_IDS.building)!.getObjectByName('loft-ladder');
+  const ladderRoot = roots.get(STABLE_OBJECT_IDS.ladder);
+  assert.ok(ladderRoot, 'the ladder is an independent object');
+  const ladder = ladderRoot!.getObjectByName('loft-ladder');
   assert.ok(ladder, 'the loft ladder exists');
   const lb = box3of(ladder!);
   assert.ok(Math.abs(lb.max.y - L.loft.deckTopY) < 0.08, `ladder top reaches the deck (top ${lb.max.y.toFixed(3)} vs deck ${L.loft.deckTopY})`);
   assert.ok(lb.min.y > 0.05 && lb.min.y < 0.16, 'ladder foot stands on the plank floor');
+  // RAILS lean north (−Z, toward the deck) exactly like the rung line: the
+  // top end of each rail must sit ~run meters north of its bottom end. The
+  // old +tilt sign produced rails leaning SOUTH (X-crossing floaters).
+  for (const rail of ladderRoot!.children[0].children.filter((c) => c.name === 'ladder-rail')) {
+    rail.updateWorldMatrix(true, false);
+    const railLen = ((rail as THREE.Mesh).geometry as THREE.BoxGeometry).parameters.height;
+    const topEnd = rail.localToWorld(new THREE.Vector3(0, railLen / 2, 0));
+    const botEnd = rail.localToWorld(new THREE.Vector3(0, -railLen / 2, 0));
+    const dz = botEnd.z - topEnd.z;
+    assert.ok(
+      Math.abs(dz - L.loft.ladderRun) < 0.06,
+      `rail leans north by the ladder run (dz=${dz.toFixed(3)} vs run ${L.loft.ladderRun})`,
+    );
+  }
 
   // 4) The aisle center strip stays free of collider boxes (wagon path).
   const aisleBoxes = defs.filter((d) => {
@@ -608,8 +734,9 @@ test('STABLE LAYOUT: tiling, windows in bands, ladder reaches, aisle clear', asy
   });
   assert.equal(aisleBoxes.length, 0, `the central aisle must stay clear (found ${aisleBoxes.map((d) => d.metadata.name).join(', ')})`);
 
-  // 5) Signs stand proud of their walls (never flush-coplanar).
-  const liveryFace = roots.get(STABLE_OBJECT_IDS.building)!.getObjectByName('livery-sign-face');
+  // 5) Signs stand proud of their walls (never flush-coplanar). The signs
+  // are independent objects now (children in building-local coords).
+  const liveryFace = roots.get(STABLE_OBJECT_IDS.liverySign)!.getObjectByName('livery-sign-face');
   assert.ok(liveryFace, 'the LIVERY sign face exists');
   const faceBox = box3of(liveryFace!);
   assert.ok(faceBox.min.z > STABLE_SITE.z + L.depth / 2 + 0.02, 'the projecting sign stands proud of the gable');

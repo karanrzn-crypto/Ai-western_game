@@ -119,6 +119,35 @@ test('gizmo exposes exactly 3 move + 3 rotate handles and picking resolves them'
   assert.equal(pickAtWorld(gizmo, camera, new THREE.Vector3(12, 0.75, 0)), null, 'ray far away misses');
 });
 
+test('pickHandleHit reports the handle AND its ray distance (arbitration input)', () => {
+  const manager = makeManager();
+  const { gizmo } = makeGizmo(manager);
+  gizmo.sync(true, UUID_A);
+
+  const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.05, 120);
+  camera.position.set(0, 2, 5);
+  camera.lookAt(0, 0.75, 0);
+  camera.updateMatrixWorld();
+  camera.updateProjectionMatrix();
+
+  // Aim straight at the +X move arm: the proxy hit distance must equal the
+  // ray-to-point distance so the host can arbitrate against managed hits.
+  const point = new THREE.Vector3(0.7, 0.75, 0);
+  const ndc = point.clone().project(camera);
+  const hit = gizmo.pickHandleHit(rayFromNdc(camera, new THREE.Vector2(ndc.x, ndc.y)));
+  assert.ok(hit, 'the arm hit resolves');
+  assert.equal(hit!.handle, 'move:x');
+  const expected = camera.position.distanceTo(point);
+  assert.ok(
+    Math.abs(hit!.distance - expected) < 0.15,
+    `proxy distance ≈ camera→point (${hit!.distance.toFixed(3)} vs ${expected.toFixed(3)})`,
+  );
+
+  // A ray missing every proxy returns null (no handle, no distance).
+  const miss = gizmo.pickHandleHit(rayFromNdc(camera, new THREE.Vector2(0.999, 0.999)));
+  assert.equal(miss, null, 'ray away from the gizmo misses');
+});
+
 test('hidden gizmo (no edit mode / no selection / non-editable) cannot be picked or dragged', () => {
   const manager = makeManager();
   const { gizmo } = makeGizmo(manager);

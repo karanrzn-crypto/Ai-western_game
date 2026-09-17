@@ -210,7 +210,125 @@ export const STABLE_OBJECT_IDS = Object.freeze({
   stallContents4: stableUuid('6d'),
   stallContents5: stableUuid('6e'),
   stallContents6: stableUuid('6f'),
+  liverySign: stableUuid('70'),
+  horsesSign: stableUuid('71'),
+  ladder: stableUuid('72'),
+  window1: stableUuid('73'),
+  window2: stableUuid('74'),
+  window3: stableUuid('75'),
+  window4: stableUuid('76'),
+  window5: stableUuid('77'),
+  window6: stableUuid('78'),
+  window7: stableUuid('79'),
+  window8: stableUuid('7a'),
+  window9: stableUuid('7b'),
+  lanternGate: stableUuid('7c'),
+  lanternAisle: stableUuid('7d'),
+  lanternFarrier: stableUuid('7e'),
+  lanternTack: stableUuid('7f'),
+  lanternAisleMidW: stableUuid('80'),
+  lanternAisleMidE: stableUuid('81'),
 });
+
+/* -------------------------------------------------------------------------- */
+/* Zone prop catalog — every tack/feed/farrier/water/loft prop is its OWN     */
+/* managed object (logical entities: a saddle, a bale, a crate, a sign…),     */
+/* per the object-editing contract. Micro-parts with no independent use stay  */
+/* united with their host (tins ride the shelf, shoes ride their rack, the    */
+/* scoop rides the grain bin, the dipper rides the water barrel).             */
+/* -------------------------------------------------------------------------- */
+
+export type StablePropKind =
+  | 'saddle-rack' | 'saddle' | 'bridle' | 'collar' | 'strap' | 'rope-coil'
+  | 'tack-board' | 'tack-shelf' | 'blanket-bar' | 'blanket' | 'shoe-rack'
+  | 'crate' | 'tool-box' | 'sign' | 'hay-bale' | 'grain-sack' | 'grain-bin'
+  | 'bucket' | 'straw' | 'small-barrel' | 'hay-pile' | 'hammer' | 'tongs'
+  | 'horseshoe' | 'nail-tin' | 'scraps-box';
+
+export interface StablePropSpec {
+  uuid: string;
+  kind: StablePropKind;
+  name: string;
+  /** Building-local position (the def adds the site origin). */
+  x: number;
+  y: number;
+  z: number;
+  /** Degrees. */
+  rx?: number;
+  ry?: number;
+  rz?: number;
+  params?: Record<string, unknown>;
+}
+
+/** Radians (the builder-authoring unit) → degrees (the transform unit). */
+const deg = (rad: number): number => (rad * 180) / Math.PI;
+
+let propCursor = 0x82;
+const propUuid = (): string => stableUuid((propCursor++).toString(16).padStart(2, '0'));
+
+/** THE zone-prop placement table (single source, consumed by the map). */
+export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
+  // --- TACK ROOM (SW corner) ---
+  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۱', x: -5.02, y: 0.1, z: 4.35 },
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۱', x: -5.02, y: 0.845, z: 4.35, ry: deg(0.08) },
+  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۲', x: -5.02, y: 0.1, z: 5.55 },
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۲', x: -5.02, y: 0.845, z: 5.55, ry: deg(-0.12) },
+  { uuid: propUuid(), kind: 'tack-board', name: 'تخته یراق', x: -4.2, y: 1.82, z: 3.578 },
+  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۱', x: -4.75, y: 2.22, z: 3.605 },
+  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۲', x: -4.35, y: 2.22, z: 3.605, rz: deg(0.08) },
+  { uuid: propUuid(), kind: 'collar', name: 'یلغه', x: -3.85, y: 1.9, z: 3.61 },
+  { uuid: propUuid(), kind: 'strap', name: 'تسمه چرمی', x: -3.45, y: 1.95, z: 3.605, params: { len: 0.42 } },
+  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب پیچیده', x: -3.5, y: 1.65, z: 3.6, params: { radius: 0.12, thick: 0.035 } },
+  { uuid: propUuid(), kind: 'tack-shelf', name: 'قفسه قوطی', x: -3.1, y: 1.6, z: 3.63 },
+  { uuid: propUuid(), kind: 'blanket-bar', name: 'میله پتو', x: -5.32, y: 1.65, z: 5.8 },
+  { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.28, y: 1.645, z: 5.8, ry: 90, params: { color: 0x7a4a3a } },
+  { uuid: propUuid(), kind: 'blanket', name: 'پتو تاشده', x: -4.85, y: 0.6, z: 5.0, ry: deg(0.16), params: { color: 0x5d5a4a } },
+  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (اتاق یراق)', x: -4.35, y: 1.95, z: 6.233, params: { side: 'south' } },
+  { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی یراق', x: -4.85, y: 0.1, z: 5.0, ry: deg(0.16), params: { w: 0.45, h: 0.5 } },
+  { uuid: propUuid(), kind: 'tool-box', name: 'جعبه ابزار', x: -3.55, y: 0.1, z: 5.85, ry: deg(-0.4) },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی TACK', x: -1.895, y: 2.7, z: 5.525, ry: 90, params: { text: 'TACK', w: 0.62, h: 0.26 } },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی RATES', x: -1.895, y: 1.85, z: 4.25, ry: 90, params: { text: 'RATES', w: 0.72, h: 0.5, sub: 'LIVERY 50c - SHOE 25c', dark: true } },
+  // --- FEED ROOM (SE corner) ---
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۱', x: 4.0, y: 0.1, z: 3.87 },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۲', x: 4.9, y: 0.1, z: 3.87, ry: deg(0.03) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۳ (رویی)', x: 4.45, y: 0.6, z: 3.87, ry: deg(Math.PI / 2 + 0.05) },
+  { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۱', x: 2.6, y: 0.1, z: 3.95, ry: deg(0.1), params: { seed: 1 } },
+  { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۲', x: 2.6, y: 0.1, z: 4.55, ry: deg(-0.15), params: { seed: 2 } },
+  { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۳', x: 2.6, y: 0.48, z: 4.25, ry: deg(0.35), params: { seed: 3 } },
+  { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ایستاده', x: 3.3, y: 0.1, z: 4.5, params: { standing: true, seed: 4 } },
+  { uuid: propUuid(), kind: 'grain-bin', name: 'صندوق غله', x: 4.95, y: 0.1, z: 4.9 },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل فلزی', x: 5.05, y: 0.1, z: 5.9, params: { kind: 'metal', full: false } },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل چوبی رویی', x: 5.05, y: 0.33, z: 5.9, ry: deg(0.5), params: { kind: 'wood', full: false } },
+  { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی علوفه', x: 4.8, y: 0.1, z: 5.35, ry: deg(-0.22), params: { w: 0.5, h: 0.55 } },
+  { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (علوفه)', x: 3.4, y: 0.102, z: 5.3, params: { w: 2.2, d: 1.6, seed: 9 } },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FEED', x: 1.895, y: 2.7, z: 5.525, ry: 90, params: { text: 'FEED', w: 0.62, h: 0.26 } },
+  // --- FARRIER BAY (north end) ---
+  { uuid: propUuid(), kind: 'hammer', name: 'چکش نعلبندی', x: -1.72, y: 1.0, z: -5.85, ry: deg(0.4) },
+  { uuid: propUuid(), kind: 'tongs', name: 'انبر نعلبندی', x: -1.52, y: 1.0, z: -5.62, ry: deg(-0.3) },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۱', x: -1.68, y: 1.005, z: -5.12, rx: 90, rz: deg(-0.3) },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۲', x: -1.5, y: 1.005, z: -5.2, rx: 90, rz: deg(0.5) },
+  { uuid: propUuid(), kind: 'nail-tin', name: 'قوطی میخ', x: -1.78, y: 1.05, z: -4.95 },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FARRIER', x: -1.913, y: 2.42, z: -5.3, ry: 90, params: { text: 'FARRIER', w: 0.9, h: 0.32 } },
+  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (نعلبندی)', x: -0.2, y: 2.0, z: -6.233, params: { side: 'north' } },
+  { uuid: propUuid(), kind: 'scraps-box', name: 'جعبه قراضه آهن', x: -1.62, y: 0.21, z: -4.78 },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل آبکیری', x: 1.32, y: 0.1, z: -4.72, params: { kind: 'metal', full: true } },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل افتاده', x: 0.92, y: 0.114, z: -4.55, rx: 90, rz: deg(1.1) },
+  { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (نعلبندی)', x: 0.5, y: 0.102, z: -4.4, params: { w: 1.0, d: 0.8, seed: 4 } },
+  // --- WATER STATION ---
+  { uuid: propUuid(), kind: 'small-barrel', name: 'بشکه آب', x: 1.45, y: 0.1, z: 4.35, params: { r: 0.3, h: 0.9 } },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل آب فلزی', x: 0.92, y: 0.1, z: 5.18, ry: deg(0.6), params: { kind: 'metal', full: true } },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل آب چوبی', x: 1.05, y: 0.1, z: 4.75, ry: deg(-0.4), params: { kind: 'wood', full: true } },
+  // --- HAY LOFT (deck top 3.0) ---
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۱', x: -3.7, y: 3.0, z: -5.55 },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۲', x: -2.78, y: 3.0, z: -5.55, ry: deg(0.04) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۳ (رویی)', x: -3.24, y: 3.5, z: -5.55, ry: deg(Math.PI / 2 - 0.06) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۴', x: 3.1, y: 3.0, z: -4.7, ry: deg(-0.08) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۵', x: 3.99, y: 3.0, z: -4.72 },
+  { uuid: propUuid(), kind: 'crate', name: 'جعبه شیروانی', x: -4.5, y: 3.0, z: -3.3, ry: deg(0.3), params: { w: 0.55, h: 0.6 } },
+  { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -5.8, params: { radius: 0.5, height: 0.32, seed: 5 } },
+  { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (شیروانی)', x: 1.4, y: 3.002, z: -3.6, params: { w: 2.4, d: 2.0, seed: 7 } },
+  { uuid: propUuid(), kind: 'rope-coil', name: 'طناب آویز', x: -0.6, y: 2.5, z: -0.5, params: { radius: 0.13, thick: 0.04, hook: true } },
+] as const);
 
 /* -------------------------------------------------------------------------- */
 /* Stall specifications — layout + controlled variation, ONE source           */
@@ -642,22 +760,27 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
   box(STABLE_OBJECT_IDS.anvil, 'stable-anvil', 'اسطبل — سندان',
     L.farrier.anvil.x, floorY, L.farrier.anvil.z, 1, 1, 1);
 
-  /* --- Content groups (decor — collider: false) ------------------------------ */
-  push(STABLE_OBJECT_IDS.tackContents, 'stable-tack-contents', 'اسطبل — محتویات اتاق یراق',
-    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
-    { collider: false });
-  push(STABLE_OBJECT_IDS.feedContents, 'stable-feed-contents', 'اسطبل — محتویات اتاق علوفه',
-    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
-    { collider: false });
-  push(STABLE_OBJECT_IDS.farrierContents, 'stable-farrier-contents', 'اسطبل — محتویات نعلبندی',
-    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
-    { collider: false });
-  push(STABLE_OBJECT_IDS.waterContents, 'stable-water-contents', 'اسطبل — ایستگاه آب',
-    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
-    { collider: false });
-  push(STABLE_OBJECT_IDS.loftContents, 'stable-loft-contents', 'اسطبل — محتویات علوفه‌خور',
-    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
-    { collider: false });
+  /* --- Zone PROPS (one managed object per logical entity) -------------------- */
+  // The tack/feed/farrier/water/loft contents used to be five big groups;
+  // now every saddle, bale, crate, bucket, tool and sign is its own object
+  // (selectable/movable), placed from STABLE_PROPS above. Micro-parts with
+  // no independent use ride their host unit (see the catalog comment).
+  for (const p of STABLE_PROPS) {
+    push(p.uuid, 'stable-prop', `اسطبل — ${p.name}`,
+      {
+        position: { x: originX + p.x, y: p.y, z: originZ + p.z },
+        rotation: { x: p.rx ?? 0, y: p.ry ?? 0, z: p.rz ?? 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+      // NOTE: params ride a nested `params` key — a flat spread would let a
+      // bucket's params.kind ('metal') clobber the def's discriminant kind.
+      { collider: false, kind: p.kind, params: (p.params ?? {}) });
+  }
+
+  /* --- Per-stall content groups (controlled variation units) ------------------ */
+  // NOTE: the stall interiors stay one group per stall BY DESIGN — each is a
+  // single logical unit whose items derive from the stall's own geometry
+  // (nameplate over ITS door gap, rack on ITS wall, per the variation spec).
   const stallContentIds = [
     STABLE_OBJECT_IDS.stallContents1, STABLE_OBJECT_IDS.stallContents2, STABLE_OBJECT_IDS.stallContents3,
     STABLE_OBJECT_IDS.stallContents4, STABLE_OBJECT_IDS.stallContents5, STABLE_OBJECT_IDS.stallContents6,
@@ -680,6 +803,75 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
       gateWidth: L.mainGate.xMax - L.mainGate.xMin,
       gateHeight: L.mainGate.height,
     });
+
+  /* --- Independent shell entities (selectable/movable on their own) ---------- */
+  // The LIVERY + HORSES signs build in building-local coords, so their defs
+  // sit at the building origin — the geometry is unchanged from the old
+  // in-shell kit; only the grouping moved so the editor can pick them.
+  push(STABLE_OBJECT_IDS.liverySign, 'stable-sign', 'اسطبل — تابلوی LIVERY',
+    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
+    { collider: false, kind: 'livery' });
+  push(STABLE_OBJECT_IDS.horsesSign, 'stable-sign', 'اسطبل — تابلوی HORSES',
+    { position: { x: originX, y: 0, z: originZ }, rotation: identity(), scale: { x: 1, y: 1, z: 1 } },
+    { collider: false, kind: 'horses' });
+
+  // The loft ladder — def at the ladder foot ON the plank floor; geometry
+  // spans foot (0,0,0) → (±0.22, height, −run) landing on the deck edge.
+  push(STABLE_OBJECT_IDS.ladder, 'stable-ladder', 'اسطبل — نردبان شیروانی',
+    {
+      position: { x: originX + L.loft.ladderX, y: L.floorTop, z: originZ + L.loft.ladderFootZ },
+      rotation: identity(),
+      scale: { x: 1, y: 1, z: 1 },
+    },
+    { collider: false, height: L.loft.deckTopY - L.floorTop, run: L.loft.ladderRun });
+
+  // 9 windows: one managed object each, positioned/oriented EXACTLY like the
+  // shell's old inline loop (south 0°, north 180°, west −90°, east +90°;
+  // hole center on the wall mid-plane at the window's mid height).
+  {
+    const halfW = (L.width - L.wallThickness) / 2;
+    const halfD = (L.depth - L.wallThickness) / 2;
+    const windowIds = [
+      STABLE_OBJECT_IDS.window1, STABLE_OBJECT_IDS.window2, STABLE_OBJECT_IDS.window3,
+      STABLE_OBJECT_IDS.window4, STABLE_OBJECT_IDS.window5, STABLE_OBJECT_IDS.window6,
+      STABLE_OBJECT_IDS.window7, STABLE_OBJECT_IDS.window8, STABLE_OBJECT_IDS.window9,
+    ];
+    const wallLabel: Record<string, string> = { south: 'جنوبی', north: 'شمالی', west: 'غربی', east: 'شرقی' };
+    L.windows.forEach((win, i) => {
+      // NOTE: win.sill is the ABSOLUTE building-local height of the hole's
+      // bottom (the under-window wall segments span [floorY, sill]) — the
+      // old shell loop added no floorTop here either.
+      const midY = win.sill + win.height / 2;
+      let px = 0, pz = 0, ry = 0;
+      switch (win.wall) {
+        case 'south': px = win.center; pz = halfD; ry = 0; break;
+        case 'north': px = win.center; pz = -halfD; ry = 180; break;
+        case 'west': px = -halfW; pz = win.center; ry = -90; break;
+        case 'east': px = halfW; pz = win.center; ry = 90; break;
+      }
+      push(windowIds[i], 'stable-window', `اسطبل — پنجره ${wallLabel[win.wall]} ${i + 1}`,
+        { position: { x: originX + px, y: midY, z: originZ + pz }, rotation: { x: 0, y: ry, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
+        { collider: false, wall: win.wall, center: win.center, sill: win.sill, width: win.width, height: win.height, bars: win.bars, shutters: win.shutters });
+    });
+  }
+
+  // 6 lanterns — the stable's REAL PointLight carriers, now individually
+  // selectable objects (same poses the shell baked in).
+  {
+    const lanternDefs: Array<{ id: string; name: string; x: number; y: number; z: number; rx: number; ry: number }> = [
+      { id: STABLE_OBJECT_IDS.lanternGate, name: 'فانوس دروازه', x: -1.45, y: 2.45, z: L.depth / 2, rx: 0, ry: 0 },
+      { id: STABLE_OBJECT_IDS.lanternAisle, name: 'فانوس گذر', x: -1.55, y: L.loft.joistBottomY, z: L.loft.zMax + 0.11, rx: 90, ry: 0 },
+      { id: STABLE_OBJECT_IDS.lanternFarrier, name: 'فانوس نعلبندی', x: -1.35, y: 2.2, z: -L.innerHalfZ, rx: 0, ry: 0 },
+      { id: STABLE_OBJECT_IDS.lanternTack, name: 'فانوس اتاق یراق', x: -L.rooms.wallX + L.rooms.thickness / 2, y: 2.2, z: 4.45, rx: 0, ry: 90 },
+      { id: STABLE_OBJECT_IDS.lanternAisleMidW, name: 'فانوس میانی غربی', x: -(L.stallFrontX - 0.12), y: 2.54, z: 0.6, rx: 90, ry: 0 },
+      { id: STABLE_OBJECT_IDS.lanternAisleMidE, name: 'فانوس میانی شرقی', x: L.stallFrontX - 0.12, y: 2.54, z: 0.6, rx: 90, ry: 0 },
+    ];
+    for (const ld of lanternDefs) {
+      push(ld.id, 'stable-lantern', `اسطبل — ${ld.name}`,
+        { position: { x: originX + ld.x, y: ld.y, z: originZ + ld.z }, rotation: { x: ld.rx, y: ld.ry, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
+        { collider: false, lit: true });
+    }
+  }
 
   return defs;
 }

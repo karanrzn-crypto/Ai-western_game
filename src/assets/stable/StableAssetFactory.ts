@@ -24,13 +24,7 @@ import type { ObjectDefinition } from '../../core/types.js';
 import type { IAssetFactory } from '../IAssetFactory.js';
 import type { AssetRegistry } from '../AssetRegistry.js';
 import { buildStallContents } from './StableStalls.js';
-import {
-  buildTackRoomContents,
-  buildFeedRoomContents,
-  buildFarrierContents,
-  buildWaterContents,
-  buildLoftContents,
-} from './StableEquipment.js';
+import { StablePropFactory } from './StableEquipment.js';
 import {
   buildStableShell,
   StableWallFactory,
@@ -40,6 +34,10 @@ import {
   StableTroughFactory,
   StableWorkbenchFactory,
   StableAnvilFactory,
+  StableWindowFactory,
+  StableLanternFactory,
+  StableSignFactory,
+  StableLadderFactory,
   STABLE_ARCH_ASSET_TYPES,
 } from './StableArchitecture.js';
 import { buildStableGate, buildStableLeafDoor, STABLE_DOOR_ASSET_TYPES, type LeafDoorMeta } from './StableDoors.js';
@@ -88,11 +86,7 @@ function leafDoorFromDefinition(definition: ObjectDefinition): THREE.Object3D {
 /** All group-content asset types (the unit factories register separately). */
 export const STABLE_CONTENT_ASSET_TYPES = Object.freeze([
   'stable-stall-contents',
-  'stable-tack-contents',
-  'stable-feed-contents',
-  'stable-farrier-contents',
-  'stable-water-contents',
-  'stable-loft-contents',
+  'stable-prop',
 ] as const);
 
 export type StableContentAssetType = (typeof STABLE_CONTENT_ASSET_TYPES)[number];
@@ -120,6 +114,12 @@ export function registerAllStableFactories(registry: AssetRegistry): void {
   registry.register('stable-workbench', new StableWorkbenchFactory(), 'Stable Workbench');
   registry.register('stable-anvil', new StableAnvilFactory(), 'Stable Anvil');
 
+  // Independent shell entities — each selectable/movable on its own.
+  registry.register('stable-window', new StableWindowFactory(), 'Stable Window');
+  registry.register('stable-lantern', new StableLanternFactory(), 'Stable Lantern');
+  registry.register('stable-sign', new StableSignFactory(), 'Stable Sign');
+  registry.register('stable-ladder', new StableLadderFactory(), 'Stable Ladder');
+
   // Doors (each builder reads its def metadata — hinge/sign/angle baked in).
   registry.register('stable-gate', new StableAssetFactory(() => buildStableGate()), 'Stable Gate');
   registry.register('stable-stall-door', new StableAssetFactory(leafDoorFromDefinition), 'Stable Stall Door');
@@ -133,9 +133,7 @@ export function registerAllStableFactories(registry: AssetRegistry): void {
     if (!spec) throw new Error(`stable stall contents: unknown stall ${stall}`);
     return buildStallContents(spec);
   }), 'Stable Stall Contents');
-  registry.register('stable-tack-contents', new StableAssetFactory(() => buildTackRoomContents()), 'Stable Tack Contents');
-  registry.register('stable-feed-contents', new StableAssetFactory(() => buildFeedRoomContents()), 'Stable Feed Contents');
-  registry.register('stable-farrier-contents', new StableAssetFactory(() => buildFarrierContents()), 'Stable Farrier Contents');
-  registry.register('stable-water-contents', new StableAssetFactory(() => buildWaterContents()), 'Stable Water Contents');
-  registry.register('stable-loft-contents', new StableAssetFactory(() => buildLoftContents()), 'Stable Loft Contents');
+  // Zone props: ONE factory, kind-driven — every saddle/bale/crate/tool/sign
+  // is its own managed object (see STABLE_PROPS in StableLayout).
+  registry.register('stable-prop', new StablePropFactory(), 'Stable Prop');
 }

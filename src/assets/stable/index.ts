@@ -5,12 +5,12 @@
  * bank / sheriff index contracts):
  *
  *   StableLayout.ts          THE placement source of truth (defs, stalls,
- *                            door specs, site, UUID block)
+ *                            door specs, prop catalog, site, UUID block)
  *   StableMaterials.ts       procedural palette + textures + sign painter
  *   StableProps.ts           the prop library
  *   StableDoors.ts           the 10 real doors + pure pose APIs
  *   StableStalls.ts          stall content groups + controlled variation
- *   StableEquipment.ts       tack/feed/farrier/water/loft zone contents
+ *   StableEquipment.ts       per-kind zone-prop unit builders + prop factory
  *   StableArchitecture.ts    the shell kit + unit-box collider factories
  *   StableAssetFactory.ts    registration surface (registerAllStableFactories)
  * -----------------------------------------------------------------------------
@@ -24,9 +24,10 @@ export {
   STABLE_DOOR_SPECS,
   STABLE_WALL_SEGMENT_UUIDS,
   STABLE_FRONT_SEGMENT_UUIDS,
+  STABLE_PROPS,
   buildStableMapObjects,
 } from './StableLayout.js';
-export type { StableStallSpec, StableDoorSpec } from './StableLayout.js';
+export type { StableStallSpec, StableDoorSpec, StablePropSpec, StablePropKind } from './StableLayout.js';
 
 export {
   STABLE_PALETTE,
@@ -87,11 +88,8 @@ export type { LeafDoorMeta, StableDoorAssetType } from './StableDoors.js';
 export { buildStallContents } from './StableStalls.js';
 
 export {
-  buildTackRoomContents,
-  buildFeedRoomContents,
-  buildFarrierContents,
-  buildWaterContents,
-  buildLoftContents,
+  StablePropFactory,
+  STABLE_FLOOR_TOP,
 } from './StableEquipment.js';
 
 export {

@@ -45,14 +45,17 @@ type Mat = THREE.Material;
  * masonry, +z pokes outside. Liner boards stand 2 cm proud of BOTH faces,
  * the glass sits at the mid-plane, casing + sill + lintel dress the outside.
  * Stall windows get an iron bar cage; facade windows get shutters.
+ *
+ * EXPORTED: every window is its own managed object now ('stable-window') —
+ * the def carries the hole position/orientation the shell used to bake in.
  */
-function buildWindowAssembly(
-  M_: StableMaterials,
+export function buildStableWindowAssembly(
   width: number,
   height: number,
   bars: boolean,
   shutters: boolean,
 ): THREE.Group {
+  const M_ = createStableMaterials();
   const g = new THREE.Group();
   const t = STABLE_LAYOUT.wallThickness;
   const hw = width / 2;
@@ -290,50 +293,6 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
     addBox(g, M_.iron, 0.05, 0.05, 0.1, 0, beamY - 0.16, -facadeZ - 0.66, 'hoist-hook');
   }
 
-  /* --- Projecting LIVERY sign on the south gable ----------------------------- */
-  {
-    const boardY = 4.735; // board center (board 0.63 tall → 4.42…5.05)
-    addBox(g, M_.trim, 2.3, 0.63, 0.06, 0, boardY, facadeZ + 0.12, 'livery-sign-board');
-    const face = signFace('LIVERY', 2.2, 0.53, { sub: 'S T A B L E' });
-    face.position.set(0, boardY, facadeZ + 0.155);
-    face.name = 'livery-sign-face';
-    g.add(face);
-    // iron straps tie the board back to the gable face (z 6.5 → 6.59)
-    for (const sx of [-0.85, 0.85] as const) {
-      addBox(g, M_.iron, 0.045, 0.2, 0.12, sx, boardY + 0.18, facadeZ + 0.045, 'livery-sign-strap');
-    }
-    // diagonal braces from the wall up to the board's bottom edge
-    for (const sx of [-0.95, 0.95] as const) {
-      const brace = addBox(g, M_.iron, 0.04, 0.34, 0.04, sx, boardY - 0.28, facadeZ + 0.07, 'livery-sign-brace');
-      brace.rotation.x = -0.55;
-    }
-  }
-
-  /* --- Windows: real assemblies lined into the wall openings ----------------- */
-  for (const win of L.windows) {
-    const asm = buildWindowAssembly(M_, win.width, win.height, win.bars, win.shutters);
-    const midY = win.sill + win.height / 2;
-    switch (win.wall) {
-      case 'south':
-        asm.position.set(win.center, midY, halfD);
-        break;
-      case 'north':
-        asm.position.set(win.center, midY, -halfD);
-        asm.rotation.y = Math.PI;
-        break;
-      case 'west':
-        asm.position.set(-halfW, midY, win.center);
-        asm.rotation.y = -Math.PI / 2;
-        break;
-      case 'east':
-        asm.position.set(halfW, midY, win.center);
-        asm.rotation.y = Math.PI / 2;
-        break;
-    }
-    asm.name = `window-${win.wall}-${win.center}`;
-    g.add(asm);
-  }
-
   /* --- Door casings (2 cm proud rings, buried seats — no shared planes) ----- */
   {
     const casing = (cx: number, cz: number, cw: number, ch: number, alongX: boolean, base: number): void => {
@@ -412,10 +371,8 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
     addBox(g, M_.trim, eastW, 0.06, 0.05, (gapMax + L.innerHalfX) / 2, railY1, L.loft.zMax + 0.03, 'loft-rail-top-e');
     addBox(g, M_.trim, westW, 0.06, 0.05, (gapMin - L.innerHalfX) / 2, railY2, L.loft.zMax + 0.03, 'loft-rail-mid-w');
     addBox(g, M_.trim, eastW, 0.06, 0.05, (gapMax + L.innerHalfX) / 2, railY2, L.loft.zMax + 0.03, 'loft-rail-mid-e');
-    // Ladder: leans from the aisle floor, top ends AT the deck edge top.
-    const lad = buildLadder(L.loft.deckTopY - floorTop, L.loft.ladderRun);
-    lad.position.set(L.loft.ladderX, floorTop, L.loft.ladderFootZ);
-    g.add(lad);
+    // The ladder is its own managed object ('stable-ladder') — placed by
+    // StableLayout at (ladderX, floorTop, ladderFootZ).
   }
 
   /* --- Rafters + collar ties + ridge beam ------------------------------------ */
@@ -438,55 +395,8 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
     addBox(g, M_.timber, 0.14, 0.2, L.depth + L.roof.overhangZ * 2 - 0.2, 0, L.roof.ridgeY - 0.14, 0, 'ridge-beam');
   }
 
-  /* --- Hanging HORSES sign under the loft edge ------------------------------- */
-  {
-    const sz = L.loft.zMax + 0.09;
-    for (const sx of [-0.3, 0.3] as const) {
-      addBox(g, M_.iron, 0.014, 0.26, 0.014, -0.85 + sx, L.loft.joistBottomY - 0.13, sz, 'horses-sign-chain');
-    }
-    addBox(g, M_.trim, 0.9, 0.3, 0.03, -0.85, L.loft.joistBottomY - 0.41, sz, 'horses-sign-board');
-    const face = signFace('HORSES', 0.8, 0.24);
-    face.position.set(-0.85, L.loft.joistBottomY - 0.41, sz + 0.017);
-    face.name = 'horses-sign-face-n';
-    g.add(face);
-    const face2 = signFace('HORSES', 0.8, 0.24);
-    face2.position.set(-0.85, L.loft.joistBottomY - 0.41, sz - 0.017);
-    face2.rotation.y = Math.PI;
-    face2.name = 'horses-sign-face-s';
-    g.add(face2);
-  }
-
-  /* --- Lanterns — EXACTLY 6 real PointLights (the stable's light budget) ----- */
-  {
-    const gateLantern = stableLantern(true);
-    gateLantern.position.set(-1.45, 2.45, facadeZ); // backplate back-to-back with the facade
-    gateLantern.name = 'lantern-gate';
-    g.add(gateLantern);
-    const aisleLantern = stableLantern(true);
-    aisleLantern.position.set(-1.55, L.loft.joistBottomY, L.loft.zMax + 0.11);
-    aisleLantern.rotation.x = Math.PI / 2; // hangs DOWN from the edge board
-    aisleLantern.name = 'lantern-aisle';
-    g.add(aisleLantern);
-    const farrierLantern = stableLantern(true);
-    farrierLantern.position.set(-1.35, 2.2, -L.innerHalfZ); // north wall, west of the window, lights the bay
-    farrierLantern.name = 'lantern-farrier';
-    g.add(farrierLantern);
-    const tackLantern = stableLantern(true);
-    tackLantern.position.set(-L.rooms.wallX + L.rooms.thickness / 2, 2.2, 4.45);
-    tackLantern.rotation.y = Math.PI / 2; // hangs toward +x (the aisle)
-    tackLantern.name = 'lantern-tack';
-    g.add(tackLantern);
-    // 5+6) mid-aisle pair hanging from the stall-front beams — the aisle is
-    // 13 m deep; without these its middle runs dark even at noon.
-    for (const sx of [-1, 1] as const) {
-      const mid = stableLantern(true);
-      mid.position.set(sx * (L.stallFrontX - 0.12), 2.54, 0.6);
-      mid.rotation.x = Math.PI / 2; // hangs DOWN from the beam
-      mid.name = `lantern-aisle-mid-${sx < 0 ? 'w' : 'e'}`;
-      g.add(mid);
-    }
-  }
-
+  // NOTE: the HORSES sign, the 6 lanterns and the loft ladder are INDEPENDENT
+  // managed objects now — the shell ends with the roof structure.
   return g;
 }
 
@@ -494,10 +404,90 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
 /* Ladder (rails + rungs, leaning back along −Z)                              */
 /* ========================================================================== */
 
-function buildLadder(height: number, run: number): THREE.Group {
+/* ========================================================================== */
+/* Independent facade entities (each is its OWN managed object now)           */
+/* ========================================================================== */
+
+/**
+ * The projecting LIVERY STABLE sign on the south gable — board + canvas face
+ * + straps + diagonal braces. Children are placed in BUILDING-LOCAL coords
+ * (the def sits at the building origin), exactly like the old in-shell kit.
+ */
+export function buildLiverySign(): THREE.Group {
   const M_ = createStableMaterials();
+  const L = STABLE_LAYOUT;
+  const g = new THREE.Group();
+  g.name = 'livery-sign';
+  const facadeZ = L.depth / 2;
+  const boardY = 4.735; // board center (board 0.63 tall → 4.42…5.05)
+  addBox(g, M_.trim, 2.3, 0.63, 0.06, 0, boardY, facadeZ + 0.12, 'livery-sign-board');
+  const face = signFace('LIVERY', 2.2, 0.53, { sub: 'S T A B L E' });
+  face.position.set(0, boardY, facadeZ + 0.155);
+  face.name = 'livery-sign-face';
+  g.add(face);
+  // iron straps tie the board back to the gable face (z 6.5 → 6.59)
+  for (const sx of [-0.85, 0.85] as const) {
+    addBox(g, M_.iron, 0.045, 0.2, 0.12, sx, boardY + 0.18, facadeZ + 0.045, 'livery-sign-strap');
+  }
+  // diagonal braces from the wall up to the board's bottom edge
+  for (const sx of [-0.95, 0.95] as const) {
+    const brace = addBox(g, M_.iron, 0.04, 0.34, 0.04, sx, boardY - 0.28, facadeZ + 0.07, 'livery-sign-brace');
+    brace.rotation.x = -0.55;
+  }
+  return g;
+}
+
+/**
+ * The hanging HORSES sign under the loft edge — two chains + board + canvas
+ * faces both sides. Children in BUILDING-LOCAL coords (def at the origin).
+ */
+export function buildHorsesSign(): THREE.Group {
+  const M_ = createStableMaterials();
+  const L = STABLE_LAYOUT;
+  const g = new THREE.Group();
+  g.name = 'horses-sign';
+  const sz = L.loft.zMax + 0.09;
+  for (const sx of [-0.3, 0.3] as const) {
+    addBox(g, M_.iron, 0.014, 0.26, 0.014, -0.85 + sx, L.loft.joistBottomY - 0.13, sz, 'horses-sign-chain');
+  }
+  addBox(g, M_.trim, 0.9, 0.3, 0.03, -0.85, L.loft.joistBottomY - 0.41, sz, 'horses-sign-board');
+  const face = signFace('HORSES', 0.8, 0.24);
+  face.position.set(-0.85, L.loft.joistBottomY - 0.41, sz + 0.017);
+  face.name = 'horses-sign-face-n';
+  g.add(face);
+  const face2 = signFace('HORSES', 0.8, 0.24);
+  face2.position.set(-0.85, L.loft.joistBottomY - 0.41, sz - 0.017);
+  face2.rotation.y = Math.PI;
+  face2.name = 'horses-sign-face-s';
+  g.add(face2);
+  return g;
+}
+
+/** One working lantern (the stable's REAL light carrier). The def carries
+ *  the world position + rotation the shell used to bake in. */
+export function buildStableLantern(lit: boolean): THREE.Group {
+  return stableLantern(lit);
+}
+
+/* ========================================================================== */
+/* Ladder (rails + rungs, leaning back along −Z) — its OWN object now         */
+/* ========================================================================== */
+
+/**
+ * The hay-loft ladder — its own managed object ('stable-ladder'). The def
+ * sits at (ladderX, floorTop, ladderFootZ); children span from the foot
+ * (0,0,0) up to (±0.22, height, −run) at the deck edge.
+ */
+export function buildStableLadder(height: number, run: number): THREE.Group {
+  const M_ = createStableMaterials();
+  // Root wrapper: the registry mirrors the def name onto the returned root,
+  // so the recognizable 'loft-ladder' handle lives on a CHILD group (verify
+  // scripts and tests look it up by name).
+  const root = new THREE.Group();
+  root.name = 'stable-ladder-root';
   const g = new THREE.Group();
   g.name = 'loft-ladder';
+  root.add(g);
   const len = Math.hypot(height, run);
   const tilt = Math.atan2(run, height);
   const rungGeo = new THREE.BoxGeometry(0.44, 0.035, 0.035);
@@ -512,9 +502,79 @@ function buildLadder(height: number, run: number): THREE.Group {
   }
   for (const sx of [-1, 1] as const) {
     const rail = addBox(g, M_.timber, 0.05, len, 0.08, sx * 0.22, Math.cos(tilt) * len / 2, -Math.sin(tilt) * len / 2, 'ladder-rail');
-    rail.rotation.x = tilt;
+    // The rail box is authored upright (height `len` along local Y) and must
+    // lean BACK along −Z exactly like the rung line: rotating its local +Y by
+    // −tilt maps it onto (0, cos tilt, −sin tilt). The old +tilt sign leaned
+    // the rails the OPPOSITE way — rails and rungs crossed in an X and every
+    // rung outside the middle read as floating in the air (user report).
+    rail.rotation.x = -tilt;
   }
-  return g;
+  return root;
+}
+
+/* ========================================================================== */
+/* Independent-entity factories (windows / signs / lanterns / ladder)         */
+/* ========================================================================== */
+
+/**
+ * One window assembly (see buildStableWindowAssembly). The def's metadata
+ * carries the STABLE_LAYOUT.windows entry: wall, center, sill, width,
+ * height, bars, shutters. The LAYOUT computes the def's world position and
+ * yaw (south 0°, north 180°, west −90°, east +90°) — the factory builds
+ * only mesh-level state at the hole-centered local origin.
+ */
+export class StableWindowFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const meta = definition.metadata as Record<string, unknown>;
+    const num = (key: string, fallback: number): number => {
+      const v = Number(meta[key]);
+      return Number.isFinite(v) && v > 0 ? v : fallback;
+    };
+    const g = buildStableWindowAssembly(
+      num('width', 0.9),
+      num('height', 1.15),
+      Boolean(meta.bars),
+      Boolean(meta.shutters),
+    );
+    g.name = 'stable-window';
+    return g;
+  }
+}
+
+/** One working lantern ('stable-lantern') — metadata.lit (default true). */
+export class StableLanternFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const meta = definition.metadata as Record<string, unknown>;
+    const lit = meta.lit === undefined ? true : Boolean(meta.lit);
+    const g = buildStableLantern(lit);
+    g.name = 'stable-lantern';
+    return g;
+  }
+}
+
+/**
+ * One sign ('stable-sign') — metadata.kind: 'livery' (projecting gable sign)
+ * or 'horses' (hanging loft-edge sign). Both build in BUILDING-LOCAL coords,
+ * so their defs sit at the building origin with identity rotation.
+ */
+export class StableSignFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const meta = definition.metadata as Record<string, unknown>;
+    const g = meta.kind === 'horses' ? buildHorsesSign() : buildLiverySign();
+    g.name = 'stable-sign';
+    return g;
+  }
+}
+
+/** The loft ladder ('stable-ladder') — geometry spans foot (0,0,0) → deck. */
+export class StableLadderFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const meta = definition.metadata as Record<string, unknown>;
+    const L = STABLE_LAYOUT;
+    const height = Number(meta.height) || (L.loft.deckTopY - L.floorTop);
+    const run = Number(meta.run) || L.loft.ladderRun;
+    return buildStableLadder(height, run);
+  }
 }
 
 /* ========================================================================== */
@@ -788,6 +848,10 @@ export const STABLE_ARCH_ASSET_TYPES = Object.freeze([
   'stable-water-trough',
   'stable-workbench',
   'stable-anvil',
+  'stable-window',
+  'stable-lantern',
+  'stable-sign',
+  'stable-ladder',
 ] as const);
 
 export type StableArchAssetType = (typeof STABLE_ARCH_ASSET_TYPES)[number];

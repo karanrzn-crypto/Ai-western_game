@@ -149,26 +149,61 @@ test('SALOON BUILDING: shell builds and contains its main parts', async () => {
   const obj = await registry.create(def);
   const group = obj as THREE.Group;
 
+  // The shell is the STRUCTURAL kit only — the sign and the windows are
+  // independent managed objects now (selectable/movable on their own).
   const required = [
     'saloon-floor',
     'saloon-roof',
     'saloon-false-front',
-    'saloon-sign-board',
-    'saloon-sign-band',
     'saloon-porch-deck',
     'saloon-porch-roof',
   ];
   for (const name of required) {
     assert.ok(group.getObjectByName(name), `shell must contain "${name}"`);
   }
-  assert.ok(group.getObjectByName('saloon-sign-letter-0'), 'sign must carry letter blocks');
-  assert.ok(group.getObjectByName('saloon-sign-letter-5'), 'sign must spell 6 letter blocks');
   const cornerPosts = group.children.filter((c) => c.name.startsWith('saloon-corner-post'));
   assert.equal(cornerPosts.length, 4, 'shell must have 4 corner posts');
-  const glassPanes = group.children.filter((c) => c.name.startsWith('saloon-window-glass'));
-  assert.equal(glassPanes.length, 4, 'facade must have 4 visible window panes (2 per side)');
-  const frameTops = group.children.filter((c) => c.name.startsWith('saloon-window-frame-top'));
-  assert.equal(frameTops.length, 4, 'every pane must carry a real frame');
+  for (const name of ['saloon-sign-board', 'saloon-sign-band', 'saloon-window-glass']) {
+    assert.equal(group.getObjectByName(name), undefined, `shell must NOT bundle "${name}" (independent object now)`);
+  }
+});
+
+test('SALOON SIGN: independent assembly with board, band and 6 letters', async () => {
+  const registry = makeRegistry();
+  const obj = (await registry.create(movedDef({ assetType: 'saloon-sign' }))) as THREE.Group;
+  for (const name of ['saloon-sign-board', 'saloon-sign-band']) {
+    assert.ok(obj.getObjectByName(name), `sign must contain "${name}"`);
+  }
+  assert.ok(obj.getObjectByName('saloon-sign-letter-0'), 'sign must carry letter blocks');
+  assert.ok(obj.getObjectByName('saloon-sign-letter-5'), 'sign must spell 6 letter blocks');
+  // The board's back must reach INTO the false front (buried junction) and
+  // the front stand proud — the sign def origin sits at (0, signY, 0).
+  const board = obj.getObjectByName('saloon-sign-board')!;
+  const bb = new THREE.Box3().setFromObject(board);
+  const wallFace = SALOON_LAYOUT.depth / 2 + SALOON_LAYOUT.wallThickness / 2;
+  assert.ok(bb.min.z < wallFace + 0.09 && bb.max.z > wallFace + 0.1, 'sign board bridges the false front face');
+});
+
+test('SALOON WINDOWS: four independent assemblies, one per layout entry', async () => {
+  const registry = makeRegistry();
+  const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
+  const windowDefs = defs.filter((d) => d.assetType === 'saloon-window');
+  assert.equal(windowDefs.length, 4, 'the layout emits exactly 4 window defs (2 per side)');
+
+  for (const def of windowDefs) {
+    const obj = (await registry.create(def)) as THREE.Group;
+    assert.ok(obj.getObjectByName('saloon-window-glass'), 'window carries a glass pane');
+    assert.ok(obj.getObjectByName('saloon-window-frame-top'), 'window carries a real frame');
+    assert.ok(obj.getObjectByName('saloon-window-sill'), 'window carries a protruding sill');
+    // Glass back face must sit ON the wall's outer face (back-to-back, the
+    // old z-fight discipline), never floating off the facade. The factory
+    // builds in the def's LOCAL frame, so compare building-local values.
+    obj.updateWorldMatrix(true, true);
+    const glass = obj.getObjectByName('saloon-window-glass')!;
+    const gb = new THREE.Box3().setFromObject(glass);
+    const wallFace = SALOON_LAYOUT.depth / 2 + SALOON_LAYOUT.wallThickness / 2;
+    assert.ok(Math.abs(gb.min.z - wallFace) < 0.01, `glass back stacked on the wall face (got ${gb.min.z.toFixed(3)} vs ${wallFace.toFixed(3)})`);
+  }
 });
 
 test('SALOON BUILDING: shell owns NO walls (walls are separate collider objects)', async () => {

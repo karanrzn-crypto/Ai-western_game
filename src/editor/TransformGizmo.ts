@@ -171,9 +171,12 @@ export class TransformGizmo {
       this.overlayMaterial(color, 0.95),
     );
 
-    // Fat invisible(ish) hit proxy so thin arms are easy to grab.
+    // Fat invisible(ish) hit proxy so thin arms are easy to grab. Kept as
+    // small as grab-ability allows (0.07): the proxies are transparent but
+    // still raycastable, so every extra centimetre of radius silently steals
+    // clicks from managed objects behind them (see pickHandleHit).
     const proxy = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.1, len + 0.2, 8),
+      new THREE.CylinderGeometry(0.07, 0.07, len + 0.2, 8),
       this.overlayMaterial(color, 0),
     );
 
@@ -209,7 +212,7 @@ export class TransformGizmo {
       this.overlayMaterial(color, 0.9),
     );
     const proxy = new THREE.Mesh(
-      new THREE.TorusGeometry(r, 0.1, 8, 64),
+      new THREE.TorusGeometry(r, 0.08, 8, 64),
       this.overlayMaterial(color, 0),
     );
 
@@ -264,6 +267,23 @@ export class TransformGizmo {
 
   /** Map a pointer ray to a gizmo handle. Null when hidden or missing. */
   pickHandle(ray: THREE.Ray): GizmoHandleId | null {
+    return this.pickHandleHit(ray)?.handle ?? null;
+  }
+
+  /**
+   * Map a pointer ray to a gizmo handle WITH the ray-hit distance so the
+   * host can arbitrate against managed-object hits.
+   *
+   * Why the distance matters: the hit proxies are transparent (opacity 0)
+   * but still raycastable. A click whose ray passes through a proxy volume
+   * must NOT silently start a drag when the user actually aimed at a managed
+   * object in front of the handle (the old behaviour made selection appear
+   * dead whenever the gizmo happened to float near the click line — worst
+   * for big objects whose origin sits far from their visible geometry).
+   * The host compares this distance with the closest managed hit and only
+   * then decides drag-vs-select (see the editor wiring in playable-map).
+   */
+  pickHandleHit(ray: THREE.Ray): { handle: GizmoHandleId; distance: number } | null {
     if (!this.root.visible || !this.attachedUuid) return null;
     this.root.updateMatrixWorld(true);
     this.picker.ray.copy(ray);
@@ -271,7 +291,9 @@ export class TransformGizmo {
     const proxies = [...this.proxies.values()];
     const hit = this.picker.intersectObjects(proxies, false)[0];
     if (!hit) return null;
-    return (hit.object.userData.gizmoHandle as GizmoHandleId) ?? null;
+    const handle = (hit.object.userData.gizmoHandle as GizmoHandleId) ?? null;
+    if (!handle) return null;
+    return { handle, distance: hit.distance };
   }
 
   // -------------------------------------------------- dragging --------

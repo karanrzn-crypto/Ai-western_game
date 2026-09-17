@@ -97,6 +97,87 @@ function shellDimsOf(definition: ObjectDefinition): ShellDims {
 }
 
 /* ========================================================================== */
+/* Independent facade entities (windows + sign are their OWN managed objects) */
+/* ========================================================================== */
+
+/**
+ * ONE facade window assembly, in its own local frame:
+ *   origin = building-local (side · offset, 0, 0) — the def carries that
+ *   same world position, children are centered on x = 0 at their absolute
+ *   heights/z offsets. REAL frame: four wood strips around a visible glass
+ *   pane (the glass is NOT buried inside a solid frame box — it must read as
+ *   glass), a cross bar pair riding the glass front and a protruding sill.
+ *
+ * Kept byte-for-byte equivalent to the old in-shell loop (the shell's window
+ * code moved here when windows became independently selectable objects).
+ */
+export function buildSaloonWindowAssembly(side: -1 | 1, offset: number): THREE.Group {
+  const M = createSaloonMaterials();
+  const g = new THREE.Group();
+  g.name = `saloon-window-${side < 0 ? 'w' : 'e'}${offset}`;
+  void side; // orientation is baked into the def position, not the geometry
+
+  const win = SALOON_LAYOUT.window;
+  const wallFaceZ = SALOON_LAYOUT.depth / 2 + SALOON_LAYOUT.wallThickness / 2;
+  const glassHalfH = win.height / 2;                 // 0.65
+  const glassY = win.sillY + glassHalfH;             // 1.75
+  const stripD = 0.07;
+  const stripZ = wallFaceZ + 0.02 + stripD / 2;      // strips span [face+0.02, face+0.09]
+  const glassZ = wallFaceZ + 0.025;                  // glass spans [face, face+0.05]
+  const barZ = wallFaceZ + 0.065;                    // bars span [face+0.05, face+0.08]
+  // Glass: back face stacked ON the wall's outer face (back-to-back).
+  addBox(g, M.glassDark, win.width, win.height, 0.05, 0, glassY, glassZ, 'saloon-window-glass');
+  // Frame strips: tops/bottoms stacked on the glass edges, sides abut the
+  // glass sides; fronts stand 4 cm proud of the glass front.
+  addBox(g, M.woodLight, win.width + 0.24, 0.12, stripD, 0, glassY + glassHalfH + 0.06, stripZ, 'saloon-window-frame-top');
+  addBox(g, M.woodLight, win.width + 0.24, 0.12, stripD, 0, win.sillY - 0.06, stripZ, 'saloon-window-frame-bottom');
+  addBox(g, M.woodLight, 0.12, win.height, stripD, -(win.width / 2 + 0.06), glassY, stripZ, 'saloon-window-frame-left');
+  addBox(g, M.woodLight, 0.12, win.height, stripD, win.width / 2 + 0.06, glassY, stripZ, 'saloon-window-frame-right');
+  // Cross bars ride the glass front (stacked contact), inside the frame.
+  addBox(g, M.woodLight, 0.05, win.height, 0.03, 0, glassY, barZ, 'saloon-window-cross-v');
+  addBox(g, M.woodLight, win.width, 0.05, 0.03, 0, glassY, barZ, 'saloon-window-cross-h');
+  // Sill: top face stacked under the bottom frame strip, front 4 cm proud of
+  // the strips, back buried into the wall.
+  addBox(g, M.woodDark, win.width + 0.24, 0.06, 0.14, 0, win.sillY - 0.15, wallFaceZ + 0.06, 'saloon-window-sill');
+
+  return g;
+}
+
+/**
+ * The SALOON sign assembly (board → band → letter blocks, each layer
+ * embedded into the previous one and standing proud of its face), local
+ * origin = building-local (0, signY, 0) — the def carries that position.
+ */
+export function buildSaloonSignAssembly(): THREE.Group {
+  const M = createSaloonMaterials();
+  const g = new THREE.Group();
+  g.name = 'saloon-sign';
+
+  const wallFaceZ = SALOON_LAYOUT.depth / 2 + SALOON_LAYOUT.wallThickness / 2;
+  const roofTop = SALOON_LAYOUT.height + 0.18;
+  const ffBottom = roofTop;
+  const ffTop = SALOON_LAYOUT.falseFrontTop;
+  const signY = ffBottom + (ffTop - ffBottom) * 0.42;
+  void signY; // baked into the def's world position; children sit at y = 0
+
+  const boardZ = wallFaceZ + 0.09; // false front's front face
+  addBox(g, M.woodDark, 5.2, 0.7, 0.1, 0, 0, boardZ + 0.05 - 0.02, 'saloon-sign-board');
+  // (board z-span: [boardZ − 0.02, boardZ + 0.08] — back buried in the false
+  // front, front 8 cm proud.)
+  const boardFrontZ = boardZ + 0.08;
+  addBox(g, M.paper, 4.6, 0.34, 0.06, 0, 0, boardFrontZ + 0.01, 'saloon-sign-band');
+  const bandFrontZ = boardFrontZ + 0.04;
+  // "SALOON" — 6 ink blocks, evenly spaced, each sunk into the band.
+  const letters = 6;
+  for (let i = 0; i < letters; i += 1) {
+    const x = -1.8 + i * 0.72;
+    addBox(g, M.ink, 0.18, 0.22, 0.05, x, 0, bandFrontZ + 0.005, `saloon-sign-letter-${i}`);
+  }
+
+  return g;
+}
+
+/* ========================================================================== */
 /* The shell builder                                                          */
 /* ========================================================================== */
 
@@ -147,54 +228,10 @@ export function buildSaloonShell(dims: ShellDims): THREE.Group {
     'saloon-false-front',
   );
 
-  // --- SALOON sign: board → band → letter blocks, each layer embedded into
-  // --- the previous one and standing proud of its face.
-  const boardZ = wallFaceZ + 0.09; // false front's front face
-  const signY = ffBottom + (ffTop - ffBottom) * 0.42;
-  addBox(g, M.woodDark, 5.2, 0.7, 0.1, 0, signY, boardZ + 0.05 - 0.02, 'saloon-sign-board');
-  // (board z-span: [boardZ − 0.02, boardZ + 0.08] — back buried in the false
-  // front, front 8 cm proud.)
-  const boardFrontZ = boardZ + 0.08;
-  addBox(g, M.paper, 4.6, 0.34, 0.06, 0, signY, boardFrontZ + 0.01, 'saloon-sign-band');
-  const bandFrontZ = boardFrontZ + 0.04;
-  // "SALOON" — 6 ink blocks, evenly spaced, each sunk into the band.
-  const letters = 6;
-  for (let i = 0; i < letters; i += 1) {
-    const x = -1.8 + i * 0.72;
-    addBox(g, M.ink, 0.18, 0.22, 0.05, x, signY, bandFrontZ + 0.005, `saloon-sign-letter-${i}`);
-  }
-
-  // --- Facade windows flanking the door (both sides of the entrance) --------
-  // REAL frame: four wood strips around a visible glass pane (the glass is
-  // NOT buried inside a solid frame box — it must actually read as glass),
-  // plus a cross bar pair riding the glass front and a protruding sill.
-  const win = SALOON_LAYOUT.window;
-  const glassHalfH = win.height / 2;                 // 0.65
-  const glassY = win.sillY + glassHalfH;             // 1.75
-  const stripD = 0.07;
-  const stripZ = wallFaceZ + 0.02 + stripD / 2;      // strips span [face+0.02, face+0.09]
-  const glassZ = wallFaceZ + 0.025;                  // glass spans [face, face+0.05]
-  const barZ = wallFaceZ + 0.065;                    // bars span [face+0.05, face+0.08]
-  for (const side of [-1, 1]) {
-    for (const off of win.centersFromDoor) {
-      const wx = side * off;
-      const tag = `${side < 0 ? 'w' : 'e'}${off}`;
-      // Glass: back face stacked ON the wall's outer face (back-to-back).
-      addBox(g, M.glassDark, win.width, win.height, 0.05, wx, glassY, glassZ, `saloon-window-glass-${tag}`);
-      // Frame strips: tops/bottoms stacked on the glass edges, sides abut
-      // the glass sides; fronts stand 4 cm proud of the glass front.
-      addBox(g, M.woodLight, win.width + 0.24, 0.12, stripD, wx, glassY + glassHalfH + 0.06, stripZ, `saloon-window-frame-top-${tag}`);
-      addBox(g, M.woodLight, win.width + 0.24, 0.12, stripD, wx, win.sillY - 0.06, stripZ, `saloon-window-frame-bottom-${tag}`);
-      addBox(g, M.woodLight, 0.12, win.height, stripD, wx - (win.width / 2 + 0.06), glassY, stripZ, `saloon-window-frame-left-${tag}`);
-      addBox(g, M.woodLight, 0.12, win.height, stripD, wx + (win.width / 2 + 0.06), glassY, stripZ, `saloon-window-frame-right-${tag}`);
-      // Cross bars ride the glass front (stacked contact), inside the frame.
-      addBox(g, M.woodLight, 0.05, win.height, 0.03, wx, glassY, barZ, `saloon-window-cross-v-${tag}`);
-      addBox(g, M.woodLight, win.width, 0.05, 0.03, wx, glassY, barZ, `saloon-window-cross-h-${tag}`);
-      // Sill: top face stacked under the bottom frame strip, front 4 cm
-      // proud of the strips, back buried into the wall.
-      addBox(g, M.woodDark, win.width + 0.24, 0.06, 0.14, wx, win.sillY - 0.15, wallFaceZ + 0.06, `saloon-window-sill-${tag}`);
-    }
-  }
+  // NOTE: the SALOON sign and the four facade windows are INDEPENDENT
+  // managed objects now (buildSaloonSignAssembly / buildSaloonWindowAssembly,
+  // registered as 'saloon-sign' / 'saloon-window' and placed by
+  // SaloonLayout) — the shell keeps only the structural kit.
 
   // --- Porch: deck + posts + porch roof ---------------------------------------
   addBox(g, M.woodMed, w + 0.6, 0.09, SALOON_LAYOUT.porchDepth, 0, 0.045, wallFaceZ + SALOON_LAYOUT.porchDepth / 2, 'saloon-porch-deck');
@@ -216,6 +253,27 @@ export function buildSaloonShell(dims: ShellDims): THREE.Group {
   }
 
   return g;
+}
+
+/**
+ * One facade window assembly (see buildSaloonWindowAssembly). The def's
+ * metadata carries the side (−1 west / +1 east) and the offset from the
+ * doorway center — the same table SALOON_LAYOUT.windows uses.
+ */
+export class SaloonWindowFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const meta = definition.metadata as Record<string, unknown>;
+    const side = Number(meta.side) < 0 ? -1 : 1;
+    const offset = Number(meta.offset);
+    return buildSaloonWindowAssembly(side, Number.isFinite(offset) && offset > 0 ? offset : SALOON_LAYOUT.window.centersFromDoor[0]);
+  }
+}
+
+/** The SALOON sign assembly (see buildSaloonSignAssembly). */
+export class SaloonSignFactory implements IAssetFactory {
+  create(_definition: ObjectDefinition): THREE.Object3D {
+    return buildSaloonSignAssembly();
+  }
 }
 
 /* ========================================================================== */
@@ -334,6 +392,8 @@ export const SALOON_ASSET_TYPES = Object.freeze([
   'saloon-building',
   'saloon-wall',
   'saloon-swinging-doors',
+  'saloon-window',
+  'saloon-sign',
   'saloon-bar-counter',
   'saloon-back-bar',
   'saloon-bar-stool',
@@ -358,6 +418,8 @@ export function registerSaloonFactories(registry: AssetRegistry): void {
   registry.register('saloon-building', new SaloonBuildingFactory(), 'Saloon Building');
   registry.register('saloon-wall', new SaloonWallFactory(), 'Saloon Wall');
   registry.register('saloon-swinging-doors', new SaloonSwingingDoorsFactory(), 'Saloon Swinging Doors');
+  registry.register('saloon-window', new SaloonWindowFactory(), 'Saloon Window');
+  registry.register('saloon-sign', new SaloonSignFactory(), 'Saloon Sign');
   registry.register('saloon-bar-counter', new SaloonBarCounterFactory(), 'Saloon Bar Counter');
   registry.register('saloon-back-bar', new SaloonBackBarFactory(), 'Saloon Back Bar');
   registry.register('saloon-bar-stool', new SaloonBarStoolFactory(), 'Saloon Bar Stool');

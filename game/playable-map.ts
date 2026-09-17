@@ -212,11 +212,11 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 
 const persistence = new PersistenceManager();
 // Storage key history: v9 moved for the bank's final vault-door interior;
-// v10 moved for the Sheriff Office block being added to the map; v11 moves
+// v11 moved for the stable object split (windows/signs/lanterns/ladder/props
 // for the Livery Stable block. Scene load REPLACES the whole registry, so
 // old saves would load a scene WITHOUT the stable — the key must move for
 // every existing save to pick it up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v11' });
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v12' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -702,6 +702,9 @@ function updateStableDoors(delta: number): void {
   // Read-only scene handle for screenshot harnesses (spectator close-ups:
   // hide the character root so it never occludes the inspected object).
   scene: () => scene,
+  // Read-only camera handle for selection/verify harnesses: real projection
+  // math (fov/aspect/ matrices) instead of reconstructed bases. Never mutated.
+  camera: () => camera,
   boundsNear: (x: number, z: number) => collisionWorld
     .getCollisionBounds()
     .filter((b) => b.min.x - 0.6 <= x && x <= b.max.x + 0.6 && b.min.z - 0.6 <= z && z <= b.max.z + 0.6)
@@ -888,16 +891,31 @@ function updatePointerFromEvent(event: MouseEvent): void {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
+/**
+ * THE one object-picking path (the editor's raycast → registry funnel):
+ * candidates = every ACTIVE managed object (the renderer adapter's mirror of
+ * the registry — nothing is filtered out here), raycast recursive so child
+ * meshes resolve, then walk UP the parent chain to the managed root.
+ * Returns the closest hit with its distance so the gizmo arbitration can
+ * compare it against transparent handle proxies.
+ */
+function firstManagedHit(): { uuid: string; distance: number } | null {
+  const candidates = adapter.getActiveUUIDs()
+    .map((uuid) => scene.getObjectByProperty('uuid', uuid))
+    .filter((obj): obj is THREE.Object3D => Boolean(obj));
+  const hit = raycaster.intersectObjects(candidates, true)[0];
+  if (!hit) return null;
+  const uuid = findManagedUuid(hit.object);
+  if (!uuid) return null;
+  return { uuid, distance: hit.distance };
+}
+
 function selectObjectFromPointer(event: MouseEvent): void {
   if (!modes.isEdit()) return;
   updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
-  const candidates = adapter.getActiveUUIDs()
-    .map((uuid) => scene.getObjectByProperty('uuid', uuid))
-    .filter((obj): obj is THREE.Object3D => Boolean(obj));
-  const hit = raycaster.intersectObjects(candidates, true)[0]?.object;
-  const uuid = hit ? findManagedUuid(hit) : null;
-  editor.select(uuid);
+  const managed = firstManagedHit();
+  editor.select(managed ? managed.uuid : null);
   refreshSelectionHelper();
   updateEditorHud();
 }
@@ -1370,19 +1388,37 @@ window.addEventListener('blur', () => {
 // Selection moved to pointerdown: gizmo handles are checked FIRST; if one is
 // hit the drag starts and object selection is skipped for this press, so the
 // gizmo can never select/move anything but its own target.
+//
+// DISTANCE ARBITRATION (user report: "clicking many objects does nothing"):
+// the handle hit proxies are transparent but still raycastable, so a click
+// whose ray passed through a proxy silently started a zero-effect drag
+// instead of selecting the object the user aimed at. Now a proxy only wins
+// when no managed object sits strictly IN FRONT of it — if the closest
+// managed hit is another (or the same) object closer than the proxy minus a
+// 2 cm epsilon, the press falls through to selection. Clicking the visible
+// arm itself (proxy at/above the nearest surface) still drags as before.
 renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
   if (!modes.isEdit() || event.button !== 0) return;
   updatePointerFromEvent(event);
   raycaster.setFromCamera(pointer, camera);
-  const handle = gizmo.pickHandle(raycaster.ray);
-  if (handle) {
-    // preventDefault() suppresses the browser's focus-change default, so a
-    // field left focused after typing would freeze mid-drag — blur it
-    // explicitly so the panel keeps refreshing live while dragging.
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    gizmo.beginDrag(handle, raycaster.ray);
-    event.preventDefault();
-    return;
+  const handleHit = gizmo.pickHandleHit(raycaster.ray);
+  if (handleHit) {
+    const objHit = firstManagedHit();
+    const attached = gizmo.getAttachedUuid();
+    const blockedByObject = Boolean(
+      objHit &&
+      objHit.uuid !== attached && // clicks on the attached object's own surface keep dragging
+      objHit.distance < handleHit.distance - 0.02,
+    );
+    if (!blockedByObject) {
+      // preventDefault() suppresses the browser's focus-change default, so a
+      // field left focused after typing would freeze mid-drag — blur it
+      // explicitly so the panel keeps refreshing live while dragging.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      gizmo.beginDrag(handleHit.handle, raycaster.ray);
+      event.preventDefault();
+      return;
+    }
   }
   selectObjectFromPointer(event);
 });

@@ -64,6 +64,13 @@ import {
   SHERIFF_OBJECT_IDS,
   setJailCellDoorOpen,
   setSheriffFrontDoorOpen,
+  registerAllStableFactories,
+  buildStableMapObjects,
+  STABLE_SITE,
+  STABLE_OBJECT_IDS,
+  STABLE_DOOR_SPECS,
+  setStableGateOpen,
+  setStableLeafDoorOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -177,6 +184,7 @@ registerPrimitiveFactories(assets);
 registerSaloonFactories(assets);
 registerAllBankFactories(assets);
 registerAllSheriffFactories(assets);
+registerAllStableFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -204,10 +212,11 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
 
 const persistence = new PersistenceManager();
 // Storage key history: v9 moved for the bank's final vault-door interior;
-// v10 moves for the Sheriff Office block being added to the map. Scene load
-// REPLACES the whole registry, so old saves would load a scene WITHOUT the
-// sheriff building — the key must move for every existing save to pick it up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v10' });
+// v10 moved for the Sheriff Office block being added to the map; v11 moves
+// for the Livery Stable block. Scene load REPLACES the whole registry, so
+// old saves would load a scene WITHOUT the stable — the key must move for
+// every existing save to pick it up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v11' });
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
 const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
 const playerController = new PlayerController(collisionWorld, {
@@ -435,6 +444,19 @@ for (const sheriffDef of buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z))
   manager.registerObject(sheriffDef);
 }
 
+// --- The LIVERY STABLE (working western horse stable + tack/feed/farrier) ---
+// Side-gable timber stable on the street's west side, south of the saloon,
+// facing south: a big double-leaf wagon gate + a staff door (both genuinely
+// openable, E), SIX stalls along a central aisle (each with its own hinged
+// stall door, trough, hay, nameplate), a tack room + a feed room in the
+// south corners (real hinged doors), a farrier bay + water station at the
+// north end under a full hay loft (deck, railing, ladder). All placement
+// data comes from the stable layout module — the SAME list the stable tests
+// assert against.
+for (const stableDef of buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z)) {
+  manager.registerObject(stableDef);
+}
+
 // --- The bank's barred iron gate (truly openable manager doorway) ------------
 // The gate spawns CLOSED across the manager doorway. E swings both leaves
 // toward the lobby (~0.9 s). The collider is released the moment the leaves
@@ -605,6 +627,59 @@ function updateSheriffFrontDoor(delta: number): void {
   }
 }
 
+// --- The stable's 10 doors (ALL genuinely openable, E) ----------------------
+// The big double gate + 6 stall doors + tack/feed room doors + the staff
+// door all follow the house door contract: spawn CLOSED (collider armed),
+// E toggles the swing target, the pose is RE-DERIVED from t every frame
+// (pure setStableGateOpen / setStableLeafDoorOpen — never accumulated), and
+// the collider releases past half-open / re-arms past half-closed through
+// the same updateObjectMetadata invalidation the gate/vault/cell doors use.
+interface StableSwing { value: number; target: number; speed: number }
+const stableSwings = new Map<string, StableSwing>();
+for (const spec of STABLE_DOOR_SPECS) {
+  const duration = spec.style === 'gate' ? 1.1 : 0.8;
+  stableSwings.set(spec.uuid, { value: 0, target: 0, speed: 1 / duration });
+  interactions.register({
+    uuid: spec.uuid,
+    get label() {
+      const swing = stableSwings.get(spec.uuid);
+      return swing && swing.target > 0.5 ? spec.labelClose : spec.labelOpen;
+    },
+    range: spec.range,
+    getPosition: () => {
+      const def = manager.getObject(spec.uuid);
+      return def
+        ? { x: def.transform.position.x, y: def.transform.position.y, z: def.transform.position.z }
+        : { x: STABLE_SITE.x, y: 0, z: STABLE_SITE.z };
+    },
+    canInteract: () => Boolean(manager.getObject(spec.uuid)),
+    onInteract: () => {
+      const swing = stableSwings.get(spec.uuid);
+      if (!swing) return;
+      swing.target = swing.target > 0.5 ? 0 : 1;
+      showStatusMessage(swing.target > 0.5 ? spec.labelOpen + '.' : spec.labelClose + '.');
+    },
+  });
+}
+/** Advance every stable door swing and sync its collider to the pose. */
+function updateStableDoors(delta: number): void {
+  for (const [uuid, swing] of stableSwings) {
+    if (swing.value === swing.target) continue;
+    const dir = Math.sign(swing.target - swing.value);
+    swing.value = THREE.MathUtils.clamp(swing.value + dir * swing.speed * delta, 0, 1);
+    const root = scene.getObjectByProperty('uuid', uuid);
+    if (root) {
+      if (uuid === STABLE_OBJECT_IDS.gate) setStableGateOpen(root, swing.value);
+      else setStableLeafDoorOpen(root, swing.value);
+    }
+    const opened = swing.value > 0.5;
+    const def = manager.getObject(uuid);
+    if (def && Boolean(def.metadata.collider) === opened) {
+      manager.updateObjectMetadata(uuid, { collider: !opened });
+    }
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -619,6 +694,9 @@ function updateSheriffFrontDoor(delta: number): void {
     playerController.setBodyYaw(Math.PI); // face +Z (south, the camera default)
   },
   setYaw: (yaw: number) => playerController.setBodyYaw(yaw),
+  // Harness-only day/night pin: the 3-minute cycle rolls past noon in ~40 s,
+  // which makes deterministic screenshot lighting impossible without it.
+  setDayTime: (hours: number) => dayNight.setTimeOfDay(hours),
   player: () => playerController.getPosition(),
   yaw: () => ({ camera: playerController.getYaw(), body: playerController.getBodyYaw() }),
   // Read-only scene handle for screenshot harnesses (spectator close-ups:
@@ -688,6 +766,35 @@ function updateSheriffFrontDoor(delta: number): void {
       target: frontSwing.target,
       state: at(frontSwing.value, frontSwing.target),
       collider: manager.getObject(frontDoorUuid)?.metadata.collider ?? null,
+      hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  // The stable doors: 'gate' | 's1'…'s6' | 'tack' | 'feed' | 'staff' — swing
+  // + 4-state readout + collider + hinge/leaf yaw for the verify harness.
+  stableDoor: (which: string) => {
+    const uuid = which === 'gate'
+      ? STABLE_OBJECT_IDS.gate
+      : which.startsWith('s') && which.length === 2
+        ? [STABLE_OBJECT_IDS.stallDoor1, STABLE_OBJECT_IDS.stallDoor2, STABLE_OBJECT_IDS.stallDoor3,
+           STABLE_OBJECT_IDS.stallDoor4, STABLE_OBJECT_IDS.stallDoor5, STABLE_OBJECT_IDS.stallDoor6][Number(which[1]) - 1]
+        : which === 'tack'
+          ? STABLE_OBJECT_IDS.tackDoor
+          : which === 'feed'
+            ? STABLE_OBJECT_IDS.feedDoor
+            : which === 'staff' ? STABLE_OBJECT_IDS.staffDoor : null;
+    if (!uuid) return null;
+    const swing = stableSwings.get(uuid);
+    const root = scene.getObjectByProperty('uuid', uuid);
+    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    const leafW = root?.getObjectByName('gate-leaf-w-hinge');
+    const hinge = root?.getObjectByName('door-hinge');
+    return {
+      swing: swing ? swing.value : null,
+      target: swing ? swing.target : null,
+      state: swing ? at(swing.value, swing.target) : null,
+      collider: manager.getObject(uuid)?.metadata.collider ?? null,
+      leafYawW: leafW ? leafW.rotation.y : null,
       hingeYaw: hinge ? hinge.rotation.y : null,
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
@@ -1956,6 +2063,7 @@ function animate(): void {
   updateVaultDoor(delta); // big vault door swing + collider/walkability sync
   updateCellDoors(delta); // jail cell door swings + collider/walkability sync
   updateSheriffFrontDoor(delta); // office front door swing + collider/walkability sync
+  updateStableDoors(delta); // stable gate + stall/room/staff door swings + collider sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

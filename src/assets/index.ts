@@ -11,3 +11,4 @@ export { CubeAssetFactory, GroundAssetFactory, registerPrimitiveFactories } from
 export * from './saloon/index.js';
 export * from './bank/index.js';
 export * from './sheriff/index.js';
+export * from './stable/index.js';

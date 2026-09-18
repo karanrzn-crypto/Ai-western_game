@@ -72,6 +72,11 @@ import {
   STABLE_DOOR_SPECS,
   setStableGateOpen,
   setStableLeafDoorOpen,
+  registerAllGunShopFactories,
+  buildGunShopMapObjects,
+  GUNSHOP_SITE,
+  GUNSHOP_DOOR_SPEC,
+  setGunShopFrontDoorOpen,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -186,6 +191,7 @@ registerSaloonFactories(assets);
 registerAllBankFactories(assets);
 registerAllSheriffFactories(assets);
 registerAllStableFactories(assets);
+registerAllGunShopFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -225,7 +231,11 @@ const persistence = new PersistenceManager();
 // tack-room coil def and the stall rope extras are gone from the build, and
 // a v13 save still carries the 'rope-coil' def the factory no longer knows
 // (it would throw on materialisation). The key move drops those saves too.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v14' });
+// v15 moves for the GUN SHOP: a whole new building block (34 defs) joins the
+// authored layout, and saves rebuild the registry wholesale — an old save
+// would boot a town WITHOUT the gun shop. The key move drops v14 saves so
+// every player picks the shop up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v15' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -504,6 +514,20 @@ for (const stableDef of buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z)) {
   manager.registerObject(stableDef);
 }
 
+// --- The GUN SHOP (enterable western gunsmith store) -------------------------
+// One-story wood-frame shop on the street's east side, south of the sheriff,
+// facing south: false-front facade + hanging GUNSMITH sign + 4 facade windows
+// + porch, one real openable front door (E), and a full interior — sales
+// counter with glass display case / brass register / scale / ammo boxes, a
+// wall rack of long guns, ammo shelving, holster board, and a Gunsmith
+// workshop at the back (workbench, vise, tool rack) with powder keg + ammo
+// crates in the corner. Every firearm is a VISUAL PROP. All placement data
+// comes from the gun shop layout module — the SAME list the gun shop tests
+// assert against.
+for (const gunshopDef of buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z)) {
+  manager.registerObject(gunshopDef);
+}
+
 // --- The bank's barred iron gate (truly openable manager doorway) ------------
 // The gate spawns CLOSED across the manager doorway. E swings both leaves
 // toward the lobby (~0.9 s). The collider is released the moment the leaves
@@ -727,6 +751,45 @@ function updateStableDoors(delta: number): void {
   }
 }
 
+// --- The GUN SHOP front door (truly openable, E) -----------------------------
+// Same house door contract as the sheriff front door: spawns CLOSED with the
+// collider armed, E flips the swing target, the pose is RE-DERIVED from t
+// every frame (setGunShopFrontDoorOpen — pure, never accumulated, the
+// Closed→Opening→Open / Open→Closing→Closed feel of every other door), and
+// the collider releases past half-open / re-arms past half-closed through the
+// same updateObjectMetadata invalidation the gate/vault/cell/stable doors use.
+const gunShopDoorUuid = GUNSHOP_DOOR_SPEC.uuid;
+const gunShopDoorSwing = { value: 0, target: 0, speed: 1 / 0.9 };
+interactions.register({
+  uuid: gunShopDoorUuid,
+  get label() {
+    return gunShopDoorSwing.target > 0.5 ? GUNSHOP_DOOR_SPEC.labelClose : GUNSHOP_DOOR_SPEC.labelOpen;
+  },
+  range: GUNSHOP_DOOR_SPEC.range,
+  getPosition: () => manager.getObject(gunShopDoorUuid)?.transform.position
+    ?? { x: GUNSHOP_SITE.x, y: 0, z: GUNSHOP_SITE.z },
+  canInteract: () => Boolean(manager.getObject(gunShopDoorUuid)),
+  onInteract: () => {
+    gunShopDoorSwing.target = gunShopDoorSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(gunShopDoorSwing.target > 0.5
+      ? `${GUNSHOP_DOOR_SPEC.labelOpen}.`
+      : `${GUNSHOP_DOOR_SPEC.labelClose}.`);
+  },
+});
+/** Advance the gun shop door swing and sync its collider to the visible leaf. */
+function updateGunShopFrontDoor(delta: number): void {
+  if (gunShopDoorSwing.value === gunShopDoorSwing.target) return;
+  const dir = Math.sign(gunShopDoorSwing.target - gunShopDoorSwing.value);
+  gunShopDoorSwing.value = THREE.MathUtils.clamp(gunShopDoorSwing.value + dir * gunShopDoorSwing.speed * delta, 0, 1);
+  const root = scene.getObjectByProperty('uuid', gunShopDoorUuid);
+  if (root) setGunShopFrontDoorOpen(root, gunShopDoorSwing.value);
+  const opened = gunShopDoorSwing.value > 0.5;
+  const def = manager.getObject(gunShopDoorUuid);
+  if (def && Boolean(def.metadata.collider) === opened) {
+    manager.updateObjectMetadata(gunShopDoorUuid, { collider: !opened });
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -752,6 +815,13 @@ function updateStableDoors(delta: number): void {
   // Read-only camera handle for selection/verify harnesses: real projection
   // math (fov/aspect/ matrices) instead of reconstructed bases. Never mutated.
   camera: () => camera,
+  // Harness-ONLY camera pose (screenshot/verify servo): parks the camera at a
+  // pose aimed at a target. Effective while the gameplay rig is parked (edit
+  // mode) — gameplay frames never call it, and play mode re-parks the rig.
+  setCamera: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
+    camera.position.set(x, y, z);
+    camera.lookAt(tx, ty, tz);
+  },
   boundsNear: (x: number, z: number) => collisionWorld
     .getCollisionBounds()
     .filter((b) => b.min.x - 0.6 <= x && x <= b.max.x + 0.6 && b.min.z - 0.6 <= z && z <= b.max.z + 0.6)
@@ -850,6 +920,21 @@ function updateStableDoors(delta: number): void {
     };
   },
   has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
+  // The gun shop front door: swing + 4-state readout + collider + hinge yaw
+  // for the verify harness (same contract as the office `door` hook).
+  gunshopDoor: () => {
+    const root = scene.getObjectByProperty('uuid', gunShopDoorUuid);
+    const hinge = root?.getObjectByName('front-door-hinge');
+    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    return {
+      swing: gunShopDoorSwing.value,
+      target: gunShopDoorSwing.target,
+      state: at(gunShopDoorSwing.value, gunShopDoorSwing.target),
+      collider: manager.getObject(gunShopDoorUuid)?.metadata.collider ?? null,
+      hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
   // Read-only registry dump for the harness probes: every managed definition
   // (uuid/assetType/transform/metadata) exactly as the editor sees it.
   objects: () => manager.getAllObjects(),
@@ -2257,6 +2342,7 @@ function animate(): void {
   updateCellDoors(delta); // jail cell door swings + collider/walkability sync
   updateSheriffFrontDoor(delta); // office front door swing + collider/walkability sync
   updateStableDoors(delta); // stable gate + stall/room/staff door swings + collider sync
+  updateGunShopFrontDoor(delta); // gun shop front door swing + collider sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

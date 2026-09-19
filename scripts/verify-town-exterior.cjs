@@ -17,7 +17,7 @@ const ok = (name, pass, detail) => {
   console.log(`${pass ? 'PASS' : 'FAIL'} | ${name} | ${detail}`);
 };
 
-const ROW_Z = 20;
+const ROW_Z = 38; // moved south of the REAL residential row (family/wealthy sit at z ≤ 30.5) so the test street never overlaps the live town
 // deterministic test uuid block (distinct from saloon a000 / bank b000 /
 // gunshop-sheriff 9000; variant nibble must be 8/9/a/b per isValidUUID)
 const uid = (s) => `70000000-0000-4000-8000-0000000000${s}`;
@@ -78,7 +78,7 @@ const BUILDINGS = [
   await page.waitForTimeout(1500); // materialisation + merge pass
 
   /* ---- per-def stats ------------------------------------------------------ */
-  const diag0 = await ev(() => window.__westTest.boundsNear(-6.5, 19.5).length);
+  const diag0 = await ev((z) => window.__westTest.boundsNear(-6.5, z - 0.5).length, ROW_Z);
   ok('diag: worker bound armed right after spawn', diag0 >= 1, `boundsNear count=${diag0}`);
   const totals = { meshes: 0, materials: 0, geometries: 0, vertices: 0 };
   for (const b of BUILDINGS) {
@@ -93,7 +93,7 @@ const BUILDINGS = [
   ok('scale: no toy buildings', totals.vertices > 0, `row total meshes=${totals.meshes}, unique geoms=${totals.geometries}, verts=${totals.vertices}`);
 
   /* ---- screenshots (player eye height, real gameplay camera) -------------- */
-  const diag1 = await ev(() => window.__westTest.boundsNear(-6.5, 19.5).length);
+  const diag1 = await ev((z) => window.__westTest.boundsNear(-6.5, z - 0.5).length, ROW_Z);
   ok('diag: worker bound armed before screenshots', diag1 >= 1, `boundsNear count=${diag1}`);
   const look = async (x, z) => {
     await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [x, z]);
@@ -111,49 +111,49 @@ const BUILDINGS = [
   await hideHud();
   // whole row from the street
   await ev(() => window.__westTest.setDayTime(12));
-  await look(0, 27);
+  await look(0, ROW_Z + 7);
   await page.screenshot({ path: OUT + '/street-row-wide.png' });
   // worker house street view
-  await look(-6.5, 24);
+  await look(-6.5, ROW_Z + 4);
   await page.screenshot({ path: OUT + '/worker-house-street.png' });
   // wealthy facade
-  await look(7.5, 25.5);
+  await look(7.5, ROW_Z + 5.5);
   await page.screenshot({ path: OUT + '/wealthy-house-street.png' });
   // abandoned
-  await look(-17.5, 24);
+  await look(-17.5, ROW_Z + 4);
   await page.screenshot({ path: OUT + '/abandoned-house-street.png' });
   // butcher stall close-up
-  await look(-11.5, 23);
+  await look(-11.5, ROW_Z + 3);
   await page.screenshot({ path: OUT + '/butcher-stall-closeup.png' });
   await showHud();
 
   // EDIT-mode parked wide shot: the whole row from above street level
   await ev(() => { window.__k('keydown', 'Tab'); window.__k('keyup', 'Tab'); });
   await page.waitForTimeout(400);
-  await ev(() => window.__westTest.setCamera(0, 9, 33, 0, 1.5, 20));
+  await ev((z) => window.__westTest.setCamera(0, 9, z + 13, 0, 1.5, z), ROW_Z);
   await page.waitForTimeout(600);
   await page.screenshot({ path: OUT + '/street-row-parked.png' });
   await ev(() => { window.__k('keydown', 'Tab'); window.__k('keyup', 'Tab'); }); // back to play
   await page.waitForTimeout(400);
 
   /* ---- collision: the worker house wall blocks ---------------------------- */
-  const diag2 = await ev(() => window.__westTest.boundsNear(-6.5, 19.5).length);
+  const diag2 = await ev((z) => window.__westTest.boundsNear(-6.5, z - 0.5).length, ROW_Z);
   ok('diag: worker bound armed before the walk', diag2 >= 1, `boundsNear count=${diag2}`);
-  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [-6.5, 24]);
+  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [-6.5, ROW_Z + 4]);
   await ev(() => window.__westTest.setYaw(0));
   await page.waitForTimeout(300);
   // DIAGNOSTIC: is the spawned def's collider actually armed in the world?
-  const diag = await ev(() => ({
+  const diag = await ev((z) => ({
     defMeta: window.__westTest.objects().find((o) => o.uuid === '70000000-0000-4000-8000-000000000003')?.metadata.collider ?? null,
-    near: window.__westTest.boundsNear(-6.5, 19.5).map((b) => ({ u: b.uuid.slice(0, 8), z: [b.min.z, b.max.z] })),
+    near: window.__westTest.boundsNear(-6.5, z - 0.5).map((b) => ({ u: b.uuid.slice(0, 8), z: [b.min.z, b.max.z] })),
     mode: document.getElementById('editor-mode')?.textContent ?? '',
-  }));
+  }), ROW_Z);
   console.log('  [diag]', JSON.stringify(diag).slice(0, 400));
   // walk north (−z) toward the wall until the player stalls
   await ev(() => window.__k('keydown', 'KeyW'));
   let stalledZ = null;
   const t0 = Date.now();
-  let lastZ = 24;
+  let lastZ = ROW_Z + 4;
   let lastMove = Date.now();
   while (Date.now() - t0 < 20000) {
     await page.waitForTimeout(250);
@@ -164,20 +164,21 @@ const BUILDINGS = [
     if (Date.now() - lastMove > 1400) break;
   }
   await ev(() => window.__k('keyup', 'KeyW'));
-  // The player walks from z=24 (south) toward the row: the body bound spans
-  // z 18.3..21.7, so the FIRST blocking face is max.z + radius ≈ 22.05 —
-  // the shell blocks from every side (interior-less building, by design).
-  ok('collision: the worker house wall BLOCKS the player', stalledZ > 21.5 && stalledZ < 22.6,
-    `stalled at z=${stalledZ?.toFixed(3)} (bound max 21.70 + radius 0.35 ≈ 22.05)`);
+  // The player walks from ROW_Z+4 (south) toward the row: the body bound spans
+  // ROW_Z−1.7..ROW_Z+1.7, so the FIRST blocking face is max.z + radius ≈
+  // ROW_Z+2.05 — the shell blocks from every side (interior-less building,
+  // by design).
+  ok('collision: the worker house wall BLOCKS the player', stalledZ > ROW_Z + 1.5 && stalledZ < ROW_Z + 2.6,
+    `stalled at z=${stalledZ?.toFixed(3)} (bound max ${ROW_Z + 1.7} + radius 0.35 ≈ ${ROW_Z + 2.05})`);
 
   // the butcher stall counter blocks too
-  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [-11.5, 22.6]);
+  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [-11.5, ROW_Z + 2.6]);
   await ev(() => window.__westTest.setYaw(0));
   await page.waitForTimeout(300);
   await ev(() => window.__k('keydown', 'KeyW'));
   let stallZ = null;
   const t1 = Date.now();
-  lastZ = 22.6; lastMove = Date.now();
+  lastZ = ROW_Z + 2.6; lastMove = Date.now();
   while (Date.now() - t1 < 15000) {
     await page.waitForTimeout(250);
     const p = await ev(() => window.__westTest.player());
@@ -187,9 +188,9 @@ const BUILDINGS = [
     if (Date.now() - lastMove > 1400) break;
   }
   await ev(() => window.__k('keyup', 'KeyW'));
-  // stall counter front face: 20 + (0.9 − 0.25 + 0.28) ≈ 20.93… counter box z 0.65±0.28 → front 20.93
-  ok('collision: the butcher counter BLOCKS the player', stallZ > 20.93 + 0.3 && stallZ < 22.6,
-    `stalled at z=${stallZ?.toFixed(3)} (counter face 20.93 + radius)`);
+  // stall counter front face: ROW_Z + (0.9 − 0.25 + 0.28) ≈ ROW_Z+0.93… counter box z 0.65±0.28 → front ROW_Z+0.93
+  ok('collision: the butcher counter BLOCKS the player', stallZ > ROW_Z + 0.93 + 0.3 && stallZ < ROW_Z + 2.6,
+    `stalled at z=${stallZ?.toFixed(3)} (counter face ${ROW_Z + 0.93} + radius)`);
 
   /* ---- despawn (leave no state) ------------------------------------------- */
   for (const b of BUILDINGS) {

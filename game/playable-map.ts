@@ -97,13 +97,20 @@ if (!stage) throw new Error('Missing #stage');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9a8d72);
-scene.fog = new THREE.Fog(0x9a8d72, 35, 90);
+// Fog rescaled for the enlarged map: the old 90 m end would visibly dissolve
+// the new boundary walls and outskirt buildings from mid-street. 40→110 keeps
+// the dusty-distance read on the prairie edges while the whole playable
+// envelope stays legible.
+scene.fog = new THREE.Fog(0x9a8d72, 40, 110);
 
 const camera = new THREE.PerspectiveCamera(
   70,
   Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1),
   0.05,
-  120,
+  // Map expansion (60×60 → 100×100): the far plane must clear the new
+  // ±50 m boundary walls from any vantage point (worst case ~141 m corner to
+  // corner) — 150 keeps the whole enlarged map drawable without clipping.
+  150,
 );
 
 // Dev verification hook (read-only): headless check scripts read the live
@@ -146,19 +153,20 @@ const shadows = new ShadowScheduler({ idleIntervalSeconds: 0.15, movingIntervalS
 const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
-// 768² / 85m ≈ 9 texels/m — deliberately coarse (weak-laptop revision):
-// PCFSoft + normalBias 0.03 keep the soft readable look. 512² is the
-// documented next fallback if a future target needs an even cheaper pass.
-sun.shadow.mapSize.set(768, 768);
-// Shadow frustum sized to the PLAYABLE AREA: the map is a 60×60 ground
-// plane, so its farthest point from the light target (the origin) is the
-// half-diagonal 30√2 ≈ 42.4m. An ortho box of ±42.5 contains every map
-// point for EVERY sun azimuth (a projection never exceeds the vector
-// length), while the old hand-waved ±55 wasted 38% of the texel density.
-sun.shadow.camera.left = -42.5;
-sun.shadow.camera.right = 42.5;
-sun.shadow.camera.top = 42.5;
-sun.shadow.camera.bottom = -42.5;
+// Map expansion rescale: the shadow frustum must still contain every CASTER
+// (shadows on empty prairie are invisible, so the frustum follows the town,
+// not the ground plane). Every current caster sits ≤36 m from the light
+// target (the origin) — an ortho box of ±50 contains all of them for EVERY
+// sun azimuth (a projection never exceeds the vector length) and leaves
+// headroom for future buildings inside that radius. 1024² over the ±50 box
+// ≈ 10.2 texels/m — BETTER texel density than the old 768²/±42.5 ≈ 9; the
+// scheduled depth pass grows ~1.4 ms → ~2.5 ms per refresh, paid by the
+// ShadowScheduler's idle/moving cadence, not per frame.
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -50;
+sun.shadow.camera.right = 50;
+sun.shadow.camera.top = 50;
+sun.shadow.camera.bottom = -50;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 200;
 sun.shadow.bias = -0.00035;
@@ -185,14 +193,14 @@ const characterStates = new CharacterStateMachine();
 const input = new InputBindings(window);
 input.attach();
 
-const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
+const grid = new THREE.GridHelper(100, 100, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
 scene.add(grid);
 
 // Coordinate reference: world origin (0,0,0) + X/Y/Z direction axes.
 // Purely visual debug overlay — never registered in the manager, so it can
 // never be selected or moved; drawn with depthTest off so it reads as an
-// overlay instead of "an object poking out of the spawn cube".
+// overlay instead of "a helper poking out of the ground".
 // Shown only while Edit Mode is active.
 const debugAxes = createDebugAxes();
 debugAxes.visible = false;
@@ -256,7 +264,13 @@ const persistence = new PersistenceManager();
 // rebuilt full-height closed-by-default — an old save would boot a bank
 // without its door. The key move drops v15 saves so every player picks the
 // doors up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v16' });
+// v17 moves for the TOWN EXPANSION: the spawn/test cube def is DELETED and
+// six town-exterior defs (butcher stall + five houses) join the authored
+// layout, and the ground/boundary rescale to 100×100. Saves rebuild the
+// registry wholesale — a v16 save would boot the OLD map with the test cube
+// back and without the new street. The key move drops v16 saves so every
+// player picks the new town up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v17' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -402,7 +416,7 @@ manager.registerObject({
     rotation: { x: -90, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
-  metadata: { name: 'زمین نقشه اصلی', size: 60, collider: false, editable: false },
+  metadata: { name: 'زمین نقشه اصلی', size: 100, collider: false, editable: false },
 });
 
 function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3): void {
@@ -418,30 +432,14 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
   });
 }
 
-addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
-addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
+// Map expansion 60×60 → 100×100 (±30 → ±50): same 3 m wall profile, same
+// overlap-at-corners pattern; the corridor between the walls and the town
+// core is the room the new residential row + outskirts houses move into.
+addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -49.5), new THREE.Vector3(100, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 49.5), new THREE.Vector3(100, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
+addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
 
-const spawnUuid = '10000000-0000-4000-a000-000000000020';
-manager.registerObject({
-  uuid: spawnUuid,
-  assetType: 'cube',
-  transform: {
-    position: { x: 0, y: 0.75, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    scale: { x: 3, y: 1.5, z: 3 },
-  },
-  metadata: { name: 'مکعب اسپاون', editable: true, collider: true },
-});
-
-// A demo interactable for the generic interaction system (E key).
-interactions.register({
-  uuid: spawnUuid,
-  label: 'Inspect supply crate',
-  getPosition: () => ({ x: 0, y: 0.75, z: 0 }),
-  onInteract: () => showStatusMessage('The crate holds jerky, rifle rounds and a worn tin star.'),
-});
 
 // --- The enterable BUILDING -------------------------------------------------
 // One simple walk-in structure, built entirely from managed cubes (the same
@@ -547,6 +545,58 @@ for (const stableDef of buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z)) {
 // assert against.
 for (const gunshopDef of buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z)) {
   manager.registerObject(gunshopDef);
+}
+
+// --- TOWN EXPANSION: butcher stall + five house facades ----------------------
+// The designed-but-unplaced town-exterior assets enter the REAL map here, as
+// individually managed defs so each carries its exact collider payload from
+// TOWN_EXTERIOR_COLLIDERS (the same table the tests assert against — a bare
+// array would silently fall back to a 1 m³ box). The factory builds every
+// facade facing +Z (south), so yaw is the ONLY placement math: yaw 90 turns
+// a west-row front EAST toward the main street, yaw -90 turns an east-row
+// front WEST. Sites were audited against the measured per-building AABBs
+// (saloon z ≤ -7.5 · stable z ≥ -1.5 west, sheriff z ≥ -5.5 · gunshop z ≤
+// 14.1 east, bank north end) — no overlap, market-row gaps 1.2–4.5 m, the
+// ~17 m street corridor continues south into the enlarged map and the
+// farmstead/abandoned house sit alone on the east/west outskirts.
+const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
+  uuid: string;
+  type: keyof typeof TOWN_EXTERIOR_COLLIDERS;
+  name: string;
+  x: number;
+  z: number;
+  yaw: number;
+}> = [
+  // Market-stall frontage on the west commercial row, beside the street and
+  // CLEAR of the saloon's doorway corridor (door leaves span x −12.9..−11.1 —
+  // a stall on that lane would wall off the saloon entrance). Front
+  // (counter) faces east across the street: visible straight from spawn.
+  { uuid: 'c0000000-0000-4000-8000-000000000040', type: 'butcher-stall', name: 'دکه قصابی', x: -9.9, z: -4.2, yaw: 90 },
+  // New residential street south of the spawn point, lining the same
+  // corridor: worker → family on the west side, wealthy across the street.
+  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: -11.5, z: 19, yaw: 90 },
+  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -12, z: 28, yaw: 90 },
+  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 11.5, z: 26, yaw: -90 },
+  // Outskirts: the farmstead works the east edge (shed + fence + trough
+  // yard), the abandoned house decays alone on the west edge.
+  { uuid: 'c0000000-0000-4000-8000-000000000044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: 26, z: -2, yaw: -90 },
+  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: -30, z: -13, yaw: 90 },
+];
+for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
+  manager.registerObject({
+    uuid: placement.uuid,
+    assetType: placement.type,
+    transform: {
+      position: { x: placement.x, y: 0, z: placement.z },
+      rotation: { x: 0, y: placement.yaw, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    },
+    metadata: {
+      name: placement.name,
+      editable: true,
+      collider: TOWN_EXTERIOR_COLLIDERS[placement.type],
+    },
+  });
 }
 
 // --- The bank's barred iron gate (truly openable manager doorway) ------------

@@ -134,6 +134,88 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   ok('1a. riding in FIRST person', await ev(() => window.__westTest.horse().playerMode === 'first_person'),
     JSON.stringify(await ev(() => window.__westTest.horse().playerMode)));
 
+  // ---- NEW: the mounted-cowboy eye (the "see the horse's head" revision) ---
+  // The FP eye must sit at the SEATED rider's eye (seat top + torso rise),
+  // NOT at the old stirrup-plane + standing stature (2.75m — a drone view
+  // with the whole horse out of frame).
+  const rc0 = await ev(() => window.__westTest.rideCam());
+  ok('1a2. FP ride eye = seated rider eye (≈2.28m over the saddle)',
+    rc0.mounted && Math.abs(rc0.camY - rc0.expectedEyeY) < 0.01,
+    `camY=${rc0.camY.toFixed(3)} expectedEyeY=${rc0.expectedEyeY.toFixed(3)} (old wrong eye was ${ (rc0.horseGroundY + 2.746).toFixed(3) })`);
+  ok('1a3. the horse HEAD is in frame: muzzle in the lower half of the view',
+    Math.abs(rc0.muzzleNdc.x) <= 1 && rc0.muzzleNdc.y <= 1 && rc0.muzzleNdc.y >= -1
+      && rc0.muzzleNdc.y < -0.02,
+    `muzzle NDC (${rc0.muzzleNdc.x.toFixed(2)}, ${rc0.muzzleNdc.y.toFixed(2)}) — negative y = bottom of the frame`);
+  ok('1a4. ears/mane crown in frame at neutral pitch',
+    Math.abs(rc0.earLNdc.x) <= 1 && Math.abs(rc0.earLNdc.y) <= 1
+      && Math.abs(rc0.earRNdc.x) <= 1 && Math.abs(rc0.earRNdc.y) <= 1,
+    `earL NDC (${rc0.earLNdc.x.toFixed(2)}, ${rc0.earLNdc.y.toFixed(2)}), earR NDC (${rc0.earRNdc.x.toFixed(2)}, ${rc0.earRNdc.y.toFixed(2)})`);
+  await page.screenshot({ path: OUT + '/fp-ride-head-visible.png' });
+
+  // ---- NEW: the eye must be OUTSIDE every horse surface (no head-inside-
+  // model clipping): the eye sits BEHIND the withers, ears reach 2.10m —
+  // geometrically impossible to overlap at the seated eye, but lock it.
+  ok('1a5. the eye rides above the ear tips, clear of the model',
+    rc0.camY > rc0.horseGroundY + 2.10,
+    `eye ${(rc0.camY - rc0.horseGroundY).toFixed(3)}m vs ear tips 2.10m`);
+
+  // Clean visual evidence, harness-side only (hide the debug HUD panels):
+  // the head must stay in frame at a WALK and at a GALLOP.
+  const hideHud = () => ev(() => {
+    const s = document.createElement('style');
+    s.id = 'shot-clean';
+    s.textContent = '#hud,#interact-prompt{display:none!important}';
+    document.head.appendChild(s);
+  });
+  const showHud = () => ev(() => document.getElementById('shot-clean')?.remove());
+  // In-page normalization: the ride probe can legitimately produce non-finite
+  // NDC values (a landmark exactly on the camera plane), and playwright's JSON
+  // bridge turns non-finite numbers into null / drops them — normalize to
+  // 999 sentinels IN PAGE so the checks and details stay well-defined.
+  const rideCamSafe = () => ev(() => {
+    const r = window.__westTest.rideCam();
+    const n = (v, d = 999) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+    const p = (o) => (o ? { x: n(o.x), y: n(o.y), z: n(o.z) } : { x: 999, y: 999, z: 999 });
+    return {
+      mounted: r.mounted, mode: r.mode,
+      camY: n(r.camY), horseGroundY: n(r.horseGroundY), expectedEyeY: n(r.expectedEyeY),
+      speed: n(r.speed),
+      muzzleNdc: p(r.muzzleNdc), earLNdc: p(r.earLNdc), earRNdc: p(r.earRNdc),
+      rawKeys: Object.keys(r).join(','),
+    };
+  });
+  const inFrame = (r) => Math.abs(r.muzzleNdc.x) <= 1 && r.muzzleNdc.y <= 1 && r.muzzleNdc.y >= -1
+    && Math.abs(r.earLNdc.y) <= 1 && Math.abs(r.earRNdc.y) <= 1;
+  // Movement proof by DISPLACEMENT (snap.speed goes non-finite under the
+  // software rasterizer's frame-time craters — headless-only artifact).
+  const horsePos = () => ev(() => {
+    const p = window.__westTest.horse().horsePos;
+    return { x: p.x, z: p.z };
+  });
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+  await hideHud();
+  await ev(() => window.__k('keydown', 'KeyW'));
+  await page.waitForTimeout(1200);
+  const walkPos0 = await horsePos();
+  let rc = await rideCamSafe();
+  const walkPos1 = await horsePos();
+  ok('1a6. head stays in frame at a WALK', dist(walkPos0, walkPos1) > 0.05 && inFrame(rc),
+    `moved ${(dist(walkPos0, walkPos1)).toFixed(2)}m, muzzle y=${rc.muzzleNdc.y.toFixed(2)} ears y=${rc.earLNdc.y.toFixed(2)}/${rc.earRNdc.y.toFixed(2)}`);
+  await page.screenshot({ path: OUT + '/fp-ride-walk.png' });
+  const gallopPos0 = await horsePos();
+  await ev(() => window.__k('keydown', 'ShiftLeft'));
+  await page.waitForTimeout(2200); // build to canter/gallop
+  rc = await rideCamSafe();
+  const gallopPos1 = await horsePos();
+  ok('1a7. head stays in frame at a GALLOP', dist(gallopPos0, gallopPos1) > 0.3 && inFrame(rc),
+    `moved ${(dist(gallopPos0, gallopPos1)).toFixed(2)}m in 2.2s (headless sim is frame-bound — motion, not gait, is the assertion), muzzle y=${rc.muzzleNdc.y.toFixed(2)} ears y=${rc.earLNdc.y.toFixed(2)}/${rc.earRNdc.y.toFixed(2)}`);
+  console.log(`  [rideCam keys] ${rc.rawKeys}`);
+  await page.screenshot({ path: OUT + '/fp-ride-gallop.png' });
+  await ev(() => window.__k('keyup', 'ShiftLeft'));
+  await ev(() => window.__k('keyup', 'KeyW'));
+  await page.waitForTimeout(1500); // let the horse settle to idle
+  await showHud();
+
   // Drive a full 360° turn (hold A ≈ counterclockwise). Sample per-frame:
   // every view delta must equal the horse's delta within 1e-3 (1:1 tracking,
   // no snap), and the total view rotation must track the horse's total.
@@ -301,6 +383,14 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   ok('3a. saloon doors exist, spawn CLOSED, full height, collider armed',
     s0 && s0.state === 'closed' && s0.hingeYawL === 0 && s0.hingeYawR === 0,
     JSON.stringify({ state: s0.state, collider: typeof s0.collider === 'object' ? 'boxes' : s0.collider }));
+  // THE frozen-door regression lock: the hinges must still OWN leaf meshes
+  // after the merge pass. A merge-baked (empty) hinge yaws fine and passes
+  // every state check while the VISIBLE leaf never moves (the user report:
+  // the bar door model stays fixed and the player walks through it).
+  ok('3a-mesh. leaf meshes LIVE under their hinges (not merge-baked away)',
+    s0.leafMeshesL >= 1 && s0.leafMeshesR >= 1,
+    `leafMeshesL=${s0.leafMeshesL} leafMeshesR=${s0.leafMeshesR} (face z ${s0.leafFaceZL?.toFixed(3)} / ${s0.leafFaceZR?.toFixed(3)})`);
+  const saloonClosedFaceZL = s0.leafFaceZL;
   await page.screenshot({ path: OUT + '/saloon-door-closed.png' });
 
   // Walk UP to the closed doors (stall = at the leaf), then press E.
@@ -313,6 +403,12 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   const s1 = await wait(() => { const s = window.__westTest.saloonDoor(); return s.state === 'open' ? s : null; }, 'saloon doors to open', 15000);
   ok('3b. [E] swings both saloon leaves inward, mirrored', Math.abs(s1.hingeYawL + s1.hingeYawR) < 1e-6 && s1.hingeYawL > 1.5,
     `yawL=${s1.hingeYawL.toFixed(3)} yawR=${s1.hingeYawR.toFixed(3)}`);
+  // The leaf must PHYSICALLY move with the swing (visible movement, not an
+  // empty-group yaw): the tracked leaf-face world Z changes > 0.2 m.
+  ok('3b-move. the leaf face physically moves with the swing (visible open)',
+    s1.leafFaceZL !== null && saloonClosedFaceZL !== null
+      && Math.abs(s1.leafFaceZL - saloonClosedFaceZL) > 0.2,
+    `closed face z=${saloonClosedFaceZL?.toFixed(3)} → open face z=${s1.leafFaceZL?.toFixed(3)} (Δ=${Math.abs(s1.leafFaceZL - saloonClosedFaceZL).toFixed(3)}m)`);
   await page.screenshot({ path: OUT + '/saloon-door-open.png' });
 
   // Walk through the open doorway (from the porch deck, 9 cm step, fine).

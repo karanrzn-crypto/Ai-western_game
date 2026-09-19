@@ -689,7 +689,11 @@ export function buildPianoStool(): THREE.Group {
  * The same saloon style, now actually readable as a door: two paneled
  * walnut leaves with push bars on BOTH faces meeting at the doorway center,
  * hanging on INDEPENDENT, NAMED hinge groups ('swinging-door-left-hinge' /
- * '…-right-hinge').
+ * '…-right-hinge'), both flagged `userData.dynamic = true` — the MergeStatic
+ * contract (see MergeStatic.ts / BankExterior.ts): a runtime-rotated pivot
+ * without that flag gets its subtree baked into the def's static merged mesh
+ * and the hinge spins EMPTY (the visible leaf never moves — the exact bug
+ * the browser run caught: door state toggled, leaves frozen).
  *
  * House door contract (mirrors the gunshop/bank front doors): t=0 is dead
  * closed — the leaf yaws are NEVER built in here; the runtime pose comes
@@ -717,6 +721,12 @@ export function buildSwingingDoors(): THREE.Group {
     // INWARD swing: the LEFT leaf's tip (+x from its hinge) needs −z, i.e.
     // R_y: z' = −x·sinθ < 0 → θ > 0 → openSign +1; the right leaf mirrors.
     hinge.userData.openSign = side === -1 ? 1 : -1;
+    // MergeStatic contract (see MergeStatic.ts): a runtime-rotated pivot MUST
+    // carry this flag or its subtree is baked into the def's static merged
+    // mesh and the hinge spins EMPTY — state toggles, the visible leaf never
+    // moves. Every other door in town (bank/gunshop/sheriff/stable) flags its
+    // hinges; the saloon rebuild missed it (the frozen-door bug report).
+    hinge.userData.dynamic = true;
     g.add(hinge);
 
     const dir = -side; // leaf extends this way from its hinge

@@ -40,7 +40,8 @@ import {
   mountEnterCameraMode,
   dismountCameraPlan,
   HorsePersistence,
-  HORSE_PROPORTIONS,
+  RIDER_SEATED_EYE_Y,
+  RIDER_SEATED_EYE_Z,
   buildMountTimeline,
   mountRootPose,
   poseMountRider,
@@ -886,6 +887,11 @@ function updateSaloonDoors(delta: number): void {
   }
 }
 
+// Scratch objects for the harness-only rideCam probe (zero per-frame cost —
+// the probe runs only when a verify harness calls it).
+const headBox = new THREE.Box3();
+const headCenter = new THREE.Vector3();
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -1039,6 +1045,33 @@ function updateSaloonDoors(delta: number): void {
       horsePos: snap.position,
     };
   },
+  // FP ride-cam probe (the mounted-eye revision): camera world pose + the
+  // head landmark projections that prove the horse's head is IN the frustum
+  // at the BOTTOM of the view. All read-only real projection math.
+  rideCam: () => {
+    const snap = horse.getSnapshot();
+    headBox.setFromObject(horseModel.joints.head);
+    headBox.getCenter(headCenter);
+    // Muzzle region: front-bottom-center of the head subtree box (the head
+    // faces −Z at neutral pose). Ears: top corners of the same box.
+    const muzzle = new THREE.Vector3(headCenter.x, headBox.min.y + 0.10, headBox.min.z).project(camera);
+    const earL = new THREE.Vector3(headBox.min.x + 0.04, headBox.max.y, headCenter.z).project(camera);
+    const earR = new THREE.Vector3(headBox.max.x - 0.04, headBox.max.y, headCenter.z).project(camera);
+    return {
+      mounted: snap.mounted,
+      mode: playerController.getCameraMode(),
+      camY: camera.position.y,
+      camX: camera.position.x,
+      camZ: camera.position.z,
+      horseGroundY: snap.position.y,
+      expectedEyeY: snap.position.y + RIDER_SEATED_EYE_Y,
+      camPitch: camera.rotation.x,
+      camYaw: camera.rotation.y,
+      muzzleNdc: { x: muzzle.x, y: muzzle.y, z: muzzle.z },
+      earLNdc: { x: earL.x, y: earL.y, z: earL.z },
+      earRNdc: { x: earR.x, y: earR.y, z: earR.z },
+    };
+  },
   // The gun shop front door: swing + 4-state readout + collider + hinge yaw
   // for the verify harness (same contract as the office `door` hook).
   gunshopDoor: () => {
@@ -1076,6 +1109,34 @@ function updateSaloonDoors(delta: number): void {
     const hl = root?.getObjectByName('swinging-door-left-hinge');
     const hr = root?.getObjectByName('swinging-door-right-hinge');
     const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    // Leaf VISIBILITY probes (the frozen-door regression): a hinge whose leaf
+    // meshes were merge-baked into a static bucket still rotates EMPTY — yaw
+    // checks alone cannot catch it. Count the meshes living under each hinge
+    // and measure the leaf face's world Z so the harness can assert the leaf
+    // physically moves when the door opens.
+    const leafProbe = (hinge: THREE.Object3D | null | undefined) => {
+      if (!hinge) return { meshes: 0, faceZ: null as number | null };
+      let meshes = 0;
+      let faceZ: number | null = null;
+      hinge.updateMatrixWorld(true);
+      hinge.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        meshes += 1;
+        const g = (o as THREE.Mesh).geometry;
+        if (!faceZ) {
+          if (!g.boundingBox) g.computeBoundingBox();
+          const p = new THREE.Vector3(
+            (g.boundingBox!.min.x + g.boundingBox!.max.x) / 2,
+            (g.boundingBox!.min.y + g.boundingBox!.max.y) / 2,
+            (g.boundingBox!.min.z + g.boundingBox!.max.z) / 2,
+          ).applyMatrix4(o.matrixWorld);
+          faceZ = p.z;
+        }
+      });
+      return { meshes, faceZ };
+    };
+    const pl = leafProbe(hl);
+    const pr = leafProbe(hr);
     return {
       swing: saloonDoorSwing.value,
       target: saloonDoorSwing.target,
@@ -1083,6 +1144,10 @@ function updateSaloonDoors(delta: number): void {
       collider: manager.getObject(saloonDoorUuid)?.metadata.collider ?? null,
       hingeYawL: hl ? hl.rotation.y : null,
       hingeYawR: hr ? hr.rotation.y : null,
+      leafMeshesL: pl.meshes,
+      leafMeshesR: pr.meshes,
+      leafFaceZL: pl.faceZ,
+      leafFaceZR: pr.faceZ,
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
   },
@@ -2367,16 +2432,23 @@ function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot'
       deltaSeconds: delta,
     });
   } else {
-    // First person: the eye rides at the rider's head. The horse's own yaw
-    // delta is inherited EVERY frame (smooth — the horse yaw is integrated
-    // from a bounded steering turn rate), so a horse turning left turns the
-    // view left with it and the mounted camera can never stay decoupled
-    // from the mount's transform; mouse look still moves freely on top.
+    // First person: the eye rides where the SEATED rider's head actually is —
+    // pelvis on the saddle seat + the seated torso rise (RIDER_SEATED_EYE_Y
+    // ≈ 2.28m). The old formula reused the STANDING stature on the STIRRUP
+    // plane (riderFeetY + eyeHeight = 2.75m), floating the eye ≈0.65m above
+    // the ear tips: at neutral pitch the whole head sat ~38° below the view
+    // axis vs a 35° half-FOV — the horse vanished and riding read as drone
+    // flight (user report: «صورت و سر اسب دیده نمی‌شود»). From the seated eye
+    // the muzzle/ears/mane land in the lower third of the frame — the natural
+    // cowboy view — and the eye stays clear of every horse surface. The
+    // horse's own yaw delta is STILL inherited EVERY frame (wrap-safe, smooth
+    // by construction), so steering turns the view 1:1; mouse look moves
+    // freely on top. Walking first person never touches this branch.
     rideYaw += horseYawDelta;
     camera.position.set(
-      snap.position.x + Math.sin(snap.yaw) * HORSE_PROPORTIONS.riderZ,
-      snap.position.y + HORSE_PROPORTIONS.riderFeetY + CHARACTER_PROPORTIONS.eyeHeight,
-      snap.position.z + Math.cos(snap.yaw) * HORSE_PROPORTIONS.riderZ,
+      snap.position.x + Math.sin(snap.yaw) * RIDER_SEATED_EYE_Z,
+      snap.position.y + RIDER_SEATED_EYE_Y,
+      snap.position.z + Math.cos(snap.yaw) * RIDER_SEATED_EYE_Z,
     );
     camera.rotation.set(ridePitch, rideYaw, 0);
   }

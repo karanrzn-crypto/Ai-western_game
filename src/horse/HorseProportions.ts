@@ -95,6 +95,39 @@ export const HORSE_PROPORTIONS = {
   stepHeight: 0.4,
 } as const;
 
+// --- First-person ride-cam eye (the mounted-cowboy view) ---------------------
+/**
+ * Eye rise above the pelvis for the upright seated 1.83m Ranger:
+ * standing eye 1.70 (CharacterProportions.eyeHeight) − standing hip 0.96
+ * (CharacterProportions.hipY) = 0.74. Duplicated here as a literal (same
+ * convention as MountChoreography — no cross-package import): the mounted
+ * pelvis sits ON the saddle seat, so the mounted eye is seat-relative.
+ */
+export const RIDER_SEATED_EYE_RISE = 0.74;
+/**
+ * FP ride-cam eye height above the HORSE's feet: pelvis on the seat
+ * (saddleTopY) + the seated torso rise = 1.5372 + 0.74 ≈ 2.277m.
+ *
+ * ROOT CAUSE this fixes (user report: «صورت و سر اسب دیده نمی‌شود»): the old
+ * FP eye used the STANDING formula on the STIRRUP plane —
+ * riderFeetY + eyeHeight = 1.046 + 1.70 = 2.746m, ≈0.65m ABOVE the ear tips
+ * (totalHeight 2.10). At neutral pitch the muzzle sat ~38° below the view
+ * axis vs a 35° half-FOV: the whole head/ears/mane were out of the frustum
+ * and riding felt like drone flight. The seated eye (2.277m) rides just
+ * above the poll, so the head/ears/mane/neck crest fill the bottom of the
+ * frame — a real cowboy's view — while the eye stays clear of every horse
+ * surface (ears reach 2.10 at z ≈ −0.75; the eye is at z ≈ +0.07 behind the
+ * withers). Walking first person is untouched: this constant only feeds the
+ * riding branch of the camera code.
+ */
+export const RIDER_SEATED_EYE_Y = HORSE_PROPORTIONS.saddleTopY + RIDER_SEATED_EYE_RISE;
+/**
+ * FP ride-cam horizontal offset from the horse's yaw axis (behind the torso
+ * center, above the seat center): the same seat anchor the rider socket and
+ * the mount pose use — the eye sits where the seated head actually is.
+ */
+export const RIDER_SEATED_EYE_Z = HORSE_PROPORTIONS.riderZ;
+
 /** The four forward gaits + reverse + standstill. */
 export type HorseGait = 'idle' | 'walk' | 'trot' | 'canter' | 'gallop';
 

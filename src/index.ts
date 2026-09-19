@@ -129,6 +129,9 @@ export {
   HORSE_TURN_RATES,
   HORSE_STAMINA,
   HORSE_AI,
+  RIDER_SEATED_EYE_RISE,
+  RIDER_SEATED_EYE_Y,
+  RIDER_SEATED_EYE_Z,
 } from './horse/HorseProportions.js';
 export type { HorseGait, GaitSpec } from './horse/HorseProportions.js';
 export { createHorseModel, HORSE_DETAIL_DISTANCE } from './horse/HorseModel.js';

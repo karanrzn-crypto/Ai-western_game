@@ -201,3 +201,139 @@ test('MERGE: metadata.noMerge opts a def out of the adapter pass', async () => {
   assert.ok(mesh, 'def materialised under its registry name');
   assert.equal(countMeshes(mesh!), 2, 'opted-out def keeps its separate meshes');
 });
+
+/* ---------- the REAL doors: one merge contract for the whole town ---------
+ *
+ * Regression for the frozen-bar-door bug: the saloon rebuild hung its leaves
+ * on hinge groups WITHOUT `userData.dynamic = true`, so the merge pass baked
+ * them into the def's static mesh — the hinges kept rotating (state, collider
+ * and harness yaw checks all "worked") but the VISIBLE leaf never moved and
+ * the player walked through the doorway of a visually closed door.
+ *
+ * The contract is SYSTEM-wide, so is the lock: every real door factory in the
+ * game must (a) flag every runtime pivot `userData.dynamic`, (b) still render
+ * ≥1 mesh per hinge AFTER the merge pass, and (c) move rendered geometry when
+ * its pose API opens it. A future door that forgets the flag fails here. */
+
+import { buildSwingingDoors, setSaloonDoorsOpen } from '../src/assets/saloon/SaloonProps.js';
+import { buildBankFrontDoor, setBankFrontDoorOpen } from '../src/assets/bank/BankExterior.js';
+import { buildGunShopFrontDoor, setGunShopFrontDoorOpen } from '../src/assets/gunshop/GunShopArchitecture.js';
+import {
+  buildJailCellDoor,
+  buildSheriffFrontDoor,
+  setJailCellDoorOpen,
+  setSheriffFrontDoorOpen,
+} from '../src/assets/sheriff/SheriffOfficeAssetFactory.js';
+import {
+  buildStableGate,
+  buildStableLeafDoor,
+  setStableGateOpen,
+  setStableLeafDoorOpen,
+} from '../src/assets/stable/StableDoors.js';
+import {
+  buildBankVaultDoor,
+  buildSecureGate,
+  setBankVaultDoorOpen,
+  setSecureGateOpen,
+} from '../src/assets/bank/BankInteriorAssetFactory.js';
+
+const HALF_DEG = (deg: number): number => (deg * Math.PI) / 180;
+
+interface RealDoorCase {
+  name: string;
+  build: () => THREE.Object3D;
+  hinges: string[];
+  open: (root: THREE.Object3D) => void;
+}
+
+const REAL_DOORS: RealDoorCase[] = [
+  {
+    name: 'saloon swinging doors',
+    build: () => buildSwingingDoors(),
+    hinges: ['swinging-door-left-hinge', 'swinging-door-right-hinge'],
+    open: (r) => setSaloonDoorsOpen(r, 1),
+  },
+  {
+    name: 'bank front door',
+    build: () => buildBankFrontDoor({ width: 1.7, height: 2.4, openDeg: HALF_DEG(100) }),
+    hinges: ['bank-front-door-hinge-w', 'bank-front-door-hinge-e'],
+    open: (r) => setBankFrontDoorOpen(r, 1),
+  },
+  {
+    name: 'gun shop front door',
+    build: () => buildGunShopFrontDoor({ width: 1.1, height: 2.2, hinge: 'left', openSign: 1, openDeg: HALF_DEG(100) }),
+    hinges: ['front-door-hinge'],
+    open: (r) => setGunShopFrontDoorOpen(r, 1),
+  },
+  {
+    name: 'sheriff front door',
+    build: () => buildSheriffFrontDoor(),
+    hinges: ['front-door-hinge'],
+    open: (r) => setSheriffFrontDoorOpen(r, 1),
+  },
+  {
+    name: 'sheriff jail cell door',
+    build: () => buildJailCellDoor(),
+    hinges: ['jail-cell-door-hinge'],
+    open: (r) => setJailCellDoorOpen(r, 1),
+  },
+  {
+    name: 'stable gate',
+    build: () => buildStableGate(),
+    hinges: ['gate-leaf-w-hinge', 'gate-leaf-e-hinge'],
+    open: (r) => setStableGateOpen(r, 1),
+  },
+  {
+    name: 'stable leaf door',
+    build: () => buildStableLeafDoor({ width: 1.2, height: 2.1, style: 'stall', hinge: 'left', openSign: 1, openDeg: HALF_DEG(95) }),
+    hinges: ['door-hinge'],
+    open: (r) => setStableLeafDoorOpen(r, 1),
+  },
+  {
+    name: 'bank vault door',
+    build: () => buildBankVaultDoor(),
+    hinges: ['bank-vault-door-hinge'],
+    open: (r) => setBankVaultDoorOpen(r, 1),
+  },
+  {
+    name: 'bank secure gate',
+    build: () => buildSecureGate(),
+    hinges: ['secure-gate-leaf-w', 'secure-gate-leaf-e'],
+    open: (r) => setSecureGateOpen(r, 1),
+  },
+];
+
+for (const door of REAL_DOORS) {
+  test(`MERGE: the ${door.name} swing VISIBLE leaves after the merge pass`, () => {
+    const root = door.build();
+
+    // (a) MergeStatic contract at build time: every runtime pivot is flagged.
+    for (const h of door.hinges) {
+      const hinge = root.getObjectByName(h);
+      assert.ok(hinge, `hinge "${h}" exists in the built root`);
+      assert.equal(hinge.userData.dynamic, true, `hinge "${h}" carries userData.dynamic`);
+    }
+
+    // (b) Exactly what ThreeRendererAdapter.onMeshResolved runs.
+    mergeStaticGeometry(root);
+
+    for (const h of door.hinges) {
+      const hinge = root.getObjectByName(h)!;
+      let meshes = 0;
+      hinge.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes += 1; });
+      assert.ok(meshes >= 1, `hinge "${h}" still renders its leaf (meshes=${meshes}) — never baked into a static bucket`);
+    }
+
+    // (c) The pose API moves RENDERED geometry, not empty groups: the root's
+    // world AABB must change once the door opens.
+    root.updateMatrixWorld(true);
+    const closed = new THREE.Box3().setFromObject(root);
+    door.open(root);
+    root.updateMatrixWorld(true);
+    const opened = new THREE.Box3().setFromObject(root);
+    const moved = (['x', 'y', 'z'] as const)
+      .map((a) => Math.max(Math.abs(opened.min[a] - closed.min[a]), Math.abs(opened.max[a] - closed.max[a])))
+      .reduce((m, d) => Math.max(m, d), 0);
+    assert.ok(moved > 0.01, `opening moves rendered geometry by ${moved.toFixed(3)}m (> 1cm)`);
+  });
+}

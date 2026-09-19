@@ -1,7 +1,7 @@
 /**
  * Horse system (Part 3) — model, animation, AI, movement, riding, persistence.
  */
-export { HORSE_PROPORTIONS, HORSE_GAITS, HORSE_REVERSE_SPEED, HORSE_BRAKE_DECELERATION, HORSE_NATURAL_DECELERATION, HORSE_TURN_RATES, HORSE_STAMINA, HORSE_AI } from './HorseProportions.js';
+export { HORSE_PROPORTIONS, HORSE_GAITS, HORSE_REVERSE_SPEED, HORSE_BRAKE_DECELERATION, HORSE_NATURAL_DECELERATION, HORSE_TURN_RATES, HORSE_STAMINA, HORSE_AI, RIDER_SEATED_EYE_RISE, RIDER_SEATED_EYE_Y, RIDER_SEATED_EYE_Z } from './HorseProportions.js';
 export type { HorseGait, GaitSpec } from './HorseProportions.js';
 export { createHorseModel, HORSE_DETAIL_DISTANCE } from './HorseModel.js';
 export type { HorseModel, HorseJoints, HorseJointName, HorseMaterials } from './HorseModel.js';

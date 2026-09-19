@@ -63,9 +63,15 @@ const ORBIT_HOUR_OFFSET = 6;
 // ALT_BLEND_START and rejoins the true orbit above ALT_BLEND_END; the C1
 // hermite join means the direction sweeps continuously — shadows persist
 // through sunset and fade with intensity instead of popping at 18:00.
+// § shadow revision: the floor is raised 0.16 → 0.32 (sun ≈ 19° at dusk/dawn
+// instead of ≈ 9°). At 9° every building threw a 4–6×-height shadow band that
+// swallowed the whole street and raked sun beams meters deep through door
+// gaps; at 19° the building shadows stay OUTSIDE, readable, and opposite the
+// light — the golden-hour look (keyframe colors/intensities) is unchanged.
+// ALT_BLEND_END must stay ABOVE the floor so the blend stays monotonic.
 const ALT_BLEND_START = -0.4;
-const ALT_BLEND_END = 0.22;
-const LIGHT_ALT_FLOOR = 0.16;
+const ALT_BLEND_END = 0.45;
+const LIGHT_ALT_FLOOR = 0.32;
 const TARGET_DISTANCE = 80;
 // C1 hermite: h(0)=0, h'(0)=0, h(1)=1, h'(1)=1.
 function slopeOneBlend(u: number): number { const u2 = u * u; return -u2 * u + 2 * u2; }

@@ -117,7 +117,10 @@ export function buildRevolver(scale = 1): THREE.Group {
   g.name = 'gunshop-revolver';
   const s = scale;
 
-  const frame = addBox(g, M.steel, 0.02 * s, 0.03 * s, 0.09 * s, 0.035 * s, 0.02 * s, 0, 'revolver-frame');
+  // Frame strap runs grip→barrel along X (the old 0.02×0.03×0.09 box was
+  // transposed: 9 cm ACROSS the gun made the whole revolver read as a flat
+  // slab and buried the cylinder when the gun was laid on its side).
+  const frame = addBox(g, M.steel, 0.1 * s, 0.03 * s, 0.02 * s, 0.03 * s, 0.02 * s, 0, 'revolver-frame');
   void frame;
   addCyl(g, M.steelDark, 0.009 * s, 0.01 * s, 0.13 * s, 12, 0.11 * s, 0.02 * s, 0, 'revolver-barrel').rotation.z = Math.PI / 2;
   addBox(g, M.steelDark, 0.006 * s, 0.008 * s, 0.004 * s, 0.175 * s, 0.032 * s, 0, 'revolver-front-sight');
@@ -370,10 +373,27 @@ export function buildGunshopCounter(length = 3.2): THREE.Group {
 }
 
 /**
- * GLASS-TOP DISPLAY CASE — rebuilt as a hollow tray (the user file's solid
- * box buried its own guns; see the module header). Local origin = base
- * bottom center; interior felt top at y = 0.036; guns seated ON the felt;
- * glass lid at y ∈ [0.19, 0.198] with ≥ 4 cm clearance over every gun.
+ * Seat an object so its MEASURED lowest point rests gap mm above a surface —
+ * no floating, no sinking, no per-pose hand-tuned offsets. The bbox is read
+ * from the detached object (rotation already applied), then only y moves.
+ */
+function seatOnSurface(obj: THREE.Object3D, surfaceY: number, gap = 0.0012): void {
+  const bb = new THREE.Box3().setFromObject(obj);
+  obj.position.y += surfaceY + gap - bb.min.y;
+}
+
+/**
+ * GLASS-TOP DISPLAY CASE — hollow tray (see the module header), now dressed
+ * like a REAL western gun-store counter case (§ presentation revision):
+ *   • every revolver LIES ON ITS SIDE, cylinder up — the way a gunshop lays
+ *     them out (rotation.x roll AFTER the yaw, Euler order YXZ), not balanced
+ *     on its grip-cap edge;
+ *   • a gentle FAN of yaws + staggered depths breaks the mechanical parallel
+ *     rows; the hero revolver rests on a felt riser with a brass label;
+ *   • every gun is seated by MEASURED bbox (seatOnSurface) — no float, no
+ *     sink, no glass contact; all guns keep ≥ 4 cm from the lid.
+ * Local origin = base bottom center; interior felt top at y = 0.036; glass
+ * lid at y ∈ [0.19, 0.198].
  */
 export function buildPistolDisplayCase(width = 1.6): THREE.Group {
   const M = createGunShopMaterials();
@@ -395,26 +415,40 @@ export function buildPistolDisplayCase(width = 1.6): THREE.Group {
   // glass lid sits ON the walls (back-to-back contact, never coplanar overlap)
   addBox(g, M.glass, width - 0.02, 0.008, d - 0.02, 0, baseH + wallH + 0.004, 0, 'gunshop-display-glass', false);
 
-  // Revolvers laid muzzle-north in the back row, derringer in the front row.
-  // Felt top 0.036 + the seated revolver's lowest point (grip cap with the
-  // ±0.12 presentation roll ≈ −0.057) seats the group at y = 0.093;
-  // hammer top ≈ 0.145 → 4.5 cm under the glass.
   const feltTop = baseH + 0.006;
-  const revolverY = feltTop + 0.057;
-  const revolverXs = [-0.55, -0.1, 0.35];
-  revolverXs.forEach((x, i) => {
-    const rev = buildRevolver(0.9);
+
+  // Felt riser + brass label under the hero revolver (classic gunstore display).
+  addBox(g, M.felt, 0.36, 0.022, 0.12, -0.06, feltTop + 0.011 + 0.0012, 0.075, 'gunshop-display-riser', false);
+  addBox(g, M.brass, 0.2, 0.005, 0.03, -0.06, feltTop + 0.0012 + 0.0025, 0.16, 'gunshop-display-riser-label', false);
+
+  // Three revolvers on their flanks in a fan. Yaw ≈ π/2 (muzzle north) with
+  // ±7–14° spread; depths staggered +0.03…+0.075 (the 27 cm guns + grip reach
+  // ±≈0.12 in z, so everything stays ≥ 7 cm off BOTH case walls).
+  const revPose = [
+    { x: -0.62, z: 0.05, yaw: Math.PI / 2 + 0.24 },
+    { x: -0.06, z: 0.075, yaw: Math.PI / 2 - 0.17 },
+    { x: 0.46, z: 0.03, yaw: Math.PI / 2 + 0.12 },
+  ] as const;
+  revPose.forEach((p, i) => {
+    const rev = buildRevolver(1);
     rev.name = `gunshop-display-revolver-${i + 1}`;
-    rev.position.set(x, revolverY, -0.03);
-    rev.rotation.y = Math.PI / 2;
-    rev.rotation.z = (i - 1) * 0.12;
+    rev.rotation.order = 'YXZ';
+    rev.rotation.y = p.yaw; // fan…
+    rev.rotation.x = Math.PI / 2; // …then roll onto its flank (cylinder up)
+    rev.position.set(p.x, i === 1 ? feltTop + 0.022 + 0.0012 : feltTop, p.z);
     g.add(rev);
+    seatOnSurface(rev, i === 1 ? feltTop + 0.022 : feltTop);
   });
+
+  // Derringer on its side, angled, in the front-right presentation spot.
   const der = buildDerringer(1.4);
   der.name = 'gunshop-display-derringer';
-  der.position.set(0.05, feltTop + 0.039, 0.12);
-  der.rotation.y = Math.PI / 2 + 0.3;
+  der.rotation.order = 'YXZ';
+  der.rotation.y = Math.PI / 2 + 0.35;
+  der.rotation.x = Math.PI / 2;
+  der.position.set(0.17, feltTop, 0.155);
   g.add(der);
+  seatOnSurface(der, feltTop);
 
   return g;
 }
@@ -572,7 +606,24 @@ export function buildCartridgeStand(rows = 3, cols = 6): THREE.Group {
   return g;
 }
 
-/** Wall shelving unit stacked with ammo boxes and one spare rifle. */
+/**
+ * One slot of the shelf-fill plan: x across the width, optional depth offset,
+ * optional stack onto the PREVIOUS slot, optional small yaw for a hand-stocked
+ * look. Deterministic table — no randomness (tests lock the arrangement).
+ */
+interface ShelfSlot { x: number; z?: number; stack?: boolean; yaw?: number }
+
+/**
+ * Wall shelving unit MOSTLY STOCKED with labeled ammo boxes (§ revision — the
+ * old 4-boxes-per-shelf row left 2/3 of every board bare and read artificial):
+ *   • varied arrangement — side by side, stacked pairs, depth offsets, small
+ *     yaws, uneven gaps (a hand-stocked shelf, not a spreadsheet);
+ *   • the TOP shelf stays deliberately half-empty (reach space + visible
+ *     wood — a few open cells read more real than 100% fill);
+ *   • every box sits ON a board or ON another box's lid (no float/sink),
+ *     inside the shelf sides, never through the back panel.
+ * The spare rifle still lies ALONG the shelf width on top (see header note).
+ */
 export function buildGunShelfUnit(): THREE.Group {
   const M = createGunShopMaterials();
   const g = new THREE.Group();
@@ -587,14 +638,35 @@ export function buildGunShelfUnit(): THREE.Group {
 
   const shelfYs = [0.05, 0.55, 1.05, 1.55];
   const calibers = ['.44-40', '.45 COLT', '.38 WCF', '12 GA'];
+  const fill: ShelfSlot[][] = [
+    // bottom shelf — the working stock: full row + one stacked pair
+    [{ x: -0.56 }, { x: -0.42, z: 0.045 }, { x: -0.3 }, { x: -0.16, yaw: 0.06 }, { x: -0.02 },
+     { x: 0.12, z: -0.05 }, { x: 0.12, stack: true }, { x: 0.3 }, { x: 0.44, z: 0.05 }, { x: 0.56 }],
+    // second shelf — mostly full, one reach gap kept on purpose
+    [{ x: -0.56 }, { x: -0.4 }, { x: -0.24, z: -0.045 }, { x: -0.08 }, { x: 0.1 },
+     { x: 0.1, stack: true }, { x: 0.26, yaw: -0.05 }, { x: 0.44 }, { x: 0.57, z: 0.04 }],
+    // third shelf — tight display row + one stack
+    [{ x: -0.56 }, { x: -0.45 }, { x: -0.34, z: 0.045 }, { x: -0.23 }, { x: -0.12, yaw: 0.05 },
+     { x: 0 }, { x: 0.12, z: -0.05 }, { x: 0.24 }, { x: 0.24, stack: true }, { x: 0.4, yaw: -0.04 }, { x: 0.54 }],
+    // top shelf — PARTIAL by design (open cells read real, § requirement)
+    [{ x: -0.5 }, { x: -0.3, z: 0.04 }, { x: -0.1 }, { x: 0.12, yaw: 0.06 }],
+  ];
+  const BOX_LID_TOP = 0.047;
   shelfYs.forEach((y, i) => {
+    const boardTop = y + 0.015;
     addBox(g, M.woodMed, width, 0.03, depth, 0, y, 0, `gunshop-shelf-board-${i + 1}`);
-    for (let b = 0; b < 4; b++) {
+    let prev: { x: number; z: number } | null = null;
+    fill[i].forEach((slot, b) => {
       const box = buildGunshopAmmoBox(calibers[i] ?? '.45 COLT');
       box.name = `gunshop-shelf-box-${i + 1}-${b + 1}`;
-      box.position.set(-width / 2 + 0.15 + b * 0.13, y + 0.015, 0);
+      const x = slot.stack && prev ? prev.x : slot.x;
+      const z = slot.stack && prev ? prev.z : (slot.z ?? 0);
+      const baseY = slot.stack && prev ? boardTop + BOX_LID_TOP + 0.0012 : boardTop;
+      box.position.set(x, baseY, z);
+      if (slot.yaw) box.rotation.y = slot.yaw;
       g.add(box);
-    }
+      prev = { x, z };
+    });
   });
 
   // spare rifle lies ALONG the shelf WIDTH (the user file's depthwise rifle
@@ -759,9 +831,123 @@ export function buildGunshopWorkbench(): THREE.Group {
   addBox(g, M.woodMed, w - 0.2, 0.03, d - 0.15, 0, 0.18, 0, 'gunshop-workbench-shelf');
   // back riser panel with three pegs (tools hang above the bench in use)
   addBox(g, M.woodMed, w, 0.55, 0.03, 0, topY + 0.05 + 0.275, -d / 2 + 0.02, 'gunshop-workbench-back-panel');
+  const pegZ = -d / 2 + 0.06;
   ([-0.5, 0, 0.5] as const).forEach((px, i) => {
-    addCyl(g, M.steelDark, 0.008, 0.008, 0.05, 8, px, topY + 0.38, -d / 2 + 0.06, `gunshop-workbench-peg-${i + 1}`, false).rotation.x = Math.PI / 2;
+    addCyl(g, M.steelDark, 0.008, 0.008, 0.05, 8, px, topY + 0.38, pegZ, `gunshop-workbench-peg-${i + 1}`, false).rotation.x = Math.PI / 2;
   });
+
+  /* ---- BENCH DRESSING (§ revision: the bare top read as storage furniture,
+   * not a gunsmith's bench). Every item is seated on the top surface by
+   * MEASURED bbox (no sink / no float), pairwise non-overlapping, real scale.
+   * The WEST end (x ≤ −0.3) stays clear for the vise def mounted there. ---- */
+  const top = topY + 0.05; // workable surface
+  const place = (obj: THREE.Object3D, x: number, z: number, yaw = 0): void => {
+    obj.position.x += x;
+    obj.position.z += z;
+    obj.rotation.y = yaw;
+    g.add(obj);
+    seatOnSurface(obj, top);
+  };
+
+  // A revolver laid out IN PARTS along the back edge — barrel, cylinder,
+  // grip frame — the unmistakable sign of work in progress.
+  const partBarrel = addCyl(g, M.steelDark, 0.009, 0.01, 0.13, 10, 0, 0.0095, 0, 'gunshop-bench-part-barrel', false);
+  partBarrel.rotation.z = Math.PI / 2;
+  const barrelG = new THREE.Group(); barrelG.name = 'gunshop-bench-part-barrel-group'; barrelG.add(partBarrel);
+  place(barrelG, -0.06, -0.24, 0.1);
+  const partCyl = addCyl(g, M.steel, 0.018, 0.018, 0.034, 12, 0, 0.017, 0, 'gunshop-bench-part-cylinder', false);
+  partCyl.rotation.x = Math.PI / 2;
+  const cylG = new THREE.Group(); cylG.name = 'gunshop-bench-part-cylinder-group'; cylG.add(partCyl);
+  place(cylG, 0.08, -0.235, 0);
+  const partGrip = addBox(g, M.grip, 0.022, 0.062, 0.03, 0, 0.031, 0, 'gunshop-bench-part-grip', false);
+  const gripG = new THREE.Group(); gripG.name = 'gunshop-bench-part-grip-group'; gripG.add(partGrip);
+  place(gripG, 0.15, -0.24, 0.35);
+
+  // Ball-peen hammer, lying across the back-right.
+  const hammer = new THREE.Group(); hammer.name = 'gunshop-bench-hammer';
+  const hHandle = addCyl(hammer, M.woodTrim, 0.008, 0.009, 0.14, 8, 0, 0.009, 0, 'gunshop-bench-hammer-handle', false);
+  hHandle.rotation.z = Math.PI / 2;
+  addBox(hammer, M.steel, 0.032, 0.032, 0.058, 0.062, 0.026, 0, 'gunshop-bench-hammer-head', false);
+  place(hammer, 0.36, -0.17, 0.15);
+
+  // Two turn-screws (period screwdrivers), shaft + wood handle, parallel-ish.
+  for (const [i, sd] of [[0.3, 0.06, -0.1], [0.35, 0.19, 0.14]].entries()) {
+    const driver = new THREE.Group(); driver.name = `gunshop-bench-screwdriver-${i + 1}`;
+    const shaft = addCyl(driver, M.steel, 0.003, 0.003, 0.075, 8, 0, 0.004, 0, `gunshop-bench-screwdriver-${i + 1}-shaft`, false);
+    shaft.rotation.z = Math.PI / 2;
+    const handle = addCyl(driver, M.woodTrim, 0.0095, 0.011, 0.055, 10, -0.063, 0.011, 0, `gunshop-bench-screwdriver-${i + 1}-handle`, false);
+    handle.rotation.z = Math.PI / 2;
+    place(driver, sd[0], sd[1], sd[2]);
+  }
+
+  // Flat file, mid right.
+  const file = new THREE.Group(); file.name = 'gunshop-bench-file';
+  addBox(file, M.steel, 0.115, 0.007, 0.018, 0.02, 0.0045, 0, 'gunshop-bench-file-blade', false);
+  addBox(file, M.woodTrim, 0.05, 0.016, 0.02, -0.052, 0.009, 0, 'gunshop-bench-file-handle', false);
+  place(file, 0.5, 0.14, 0.08);
+
+  // Oil bottle (dark glass, brass neck), standing near the back edge.
+  const oil = new THREE.Group(); oil.name = 'gunshop-bench-oil-bottle';
+  addCyl(oil, M.glassDark, 0.018, 0.02, 0.075, 10, 0, 0.0375, 0, 'gunshop-bench-oil-body', false);
+  addCyl(oil, M.brassDark, 0.008, 0.008, 0.02, 8, 0, 0.085, 0, 'gunshop-bench-oil-neck', false);
+  addCyl(oil, M.brass, 0.0095, 0.0095, 0.008, 8, 0, 0.099, 0, 'gunshop-bench-oil-cap', false);
+  place(oil, -0.05, 0.19, 0);
+
+  // Tin parts tray with small pins/screws inside.
+  const tray = new THREE.Group(); tray.name = 'gunshop-bench-parts-tray';
+  addBox(tray, M.steel, 0.13, 0.006, 0.09, 0, 0.003, 0, 'gunshop-bench-tray-base', false);
+  addBox(tray, M.steel, 0.13, 0.02, 0.006, 0, 0.013, 0.042, 'gunshop-bench-tray-rim-n', false);
+  addBox(tray, M.steel, 0.13, 0.02, 0.006, 0, 0.013, -0.042, 'gunshop-bench-tray-rim-s', false);
+  addBox(tray, M.steel, 0.006, 0.02, 0.078, 0.062, 0.013, 0, 'gunshop-bench-tray-rim-e', false);
+  addBox(tray, M.steel, 0.006, 0.02, 0.078, -0.062, 0.013, 0, 'gunshop-bench-tray-rim-w', false);
+  [[-0.03, 0.015], [0.01, -0.018], [0.035, 0.02], [-0.015, -0.03]].forEach(([px, pz], k) => {
+    addCyl(tray, M.brass, 0.0035, 0.0035, 0.012, 6, px, 0.012, pz, `gunshop-bench-tray-pin-${k + 1}`, false);
+  });
+  place(tray, 0.14, 0.16, -0.06);
+
+  // Three loose cartridges by the tray.
+  [[0.02, 0.04, 0.3], [0.055, 0.075, -0.2], [-0.005, 0.09, 0.1]].forEach(([cx, cz, cy], k) => {
+    const cart = addCyl(g, M.brass, 0.0055, 0.0055, 0.032, 8, 0, 0.0055, 0, `gunshop-bench-cartridge-${k + 1}`, false);
+    cart.rotation.z = Math.PI / 2;
+    const cartG = new THREE.Group(); cartG.name = `gunshop-bench-cartridge-${k + 1}-group`; cartG.add(cart);
+    place(cartG, cx, cz, cy);
+  });
+
+  // Cleaning rag, crumpled flat, west of the tray.
+  const rag = addBox(g, M.leather, 0.16, 0.012, 0.12, 0, 0.006, 0, 'gunshop-bench-rag', false);
+  const ragG = new THREE.Group(); ragG.name = 'gunshop-bench-rag-group'; ragG.add(rag);
+  place(ragG, -0.2, 0.12, 0.35);
+
+  // Wrench hangs on the CENTER peg; wire coil on the EAST peg.
+  const wrench = new THREE.Group(); wrench.name = 'gunshop-bench-hanging-wrench';
+  const wRing = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.003, 6, 12), M.steel);
+  wRing.name = 'gunshop-bench-wrench-ring';
+  wRing.castShadow = false; wRing.receiveShadow = true;
+  wRing.position.set(0, 0, 0);
+  wrench.add(wRing);
+  addBox(wrench, M.steel, 0.012, 0.13, 0.005, 0, -0.075, 0, 'gunshop-bench-wrench-shaft', false);
+  addBox(wrench, M.steel, 0.03, 0.024, 0.008, 0, -0.15, 0, 'gunshop-bench-wrench-jaw', false);
+  wrench.position.set(0, topY + 0.38, pegZ - 0.008);
+  g.add(wrench);
+  const coil = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.006, 6, 14), M.steelDark);
+  coil.name = 'gunshop-bench-wire-coil';
+  coil.castShadow = false; coil.receiveShadow = true;
+  coil.position.set(0.5, topY + 0.375, pegZ - 0.01);
+  g.add(coil);
+
+  // Wooden toolbox on the lower shelf.
+  const box2 = new THREE.Group(); box2.name = 'gunshop-bench-toolbox';
+  addBox(box2, M.woodMed, 0.32, 0.11, 0.18, 0, 0.055, 0, 'gunshop-bench-toolbox-body', false);
+  addBox(box2, M.woodDark, 0.34, 0.02, 0.2, 0, 0.115, 0, 'gunshop-bench-toolbox-lid', false);
+  const tbHandle = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.005, 6, 12, Math.PI), M.brassDark);
+  tbHandle.name = 'gunshop-bench-toolbox-handle';
+  tbHandle.castShadow = false; tbHandle.receiveShadow = true;
+  tbHandle.position.set(0, 0.125, 0);
+  tbHandle.rotation.y = Math.PI / 2;
+  box2.add(tbHandle);
+  box2.position.set(-0.35, 0, 0);
+  g.add(box2);
+  seatOnSurface(box2, 0.195); // lower shelf board top
 
   return g;
 }
@@ -835,6 +1021,93 @@ export function buildGunshopLantern(lit: boolean): THREE.Group {
     light.castShadow = false;
     g.add(light);
   }
+
+  return g;
+}
+
+/* ========================================================================== */
+/* Decorative WESTERN TRADE SIGNS (§ facade revision — three small period     */
+/* signs, each its own logical object, none touching windows/casing/sign)     */
+/* ========================================================================== */
+
+/**
+ * Flat painted board mounted on the FALSE-FRONT parapet face. Origin = board
+ * center; the back face sits 4 mm proud of its mount plane (the def positions
+ * it), four iron bolts bury into the parapet — no coplanar faces anywhere.
+ * Text plate + wood frame strips, western serif, street-readable size.
+ */
+export function buildGunshopParapetSign(): THREE.Group {
+  const M = createGunShopMaterials();
+  const g = new THREE.Group();
+  g.name = 'gunshop-parapet-sign';
+
+  const tex = signTexture({ text: 'GUNS & AMMUNITION', w: 640, h: 180, border: true });
+  const boardMat = tex
+    ? new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, roughness: 1, metalness: 0 })
+    : M.parchment;
+  addBox(g, boardMat, 1.35, 0.38, 0.025, 0, 0, 0.0125, 'gunshop-parapet-sign-board');
+  addBox(g, M.woodDark, 1.39, 0.05, 0.032, 0, 0.215, 0.0125, 'gunshop-parapet-sign-frame-top');
+  addBox(g, M.woodDark, 1.39, 0.05, 0.032, 0, -0.215, 0.0125, 'gunshop-parapet-sign-frame-bottom');
+  // corner bolts: pass through the board, heads 2 mm proud of the FRONT
+  // face, shanks buried into the parapet behind (board mounts 5 mm off the
+  // face on the bolt heads — no coplanar pair, no float).
+  ([-0.6, 0.6] as const).forEach((bx, i) => {
+    addCyl(g, M.steelDark, 0.008, 0.008, 0.05, 8, bx, 0.13, 0.007, `gunshop-parapet-sign-bolt-${i === 0 ? 'w' : 'e'}-hi`, false).rotation.x = Math.PI / 2;
+    addCyl(g, M.steelDark, 0.008, 0.008, 0.05, 8, bx, -0.13, 0.007, `gunshop-parapet-sign-bolt-${i === 0 ? 'w' : 'e'}-lo`, false).rotation.x = Math.PI / 2;
+  });
+
+  return g;
+}
+
+/**
+ * Double-sided hanging SHINGLE under the porch roof, west of the main
+ * GUNSMITH sign. Origin = the mount point at the porch-roof underside; two
+ * short chains carry a framed board whose two texture plates ride the ±z
+ * faces (backs ON the board core — no coplanar exposure).
+ */
+export function buildGunshopPorchShingle(): THREE.Group {
+  const M = createGunShopMaterials();
+  const g = new THREE.Group();
+  g.name = 'gunshop-porch-shingle';
+
+  const chainLen = 0.3;
+  ([-0.3, 0.3] as const).forEach((x, i) => {
+    addCyl(g, M.brassDark, 0.005, 0.005, chainLen, 6, x, -chainLen / 2, 0, `gunshop-shingle-chain-${i === 0 ? 'w' : 'e'}`, false);
+  });
+
+  const tex = signTexture({ text: 'AMMUNITION', sub: 'LOADED TO ORDER', w: 460, h: 160, border: true });
+  const boardMat = tex
+    ? new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, roughness: 1, metalness: 0 })
+    : M.parchment;
+  const cy = -chainLen - 0.13;
+  addBox(g, M.woodDark, 0.88, 0.28, 0.03, 0, cy, 0, 'gunshop-shingle-board');
+  addBox(g, boardMat, 0.82, 0.22, 0.004, 0, cy, 0.017, 'gunshop-shingle-face-south');
+  addBox(g, boardMat, 0.82, 0.22, 0.004, 0, cy, -0.017, 'gunshop-shingle-face-north');
+
+  return g;
+}
+
+/**
+ * Small vertical REPAIRS board flanking the doorway (east of the casing, west
+ * of the first window — the classic barber-pole spot). Origin = board center;
+ * the back face mounts 4 mm proud of the wall face, two bolts bury behind.
+ */
+export function buildGunshopRepairsBoard(): THREE.Group {
+  const M = createGunShopMaterials();
+  const g = new THREE.Group();
+  g.name = 'gunshop-repairs-board';
+
+  const tex = signTexture({ text: 'REPAIRS', sub: 'GUNSMITH', w: 256, h: 320, border: true });
+  const boardMat = tex
+    ? new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, roughness: 1, metalness: 0 })
+    : M.parchment;
+  addBox(g, boardMat, 0.48, 0.6, 0.02, 0, 0, 0.015, 'gunshop-repairs-board-board');
+  addBox(g, M.woodDark, 0.52, 0.045, 0.026, 0, 0.3225, 0.015, 'gunshop-repairs-board-cap');
+  addBox(g, M.woodDark, 0.52, 0.045, 0.026, 0, -0.3225, 0.015, 'gunshop-repairs-board-base');
+  ([-0.16, 0.16] as const).forEach((bx, i) => {
+    addCyl(g, M.steelDark, 0.007, 0.007, 0.044, 8, bx, 0.22, 0.002, `gunshop-repairs-board-bolt-${i === 0 ? 'w' : 'e'}-hi`, false).rotation.x = Math.PI / 2;
+    addCyl(g, M.steelDark, 0.007, 0.007, 0.044, 8, bx, -0.22, 0.002, `gunshop-repairs-board-bolt-${i === 0 ? 'w' : 'e'}-lo`, false).rotation.x = Math.PI / 2;
+  });
 
   return g;
 }

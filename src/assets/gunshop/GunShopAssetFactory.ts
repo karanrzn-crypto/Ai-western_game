@@ -48,6 +48,9 @@ import {
   buildGunshopAmmoCrate,
   buildPowderKeg,
   buildGunsmithSign,
+  buildGunshopParapetSign,
+  buildGunshopPorchShingle,
+  buildGunshopRepairsBoard,
   buildHolsterDisplay,
   buildGunshopWorkbench,
   buildGunshopVise,
@@ -107,6 +110,25 @@ export class GunShopSignFactory implements IAssetFactory {
   }
 }
 
+/** § facade revision: the three decorative western trade signs. */
+export class GunShopParapetSignFactory implements IAssetFactory {
+  create(_definition: ObjectDefinition): THREE.Object3D {
+    return buildGunshopParapetSign();
+  }
+}
+
+export class GunShopPorchShingleFactory implements IAssetFactory {
+  create(_definition: ObjectDefinition): THREE.Object3D {
+    return buildGunshopPorchShingle();
+  }
+}
+
+export class GunShopRepairsBoardFactory implements IAssetFactory {
+  create(_definition: ObjectDefinition): THREE.Object3D {
+    return buildGunshopRepairsBoard();
+  }
+}
+
 /** Interior lantern — metadata `lit` gates the ONE real PointLight. */
 export class GunShopLanternFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
@@ -153,6 +175,9 @@ export const GUNSHOP_ASSET_TYPES = Object.freeze([
   'gunshop-front-door',
   'gunshop-window',
   'gunshop-sign',
+  'gunshop-parapet-sign',
+  'gunshop-porch-shingle',
+  'gunshop-repairs-board',
   'gunshop-lantern',
   'gunshop-counter',
   'gunshop-pistol-display-case',
@@ -189,6 +214,9 @@ export function registerAllGunShopFactories(registry: AssetRegistry): void {
   registry.register('gunshop-front-door', new GunShopFrontDoorFactory(), 'Gun Shop Front Door');
   registry.register('gunshop-window', new GunShopWindowFactory(), 'Gun Shop Window');
   registry.register('gunshop-sign', new GunShopSignFactory(), 'Gun Shop Sign');
+  registry.register('gunshop-parapet-sign', new GunShopParapetSignFactory(), 'Gun Shop Parapet Sign');
+  registry.register('gunshop-porch-shingle', new GunShopPorchShingleFactory(), 'Gun Shop Porch Shingle');
+  registry.register('gunshop-repairs-board', new GunShopRepairsBoardFactory(), 'Gun Shop Repairs Board');
   registry.register('gunshop-lantern', new GunShopLanternFactory(), 'Gun Shop Lantern');
   registry.register('gunshop-counter', new BuilderFactory(() => buildGunshopCounter()), 'Gun Shop Counter');
   registry.register('gunshop-pistol-display-case', new BuilderFactory(() => buildPistolDisplayCase()), 'Gun Shop Pistol Display Case');

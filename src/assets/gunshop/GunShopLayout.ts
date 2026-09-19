@@ -120,6 +120,9 @@ export const GUNSHOP_OBJECT_IDS = Object.freeze({
   powderKeg: gunshopUuid('20'),
   ammoCrate1: gunshopUuid('21'),
   ammoCrate2: gunshopUuid('22'),
+  parapetSign: gunshopUuid('23'),
+  porchShingle: gunshopUuid('24'),
+  repairsBoard: gunshopUuid('25'),
 });
 
 /** The one openable door — the map + tests read this table. */
@@ -264,6 +267,29 @@ export function buildGunShopMapObjects(originX: number, originZ: number): Object
   push(GUNSHOP_OBJECT_IDS.sign, 'gunshop-sign', 'مغازه اسلحه‌فروشی — تابلوی GUNSMITH', at(0, L.porchRoofTopY + 0.08, L.depth / 2 + L.porchDepth / 2 + 0.65), {
     collider: false,
   });
+  // § facade revision: three small period trade signs, each its own logical
+  // object — parapet board (west of center, on the false front), double-sided
+  // hanging shingle (west porch, between the windows), repairs board (east of
+  // the door casing). All mount proud with buried bolts — no coplanar faces,
+  // no window/casing/sign overlap (bands asserted in tests).
+  const wallFaceZ = L.depth / 2 + L.wallThickness / 2;
+  // Parapet front face sits at wallFaceZ + 0.09; the board's BACK face mounts
+  // 5 mm proud of it (def z = face + 0.005; the board spans z ∈ [0, 0.025]).
+  push(GUNSHOP_OBJECT_IDS.parapetSign, 'gunshop-parapet-sign', 'مغازه اسلحه‌فروشی — تابلوی GUNS & AMMUNITION', {
+    position: { x: originX - 1.5, y: L.height + 0.62, z: originZ + wallFaceZ + 0.095 },
+    rotation: identity(),
+    scale: unitScale(),
+  }, { collider: false });
+  push(GUNSHOP_OBJECT_IDS.porchShingle, 'gunshop-porch-shingle', 'مغازه اسلحه‌فروشی — تابلوی آویز AMMUNITION', {
+    position: { x: originX - 2.6, y: L.porchRoofTopY - 0.1, z: originZ + L.depth / 2 + L.porchDepth / 2 + 0.3 },
+    rotation: identity(),
+    scale: unitScale(),
+  }, { collider: false });
+  push(GUNSHOP_OBJECT_IDS.repairsBoard, 'gunshop-repairs-board', 'مغازه اسلحه‌فروشی — تابلوی REPAIRS', {
+    position: { x: originX + 0.925, y: 1.75, z: originZ + wallFaceZ + 0.005 },
+    rotation: identity(),
+    scale: unitScale(),
+  }, { collider: false });
   const winDefs: Array<{ id: string; side: -1 | 1; off: number; label: string }> = [
     { id: GUNSHOP_OBJECT_IDS.windowWest1, side: -1, off: L.window.centersFromDoor[0], label: 'غربی ۱' },
     { id: GUNSHOP_OBJECT_IDS.windowWest2, side: -1, off: L.window.centersFromDoor[1], label: 'غربی ۲' },

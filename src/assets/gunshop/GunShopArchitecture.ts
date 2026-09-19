@@ -218,14 +218,18 @@ export function frontDoorMetaOf(definition: ObjectDefinition): GunShopFrontDoorM
  * actual hinge axis — 4 cm off the WEST jamb — and the leaf meshes are its
  * children, so opening the door is a pure rotation of that pivot.
  *
- * Geometry discipline (dw 1.1, dh 2.3 from the floor top):
- *   • leaf 1.01 × 2.25 × 0.06 — hinge edge 4 cm off the west jamb, latch
- *     edge 5 cm off the east jamb, bottom 2 cm over the threshold, top 1 cm
- *     under the casing header — the 100° INWARD sweep stays inside the
- *     doorway's clear zone (the layout keeps x ∈ [−0.6, 0.6], z ∈ [2.4, 3.5]
- *     free, so the swept hinge disc and tip graze nothing).
+ * Geometry discipline (dw 1.1, dh 2.3 from the floor top) — SEAL-TIGHT fit
+ * (§ shadow revision: at dawn/dusk the old 3 cm top / 5 cm latch gaps let
+ * low-sun rays stripe the interior floor through the CLOSED door):
+ *   • leaf 1.045 × 2.28 × 0.06 — hinge edge 4 cm off the west jamb (the
+ *     swing pivot), latch edge 1.5 cm off the east jamb, top 8 mm under the
+ *     casing header, bottom 1.2 cm over the threshold — the light line
+ *     through the remaining hairline gaps stays ≤ 1.5 cm at any sun angle;
+ *   • the 100° INWARD sweep stays inside the doorway's clear zone (the
+ *     layout keeps the swept path free, so the swept hinge disc and tip
+ *     graze nothing);
  *   • the glass pane rides 3 cm PROUD of the leaf's street face inside a
- *     trim frame (the sheriff front door's anti-coplanar fix).
+ *     trim frame (the sheriff front door's anti-coplanar fix);
  *   • straps + knob dress the street face; the thumb latch the interior;
  *     everything mounted is proud/back-to-back, never flush-coplanar.
  */
@@ -237,10 +241,10 @@ export function buildGunShopFrontDoor(meta: GunShopFrontDoorMeta): THREE.Group {
   const dw = meta.width;
   const dh = meta.height;
   const hingeOffX = 0.04;
-  const leafW = dw - hingeOffX - 0.05;
-  const leafH = dh - 0.05;
+  const leafW = dw - hingeOffX - 0.015;
+  const leafH = dh - 0.02;
   const leafT = 0.06;
-  const bottomLift = 0.02;
+  const bottomLift = 0.012;
   const hingeX = (meta.hinge === 'left' ? -1 : 1) * (dw / 2 - hingeOffX);
   const dir = meta.hinge === 'left' ? 1 : -1; // leaf extends this way from the hinge
 

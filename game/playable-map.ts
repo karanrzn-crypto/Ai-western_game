@@ -153,8 +153,13 @@ sun.shadow.camera.top = 42.5;
 sun.shadow.camera.bottom = -42.5;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 200;
-sun.shadow.bias = -0.0002;
-sun.shadow.normalBias = 0.03;
+sun.shadow.bias = -0.00035;
+// § shadow revision: normalBias 0.03 → 0.06. At the deliberate 9 texels/m,
+// interior surfaces sample the roof's occluders through the same map — the
+// old 3 cm normalBias left self-shadow acne bands on interior walls/floors.
+// 6 cm ≈ 0.55 texel kills the acne inside without visibly detaching the
+// exterior contact shadows (verified against the horse/lamp probes).
+sun.shadow.normalBias = 0.06;
 scene.add(sun);
 
 const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);

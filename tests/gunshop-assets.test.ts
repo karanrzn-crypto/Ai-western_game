@@ -345,7 +345,9 @@ test('GUNSHOP FRONT DOOR: real hinge pivot; closed fills the gap; open swings 10
   assert.ok(door.getObjectByName('gunshop-front-door-knuckle-low'), 'knuckles mount on the STATIC root');
 
   const L = GUNSHOP_LAYOUT;
-  // CLOSED: leaf fills the doorway (hinge seat + latch clearance inside the jambs)
+  // CLOSED: leaf fills the doorway (hinge seat + SEAL-TIGHT latch clearance —
+  // § shadow revision: the old 5 cm latch / 3 cm top gaps let low sun stripe
+  // the interior floor through the closed door; the fit is now hairline).
   setGunShopFrontDoorOpen(door, 0);
   assert.equal(hinge.rotation.y, 0, 'closed pose is exactly zero');
   door.updateWorldMatrix(true, true);
@@ -353,13 +355,19 @@ test('GUNSHOP FRONT DOOR: real hinge pivot; closed fills the gap; open swings 10
   const leafBox = box3of(leaf);
   const jambWest = GUNSHOP_SITE.x - L.doorWidth / 2;
   const jambEast = GUNSHOP_SITE.x + L.doorWidth / 2;
-  assert.ok(leafBox.min.x >= jambWest + 0.025 && leafBox.max.x <= jambEast - 0.025,
+  assert.ok(leafBox.min.x >= jambWest + 0.025 && leafBox.max.x <= jambEast - 0.008,
     `closed leaf must fill the gap with clearances (x ${leafBox.min.x.toFixed(3)}..${leafBox.max.x.toFixed(3)})`);
   assert.ok(Math.abs(leafBox.min.z - (GUNSHOP_SITE.z + L.depth / 2 - 0.05)) < 0.06,
     'closed leaf sits in the wall band');
-  // leaf bottom 2 cm over the threshold top, top 1 cm under the casing header
+  // leaf bottom 1.2 cm over the threshold, top 8 mm under the casing header
   const leafH = leafBox.max.y - leafBox.min.y;
-  assert.ok(Math.abs(leafH - (L.doorHeight - 0.05)) < 0.02, `leaf height ${leafH.toFixed(3)}`);
+  assert.ok(Math.abs(leafH - (L.doorHeight - 0.02)) < 0.015, `leaf height ${leafH.toFixed(3)}`);
+  // § DOOR SEAL: the daylight gaps are hairline (no sun stripe through the
+  // closed door at any altitude) — latch ≤ 1.6 cm, top ≤ 1.2 cm.
+  const latchGap = jambEast - leafBox.max.x;
+  assert.ok(latchGap <= 0.016 && latchGap >= 0.008, `latch gap ${latchGap.toFixed(4)} must be hairline`);
+  const doorwayTop = L.floorTop + L.doorHeight;
+  assert.ok(doorwayTop - leafBox.max.y <= 0.012, `top gap ${(doorwayTop - leafBox.max.y).toFixed(4)} must be hairline`);
 
   // OPEN: 100° inward (rotation +y → tip toward −Z). The hinge END stays in
   // the wall band (the pivot lives there); the TIP must reach deep inside.
@@ -435,6 +443,7 @@ test('GUNSHOP COLLIDER POLICY: walls/floor/solids colliders; decor not', () => {
 
   for (const id of [
     GUNSHOP_OBJECT_IDS.building, GUNSHOP_OBJECT_IDS.sign,
+    GUNSHOP_OBJECT_IDS.parapetSign, GUNSHOP_OBJECT_IDS.porchShingle, GUNSHOP_OBJECT_IDS.repairsBoard,
     GUNSHOP_OBJECT_IDS.windowWest1, GUNSHOP_OBJECT_IDS.windowEast2,
     GUNSHOP_OBJECT_IDS.lanternSales, GUNSHOP_OBJECT_IDS.lanternWorkshop,
     GUNSHOP_OBJECT_IDS.displayCase, GUNSHOP_OBJECT_IDS.cashRegister, GUNSHOP_OBJECT_IDS.brassScale,
@@ -628,6 +637,31 @@ test('GUNSHOP PROPS: display case guns sit on the felt under the glass, inside t
       assert.ok(!overlap, `${guns[i].name} and ${guns[j].name} must not interpenetrate`);
     }
   }
+
+  // § presentation revision: the revolvers LIE ON THEIR SIDES in a gentle
+  // fan (no mechanical parallel row), the hero gun rests on a felt riser.
+  const riser = caseRoot.getObjectByName('gunshop-display-riser');
+  assert.ok(riser, 'the hero revolver displays on a felt riser');
+  const riserBox = box3of(riser!);
+  const revs = caseRoot.children.filter((c) => c.name.startsWith('gunshop-display-revolver-')) as THREE.Group[];
+  assert.equal(revs.length, 3, 'three revolvers');
+  const yaws = revs.map((r) => r.rotation.y);
+  assert.ok(Math.abs(yaws[0] - yaws[1]) > 0.05 && Math.abs(yaws[1] - yaws[2]) > 0.05,
+    'the revolvers are fanned (distinct presentation yaws), not a parallel row');
+  for (const rev of revs) {
+    assert.equal(rev.rotation.order, 'YXZ', 'roll applies after the yaw (lying on its flank)');
+    assert.ok(Math.abs(rev.rotation.x - Math.PI / 2) < 1e-9, 'each revolver lies on its side (90° roll)');
+    const rb = box3of(rev);
+    assert.ok(rb.max.y - rb.min.y < 0.07, `lying revolver reads flat, not edge-balanced (${(rb.max.y - rb.min.y).toFixed(3)})`);
+  }
+  const hero = box3of(revs[1]);
+  assert.ok(Math.abs(hero.min.y - riserBox.max.y) < 0.004, 'the hero revolver sits ON the riser');
+  // real risers are shorter than the gun — the body rests on it, the muzzle
+  // and grip may overhang; require a genuine horizontal overlap, not containment
+  assert.ok(hero.min.x < riserBox.max.x && hero.max.x > riserBox.min.x
+    && hero.min.z < riserBox.max.z && hero.max.z > riserBox.min.z,
+    'the hero revolver rests on the riser footprint (overlapping, not beside it)');
+  assert.ok(caseRoot.getObjectByName('gunshop-display-riser-label'), 'brass label plate present');
 });
 
 test('GUNSHOP PROPS: nothing under the floor, through the roof, or outside the building', async () => {
@@ -693,8 +727,175 @@ test('GUNSHOP WORKSHOP: the back area reads as a workshop, not a warehouse', asy
 });
 
 /* -------------------------------------------------------------------------- */
-/* 10. Light budget                                                           */
+/* 9b. § revisions — facade signs, workbench dressing, ammo-shelf stocking     */
 /* -------------------------------------------------------------------------- */
+
+test('GUNSHOP FACADE SIGNS: three period signs, mounted proud, in their bands, overlapping nothing', async () => {
+  const { roots } = await buildWorld();
+  const L = GUNSHOP_LAYOUT;
+  const wallFaceZ = GUNSHOP_SITE.z + L.depth / 2 + L.wallThickness / 2;
+
+  const parapet = roots.get(GUNSHOP_OBJECT_IDS.parapetSign)!;
+  const shingle = roots.get(GUNSHOP_OBJECT_IDS.porchShingle)!;
+  const repairs = roots.get(GUNSHOP_OBJECT_IDS.repairsBoard)!;
+
+  // PARAPET BOARD — on the false front, west of center, 5 mm off its face.
+  const parapetFaceZ = wallFaceZ + 0.09; // false-front front face
+  const pb = box3of(parapet.getObjectByName('gunshop-parapet-sign-board')!);
+  assert.ok(Math.abs(pb.min.z - (parapetFaceZ + 0.005)) < 0.003,
+    `parapet board mounts 5 mm off the false front (min z ${pb.min.z.toFixed(4)})`);
+  assert.ok(pb.min.y > L.height + 0.2 && pb.max.y < L.falseFrontTop - 0.2,
+    'parapet board lives inside the false-front band');
+  assert.ok(pb.max.x < GUNSHOP_SITE.x - 0.4 && pb.min.x > GUNSHOP_SITE.x - L.width / 2,
+    'parapet board sits west of center, inside the facade');
+  assert.ok(parapet.getObjectByName('gunshop-parapet-sign-frame-top')
+    && parapet.getObjectByName('gunshop-parapet-sign-bolt-w-hi'), 'parapet sign is framed and bolted');
+
+  // PORCH SHINGLE — hangs from the porch-roof underside, above head height.
+  const sb = box3of(shingle.getObjectByName('gunshop-shingle-board')!);
+  assert.ok(sb.max.y < L.porchRoofTopY - 0.12 + 0.004, 'shingle hangs below the porch-roof underside');
+  assert.ok(sb.min.y > 1.95, `shingle bottom stays above head height (${sb.min.y.toFixed(2)})`);
+  const chainW = box3of(shingle.getObjectByName('gunshop-shingle-chain-w')!);
+  assert.ok(chainW.max.y > L.porchRoofTopY - 0.13, 'the chain tops bury into the porch roof (no floating sign)');
+  assert.ok(sb.min.x > GUNSHOP_SITE.x - 3.1 && sb.max.x < GUNSHOP_SITE.x - 2.1,
+    'shingle hangs between the west windows, clear of the porch posts');
+  assert.ok(shingle.getObjectByName('gunshop-shingle-face-south')
+    && shingle.getObjectByName('gunshop-shingle-face-north'), 'shingle is double-sided');
+
+  // REPAIRS BOARD — between the door casing and the first east window.
+  const rb = box3of(repairs.getObjectByName('gunshop-repairs-board-board')!);
+  const casingOuter = GUNSHOP_SITE.x + L.doorWidth / 2 + 0.07; // casing strip outer edge
+  const winFrameWest = GUNSHOP_SITE.x + L.window.centersFromDoor[0] - (L.window.width / 2 + 0.12);
+  assert.ok(rb.min.x > casingOuter + 0.01, `repairs board clear of the door casing (${rb.min.x.toFixed(3)} > ${casingOuter.toFixed(3)})`);
+  assert.ok(rb.max.x < winFrameWest - 0.01, `repairs board clear of the window frame (${rb.max.x.toFixed(3)} < ${winFrameWest.toFixed(3)})`);
+  assert.ok(Math.abs(rb.min.z - (wallFaceZ + 0.01)) < 0.003, 'repairs board mounts just off the wall face (bolt standoff)');
+
+  // The three new signs overlap NOTHING on the facade (3D bbox test against
+  // the main sign and all four window assemblies). The shell def is checked
+  // through its false-front CAP (the parapet board legitimately sits within
+  // the false front's own band — the mount check above covers that seam).
+  const building = roots.get(GUNSHOP_OBJECT_IDS.building)!;
+  const cap = building.getObjectByName('gunshop-false-front-cap')!;
+  const facadeNeighbours = [
+    roots.get(GUNSHOP_OBJECT_IDS.sign)!, roots.get(GUNSHOP_OBJECT_IDS.windowWest1)!,
+    roots.get(GUNSHOP_OBJECT_IDS.windowWest2)!, roots.get(GUNSHOP_OBJECT_IDS.windowEast1)!,
+    roots.get(GUNSHOP_OBJECT_IDS.windowEast2)!, cap,
+  ];
+  const capBox = box3of(cap);
+  const pRoot = box3of(parapet);
+  assert.ok(pRoot.max.y < capBox.min.y - 0.01, 'parapet sign stays below the cap trim');
+  for (const signRoot of [parapet, shingle, repairs]) {
+    const sbb = box3of(signRoot);
+    for (const n of facadeNeighbours) {
+      if (n === signRoot) continue;
+      const nb = box3of(n);
+      const overlap = sbb.min.x < nb.max.x - 0.005 && sbb.max.x > nb.min.x + 0.005
+        && sbb.min.y < nb.max.y - 0.005 && sbb.max.y > nb.min.y + 0.005
+        && sbb.min.z < nb.max.z - 0.005 && sbb.max.z > nb.min.z + 0.005;
+      assert.ok(!overlap, `${signRoot.name} must not interpenetrate ${n.name}`);
+    }
+  }
+});
+
+test('GUNSHOP WORKBENCH DRESSING: bench tools seated on the top, non-overlapping, real scale', async () => {
+  const { roots } = await buildWorld();
+  const bench = roots.get(GUNSHOP_OBJECT_IDS.workbench)!;
+  const topBox = box3of(bench.getObjectByName('gunshop-workbench-top')!);
+  const surface = topBox.max.y;
+
+  const itemNames = [
+    'gunshop-bench-part-barrel-group', 'gunshop-bench-part-cylinder-group', 'gunshop-bench-part-grip-group',
+    'gunshop-bench-hammer', 'gunshop-bench-screwdriver-1', 'gunshop-bench-screwdriver-2',
+    'gunshop-bench-file', 'gunshop-bench-oil-bottle', 'gunshop-bench-parts-tray',
+    'gunshop-bench-cartridge-1-group', 'gunshop-bench-cartridge-2-group', 'gunshop-bench-cartridge-3-group',
+    'gunshop-bench-rag-group',
+  ];
+  const boxes: THREE.Box3[] = [];
+  for (const name of itemNames) {
+    const item = bench.getObjectByName(name);
+    assert.ok(item, `bench item "${name}" missing`);
+    const bb = box3of(item!);
+    boxes.push(bb);
+    assert.ok(bb.min.y >= surface - 0.002 && bb.min.y <= surface + 0.004,
+      `${name} must sit ON the bench top (min y ${bb.min.y.toFixed(4)} vs surface ${surface.toFixed(4)})`);
+    assert.ok(bb.min.x > topBox.min.x + 0.005 && bb.max.x < topBox.max.x - 0.005,
+      `${name} stays on the bench (x ${bb.min.x.toFixed(3)}..${bb.max.x.toFixed(3)})`);
+    assert.ok(bb.min.z > topBox.min.z + 0.005 && bb.max.z < topBox.max.z - 0.005,
+      `${name} stays on the bench (z)`);
+  }
+  assert.ok(itemNames.length >= 12, 'the bench carries a real tool set');
+  // no two bench items interpenetrate
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      const overlap = a.min.x < b.max.x - 0.002 && a.max.x > b.min.x + 0.002
+        && a.min.y < b.max.y - 0.002 && a.max.y > b.min.y + 0.002
+        && a.min.z < b.max.z - 0.002 && a.max.z > b.min.z + 0.002;
+      assert.ok(!overlap, `bench items ${itemNames[i]} ↔ ${itemNames[j]} overlap`);
+    }
+  }
+  // the vise def zone (west end) stays clear of the bench dressing
+  const vise = roots.get(GUNSHOP_OBJECT_IDS.vise)!;
+  const viseBox = box3of(vise);
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i];
+    const overlap = a.min.x < viseBox.max.x && a.max.x > viseBox.min.x
+      && a.min.y < viseBox.max.y && a.max.y > viseBox.min.y
+      && a.min.z < viseBox.max.z && a.max.z > viseBox.min.z;
+    assert.ok(!overlap, `bench item ${itemNames[i]} collides with the vise`);
+  }
+  // hanging tools ride the back-panel pegs; toolbox sits on the lower shelf
+  const wrench = box3of(bench.getObjectByName('gunshop-bench-hanging-wrench')!);
+  assert.ok(wrench.min.y > surface && wrench.max.y < topBox.max.y + 0.6, 'wrench hangs on a peg above the bench');
+  assert.ok(bench.getObjectByName('gunshop-bench-wire-coil'), 'wire coil hangs on a peg');
+  const toolbox = box3of(bench.getObjectByName('gunshop-bench-toolbox')!);
+  const shelfBox = box3of(bench.getObjectByName('gunshop-workbench-shelf')!);
+  assert.ok(Math.abs(toolbox.min.y - shelfBox.max.y) < 0.004, 'toolbox rests on the lower shelf');
+});
+
+test('GUNSHOP AMMO SHELF: mostly stocked with varied arrangement, everything contained', async () => {
+  const { roots } = await buildWorld();
+  const unit = roots.get(GUNSHOP_OBJECT_IDS.shelfUnit)!;
+  const unitBox = box3of(unit);
+  const floorY = GUNSHOP_LAYOUT.floorTop;
+  const boardTops = [0.05, 0.55, 1.05, 1.55].map((y) => floorY + y + 0.015);
+  const LID_STEP = 0.047 + 0.0012;
+
+  const boxes = unit.children.filter((c) => c.name.startsWith('gunshop-shelf-box-')) as THREE.Group[];
+  assert.ok(boxes.length >= 28, `the shelf must be MOSTLY stocked (got ${boxes.length} boxes)`);
+
+  const perShelf = [0, 0, 0, 0];
+  let stacks = 0;
+  let depthVaried = 0;
+  for (const box of boxes) {
+    const bb = box3of(box);
+    // containment: inside the unit — no through-back, no side poke, no float
+    assert.ok(bb.min.x > unitBox.min.x - 0.001 && bb.max.x < unitBox.max.x + 0.001,
+      `${box.name} pierces the shelf front/back`);
+    assert.ok(bb.min.z > unitBox.min.z + 0.03 && bb.max.z < unitBox.max.z - 0.03,
+      `${box.name} pokes through a shelf side`);
+    assert.ok(bb.min.y > floorY - 0.001, `${box.name} sinks under the shelf`);
+    // seating: the base rests on a board top or on a stacked lid
+    const seat = boardTops.findIndex((t) => Math.abs(bb.min.y - t) < 0.003);
+    const stackSeat = boardTops.findIndex((t) => Math.abs(bb.min.y - (t + LID_STEP)) < 0.003);
+    assert.ok(seat >= 0 || stackSeat >= 0,
+      `${box.name} floats (min y ${bb.min.y.toFixed(4)}, board tops ${boardTops.map((t) => t.toFixed(3)).join('/')})`);
+    if (seat >= 0) perShelf[seat] += 1;
+    if (stackSeat >= 0) { stacks += 1; perShelf[stackSeat] += 1; }
+    // depth variation across the shelf depth
+    const midX = (bb.min.x + bb.max.x) / 2;
+    if (Math.abs(midX - (unitBox.min.x + unitBox.max.x) / 2) > 0.03) depthVaried += 1;
+  }
+  assert.ok(perShelf[0] >= 8 && perShelf[1] >= 7 && perShelf[2] >= 9,
+    `the three lower shelves are full (${perShelf.join(', ')})`);
+  assert.ok(perShelf[3] >= 3 && perShelf[3] <= 6, `the top shelf stays PARTIAL by design (${perShelf[3]})`);
+  assert.ok(stacks >= 2, `boxes stack in places (${stacks} stacked)`);
+  assert.ok(depthVaried >= 3, `some boxes stand forward/back (${depthVaried} offset)`);
+  // the spare rifle still lies along the top
+  assert.ok(unit.getObjectByName('gunshop-shelf-rifle'), 'spare rifle kept on the unit top');
+});
+
+
 
 test('GUNSHOP LIGHT BUDGET: exactly 2 real PointLights across the whole shop', async () => {
   const registry = makeRegistry();

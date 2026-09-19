@@ -435,7 +435,13 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
     position: { x: originX - 2.5, y: floorY, z: originZ + 0.45 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildSheriffDesk 1.5 × 0.75, top to 0.78) —
+    // composite-collider fix class (the §3 sweep).
+    collider: {
+      boxes: [{ size: { x: 1.5, y: 0.78, z: 0.75 }, offset: { x: 0, y: 0.39, z: 0 } }],
+    },
+  });
   push(SHERIFF_OBJECT_IDS.chair, 'sheriff-chair', 'کلانتری — صندلی کلانتر', {
     position: { x: originX - 2.5, y: floorY, z: originZ - 0.4 },
     rotation: identity(),
@@ -506,7 +512,13 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
     position: { x: originX + L.stove.x, y: floorY, z: originZ + L.stove.z },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (round 0.48 m stove body, 0.78 to the top plate)
+    // — composite-collider fix class (the §3 sweep).
+    collider: {
+      boxes: [{ size: { x: 0.5, y: 0.78, z: 0.5 }, offset: { x: 0, y: 0.39, z: 0 } }],
+    },
+  });
   // Key rack on the office face of the divider, north of the jail doorway —
   // the keys hang exactly where the sheriff grabs them on his way in.
   push(SHERIFF_OBJECT_IDS.keyRack, 'key-rack', 'کلانتری — قفسه کلید', {

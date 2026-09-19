@@ -38,6 +38,7 @@ import {
   HorseAnimator,
   HorseController,
   mountEnterCameraMode,
+  dismountCameraPlan,
   HorsePersistence,
   HORSE_PROPORTIONS,
   buildMountTimeline,
@@ -78,7 +79,7 @@ import {
   GUNSHOP_DOOR_SPEC,
   setGunShopFrontDoorOpen,
 } from '../src/index.js';
-import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
+import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform, CameraMode } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
 import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
 
@@ -925,6 +926,29 @@ function updateGunShopFrontDoor(delta: number): void {
     };
   },
   has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
+  // --- Fix-round harness hooks (read-only state probes) ---------------------
+  // Camera mode + a mode toggle the verify harness can drive (mirrors V).
+  cameraMode: () => playerController.getCameraMode(),
+  toggleCameraMode: () => playerController.toggleCameraMode(),
+  // Horse + riding camera state: yaw/speed/turnRate snapshot, the ride-cam
+  // yaw, the dismount camera plan flag and the mount/dismount anim clocks.
+  horse: () => {
+    const snap = horse.getSnapshot();
+    return {
+      yaw: snap.yaw,
+      speed: snap.speed,
+      turnRate: snap.turnRate,
+      mounted: snap.mounted,
+      rideYaw,
+      riding: isRiding(),
+      mountAnim: mountAnim !== null,
+      dismountAnim: dismountAnim !== null,
+      dismountRestoreMode,
+      playerMode: playerController.getCameraMode(),
+      bodyYaw: playerController.getBodyYaw(),
+      horsePos: snap.position,
+    };
+  },
   // The gun shop front door: swing + 4-state readout + collider + hinge yaw
   // for the verify harness (same contract as the office `door` hook).
   gunshopDoor: () => {
@@ -1946,6 +1970,12 @@ let dismountAnim: {
   timeline: DismountTimeline;
 } | null = null;
 
+/** Dismount camera (first-person dismount revision): the viewing mode the
+ *  rider had when the animated dismount started — restored to first person
+ *  the instant the on-foot handover completes. Null = no switch happened
+ *  (the rider already viewed third person; nothing to restore). */
+let dismountRestoreMode: CameraMode | null = null;
+
 /** Geometric length of the polar approach path (start → stand point), used
  *  to size the walk phase (walk duration = arc / walk speed). */
 function mountApproachArc(startPhi: number, startR: number): number {
@@ -2040,6 +2070,20 @@ function dismountHorse(options: { instant?: boolean } = {}): void {
       // ANIMATED DISMOUNT: grip → leg over the cantle → slide down the flank
       // → settle. The horse holds still for the whole choreography (the
       // already-mounted mount() call just extends the stand lock).
+      // DISMOUNT CAMERA (the first-person dismount revision): a dismount that
+      // starts in FIRST PERSON temporarily switches to THIRD PERSON so the
+      // whole choreography is actually SEEN, then returns to first person at
+      // the handover (dismountCameraPlan, mirrored on the mount's contract).
+      // The orbit is seeded from the rider's CURRENT view yaw/pitch, so the
+      // third-person cut keeps the same view direction — no rotation jump.
+      dismountRestoreMode = dismountCameraPlan(playerController.getCameraMode()).after;
+      if (playerController.getCameraMode() === 'first_person') {
+        rideYaw = playerController.getYaw();
+        ridePitch = Math.max(-1.25, Math.min(1.25, playerController.getPitch()));
+        playerController.setCameraMode('third_person');
+        ridingCamera.snap();
+      }
+      updateEditorHud(); // the HUD camera label follows the temporary TP view
       dismountAnim = { age: 0, timeline: buildDismountTimeline() };
       horse.mount(dismountAnim.timeline.total + 0.3);
       showStatusMessage('Dismounting…');
@@ -2058,6 +2102,15 @@ function finishDismount(feet: { x: number; y: number; z: number }): void {
   // Place the player at the validated spot (left side first). respawnAt
   // resets motion state and hands the camera back to the gameplay rig.
   playerController.respawnAt({ x: feet.x, y: feet.y + CHARACTER_PROPORTIONS.eyeHeight, z: feet.z });
+  // DISMOUNT CAMERA handover: the character's on-foot heading picks up the
+  // rider's current VIEW direction (what the player was actually looking at
+  // through the third-person orbit) — the return to first person therefore
+  // keeps the view direction continuous: no rotation snap, no glitch.
+  if (dismountRestoreMode) {
+    playerController.setBodyYaw(rideYaw);
+    playerController.setCameraMode(dismountRestoreMode);
+    dismountRestoreMode = null;
+  }
   characterAnimator.notifyLanding(4);
   mountAnim = null;
   dismountAnim = null;
@@ -2144,9 +2197,14 @@ function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot'
   // the riding camera/prompt must not run one last stale frame.
   if (!isRiding()) return;
   if (playerController.getCameraMode() === 'third_person') {
-    // Chase-cam: while rolling and not dragging, the camera eases back behind
-    // the horse; RMB can still orbit freely within a wide clamp.
-    if (!mouseLook.isDragging && Math.abs(snap.speed) > 0.5) {
+    // Chase-cam: while rolling OR TURNING and not dragging, the camera eases
+    // back behind the horse (the horse-rotation follow fix: the old condition
+    // keyed on speed alone, so steering/turning IN PLACE or at crawl speed
+    // left the camera frozen on the old heading while the horse rotated away
+    // up to the ±2.8 rad clamp); RMB can still orbit freely within the clamp.
+    // The ease is exponential (rate 2.2/s) — smooth by construction, no snap.
+    if (!mouseLook.isDragging
+      && (Math.abs(snap.speed) > 0.5 || Math.abs(snap.turnRate) > 0.05)) {
       rideYaw += wrapAngle(snap.yaw - rideYaw) * Math.min(1, 2.2 * delta);
     }
     const offset = wrapAngle(rideYaw - snap.yaw);
@@ -2249,9 +2307,10 @@ function animate(): void {
       input.consumePressed('crouch');
       input.consumePressed('respawn');
       if (input.consumePressed('interact')) dismountHorse();
-      // The camera stays THIRD PERSON for the whole mount choreography —
-      // a V press during the animation is dropped, not queued.
-      if (!mountAnim && input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      // The camera stays THIRD PERSON for the whole mount AND dismount
+      // choreography — a V press during either animation is dropped, not
+      // queued (it would yank the view off the playing dismount).
+      if (!mountAnim && !dismountAnim && input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
       if (input.consumePressed('debugDamage')) health.damage(30);
       if (input.consumePressed('debugHeal')) health.heal(35);
     } else {

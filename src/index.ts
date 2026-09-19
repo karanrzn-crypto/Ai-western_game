@@ -138,8 +138,8 @@ export type { HorseAnimatorInput, HorseIdleAction } from './horse/HorseAnimator.
 export { HorseStamina } from './horse/HorseVitals.js';
 export { HorseBrain } from './horse/HorseBrain.js';
 export type { HorseAiState, HorseBrainContext, HorseBrainOrder, HorseBrainOptions, HorseIdleActionName } from './horse/HorseBrain.js';
-export { HorseController, mountEnterCameraMode, HORSE_RUN_WINDUP_SECONDS } from './horse/HorseController.js';
-export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent } from './horse/HorseController.js';
+export { HorseController, mountEnterCameraMode, dismountCameraPlan, HORSE_RUN_WINDUP_SECONDS } from './horse/HorseController.js';
+export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent, DismountCameraPlan } from './horse/HorseController.js';
 export { HorsePersistence, validateHorseSave, HORSE_SAVE_KEY } from './horse/HorsePersistence.js';
 export type { HorseSaveData, HorsePersistenceOptions } from './horse/HorsePersistence.js';
 export {

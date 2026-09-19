@@ -10,6 +10,18 @@ export interface PlayerCollisionResult {
 }
 export interface CollisionWorldOptions { floorY?: number; /** Event bus used to invalidate the cached collision bounds. */ events?: EventBus; }
 export interface CollisionBounds { uuid: string; min: Vec3; max: Vec3; }
+
+/**
+ * One EXACT collision box for a composite (multi-mesh) asset, in the def's
+ * LOCAL space: `size` is the full box size, `offset` its center relative to
+ * the def origin (before the def's yaw rotation). Composite assets are built
+ * at real-world size while their transform scale stays (1,1,1) — the default
+ * transform-derived AABB would then cover only a 1 m cube at the anchor and
+ * leave the rest of the visual volume walk-through (the bar/gunshop counters
+ * bug). Authored layouts state these boxes from the builder's real dims, so
+ * collision == visual without any oversize.
+ */
+export interface ColliderLocalBox { size: Vec3; offset?: Vec3 }
 type DefinitionSource = readonly Readonly<ObjectDefinition>[] | (() => readonly Readonly<ObjectDefinition>[]);
 const EPSILON = 1e-6;
 function abs(value: number): number { return Math.abs(value); }
@@ -17,8 +29,23 @@ function normalizeDegrees(degrees: number): number { const wrapped = ((degrees %
 function isColliderEnabled(metadata: ObjectMetadata, assetType: ObjectDefinition['assetType']): boolean {
   if (assetType === 'ground') return false;
   if (metadata.collider === false) return false;
-  if (metadata.collider && typeof metadata.collider === 'object' && 'enabled' in metadata.collider) return metadata.collider.enabled !== false;
+  if (metadata.collider && typeof metadata.collider === 'object') {
+    const c = metadata.collider as { enabled?: unknown; boxes?: unknown };
+    // { boxes: [...] } without an explicit `enabled` key arms the collider —
+    // listing boxes IS the intent to collide.
+    if ('enabled' in c) return c.enabled !== false;
+    if (Array.isArray(c.boxes) && c.boxes.length > 0) return true;
+    return true;
+  }
   return true;
+}
+
+/** The def's local collider boxes when the object form carries them. */
+function localColliderBoxes(metadata: ObjectMetadata): readonly ColliderLocalBox[] | null {
+  if (!metadata.collider || typeof metadata.collider !== 'object') return null;
+  const boxes = (metadata.collider as { boxes?: unknown }).boxes;
+  if (!Array.isArray(boxes) || boxes.length === 0) return null;
+  return boxes as readonly ColliderLocalBox[];
 }
 
 /** Lightweight reusable AABB collision world. Y-rotated boxes use conservative containing AABBs. */
@@ -75,7 +102,12 @@ export class CollisionWorld {
   getCollisionBounds(): readonly CollisionBounds[] {
     if (this.cachedBounds) return this.cachedBounds;
     const out: CollisionBounds[] = [];
-    for (const definition of this.definitions()) if (isColliderEnabled(definition.metadata, definition.assetType)) out.push(this.toCollisionBounds(definition));
+    for (const definition of this.definitions()) {
+      if (!isColliderEnabled(definition.metadata, definition.assetType)) continue;
+      // A def with explicit local boxes contributes ONE bounds per box; the
+      // legacy transform path contributes exactly one.
+      for (const bounds of this.toCollisionBounds(definition)) out.push(bounds);
+    }
     const frozen = Object.freeze(out);
     if (this.unsubscribe) this.cachedBounds = frozen;
     return frozen;
@@ -120,10 +152,31 @@ export class CollisionWorld {
   private overlapsHorizontal(position: Vec3, radius: number, bounds: CollisionBounds): boolean {
     return position.x + radius > bounds.min.x + EPSILON && position.x - radius < bounds.max.x - EPSILON && position.z + radius > bounds.min.z + EPSILON && position.z - radius < bounds.max.z - EPSILON;
   }
-  private toCollisionBounds(definition: Readonly<ObjectDefinition>): CollisionBounds {
+  private toCollisionBounds(definition: Readonly<ObjectDefinition>): CollisionBounds[] {
     const { position, rotation, scale } = definition.transform;
-    const halfY = abs(scale.y) * 0.5; const halfX = abs(scale.x) * 0.5; const halfZ = abs(scale.z) * 0.5;
     const yaw = (normalizeDegrees(rotation.y) * Math.PI) / 180; const cos = abs(Math.cos(yaw)); const sin = abs(Math.sin(yaw));
+    // Composite assets may carry EXACT local boxes (collider == visual).
+    const boxes = localColliderBoxes(definition.metadata);
+    if (boxes) {
+      // One world AABB per local box: the center is the def position plus the
+      // yaw-rotated offset, the extents are the yaw-conservative size extents
+      // (for yaw = 0/90/180/270 the box is EXACT — no conservative growth).
+      return boxes.map((box) => {
+        const off = box.offset ?? { x: 0, y: 0, z: 0 };
+        // THREE yaw (right-handed, +y up): x' = x·cos + z·sin, z' = −x·sin + z·cos.
+        const cx = position.x + off.x * cos + off.z * sin;
+        const cz = position.z - off.x * sin + off.z * cos;
+        const halfX = abs(box.size.x) * 0.5; const halfY = abs(box.size.y) * 0.5; const halfZ = abs(box.size.z) * 0.5;
+        const extentX = cos * halfX + sin * halfZ; const extentZ = sin * halfX + cos * halfZ;
+        return { uuid: definition.uuid, min: { x: cx - extentX, y: position.y + off.y - halfY, z: cz - extentZ }, max: { x: cx + extentX, y: position.y + off.y + halfY, z: cz + extentZ } };
+      });
+    }
+    return [this.transformBounds(definition, position, scale, cos, sin)];
+  }
+
+  /** The legacy path: one conservative AABB from the transform itself. */
+  private transformBounds(definition: Readonly<ObjectDefinition>, position: Vec3, scale: Vec3, cos: number, sin: number): CollisionBounds {
+    const halfY = abs(scale.y) * 0.5; const halfX = abs(scale.x) * 0.5; const halfZ = abs(scale.z) * 0.5;
     const extentX = cos * halfX + sin * halfZ; const extentZ = sin * halfX + cos * halfZ;
     return { uuid: definition.uuid, min: { x: position.x - extentX, y: position.y - halfY, z: position.z - extentZ }, max: { x: position.x + extentX, y: position.y + halfY, z: position.z + extentZ } };
   }

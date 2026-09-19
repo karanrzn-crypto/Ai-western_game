@@ -148,8 +148,12 @@ const IDS = {
         const before = p[axis];
         await page.waitForTimeout(420);
         p = await player();
+        // fps-robust stall guard: at ~1 fps real frames arrive far slower
+        // than the 420 ms poll — 20 silent polls (~8 s) can be ONE frame of
+        // a slow depth pass. (The 2026 size revision also added 0.6 m to the
+        // in-stall walks, so this guard must not fire early.)
         stalled = Math.abs(p[axis] - before) < 0.004 ? stalled + 1 : 0;
-        if (stalled >= 10) {
+        if (stalled >= 20) {
           console.log(`  stall at (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`);
           break;
         }
@@ -217,8 +221,9 @@ const IDS = {
   ok('gate: E re-opens for the stall walkthrough', reopened.swing === 1, `swing=${reopened.swing}`);
 
   // --- 5) stall one: the full cell-door chain ----------------------------------
-  // Stall 01's door sits at world (-17.975, 2.3) — gap center local z −3.7.
-  await teleport(SITE.x - 0.9, 1.7, 2.3, Math.PI / 2);
+  // Stall 01's door sits at world (-17.975, 1.7) — gap center local z −4.3
+  // (the 2026 size revision moved the stall rows 0.6 m north).
+  await teleport(SITE.x - 0.9, 1.7, 1.7, Math.PI / 2);
   await settle();
   const s1closed = await sdoor('s1');
   ok('stall 1: [E] prompt at the closed stall door', s1closed.prompt.toLowerCase().includes('stall one'),
@@ -234,7 +239,7 @@ const IDS = {
   await shot('03-stall-one-inside');
   // pin a deterministic inside position facing the door (the walk's z drift
   // can push the player out of the 2.0 m interaction range)
-  await teleport(-19.2, 1.7, 2.3, -Math.PI / 2);
+  await teleport(-19.2, 1.7, 1.7, -Math.PI / 2);
   await settle();
   const s1shut = await pressStableUntil('s1', 0, 'stall 1 close');
   ok('stall 1: E from inside CLOSES it (the stall holds)', s1shut.swing === 0 && s1shut.collider === true,
@@ -247,7 +252,8 @@ const IDS = {
   ok('stall 1: re-open lets the player walk back out', w.x > SITE.x - 2.2, `reached x=${w.x.toFixed(2)}`);
 
   // --- 6) the tack room --------------------------------------------------------
-  await teleport(SITE.x - 0.9, 1.7, SITE.z + 5.525, Math.PI / 2);
+  // The room doorway gap moved with the growth: local 5.6–6.65 → world center 12.125.
+  await teleport(SITE.x - 0.9, 1.7, SITE.z + 6.125, Math.PI / 2);
   await settle();
   const tackOpen = await pressStableUntil('tack', 1, 'tack open');
   ok('tack room: E opens its door', tackOpen.swing === 1 && tackOpen.collider === false,
@@ -255,7 +261,7 @@ const IDS = {
   w = await walk('x', -1, SITE.x - 3.6, 60000, 'walk into the tack room');
   ok('tack room: the player WALKS IN', w.x < SITE.x - 2.6, `reached x=${w.x.toFixed(2)}`);
   await shot('04-tack-room-inside');
-  await teleport(-19.2, 1.7, SITE.z + 5.525, -Math.PI / 2);
+  await teleport(-19.2, 1.7, SITE.z + 6.125, -Math.PI / 2);
   await settle();
   await pressStableUntil('tack', 0, 'tack close');
   w = await walk('x', 1, SITE.x - 2.4, 30000, 'push against the closed tack door from inside');

@@ -320,6 +320,14 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
   const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
   const byId = new Map(defs.map((d) => [d.uuid, d]));
   const flag = (id: string): unknown => byId.get(id)?.metadata.collider;
+  // A collider is armed when it is the plain `true` flag OR the object form
+  // carrying exact local boxes ({ boxes: [...] } — the composite-asset
+  // collider revision; listing boxes IS the intent to collide).
+  const armed = (id: string, label: string): void => {
+    const c = flag(id);
+    const ok = c === true || (typeof c === 'object' && c !== null && (c as { enabled?: unknown }).enabled !== false);
+    assert.ok(ok, `${label} must be a collider`);
+  };
 
   // Walls, floor slab, threshold, stairs, landing — real masonry.
   for (const id of [
@@ -330,12 +338,12 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
   ]) {
     assert.equal(flag(id), true, `masonry ${id} must be a collider`);
   }
-  // Solid banking furniture.
+  // Solid banking furniture (composites now carry exact box colliders).
   for (const id of [
     BANK_OBJECT_IDS.tellerCounter,
     BANK_OBJECT_IDS.floorSafe, BANK_OBJECT_IDS.bankersDesk,
   ]) {
-    assert.equal(flag(id), true, `furniture ${id} must be a collider`);
+    armed(id, `furniture ${id}`);
   }
   // Interior partitions close the private rooms — real masonry.
   for (const id of [

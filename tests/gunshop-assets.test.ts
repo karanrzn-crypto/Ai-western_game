@@ -429,16 +429,28 @@ test('GUNSHOP FRONT DOOR: the static frame never moves; the sweep zone is empty'
 test('GUNSHOP COLLIDER POLICY: walls/floor/solids colliders; decor not', () => {
   const defs = buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z);
   const byId = new Map(defs.map((d) => [d.uuid, d]));
+  // Composite solids carry the object form { boxes: [...] } (exact local
+  // collision boxes) — armed when true OR a box list without enabled:false.
+  const armed = (id: string, label: string): void => {
+    const c = byId.get(id)?.metadata.collider;
+    const ok = c === true || (typeof c === 'object' && c !== null && (c as { enabled?: unknown }).enabled !== false);
+    assert.ok(ok, `${label} must be a collider`);
+  };
 
   for (const id of [
     GUNSHOP_OBJECT_IDS.floor, GUNSHOP_OBJECT_IDS.threshold,
     GUNSHOP_OBJECT_IDS.wallRear, GUNSHOP_OBJECT_IDS.wallWest, GUNSHOP_OBJECT_IDS.wallEast,
     GUNSHOP_OBJECT_IDS.wallFrontWest, GUNSHOP_OBJECT_IDS.wallFrontEast, GUNSHOP_OBJECT_IDS.wallFrontHeader,
-    GUNSHOP_OBJECT_IDS.frontDoor, GUNSHOP_OBJECT_IDS.counter,
+    GUNSHOP_OBJECT_IDS.frontDoor,
+  ]) {
+    assert.equal(byId.get(id)?.metadata.collider, true, `solid ${id} must be a collider`);
+  }
+  for (const id of [
+    GUNSHOP_OBJECT_IDS.counter,
     GUNSHOP_OBJECT_IDS.workbench, GUNSHOP_OBJECT_IDS.shelfUnit,
     GUNSHOP_OBJECT_IDS.powderKeg, GUNSHOP_OBJECT_IDS.ammoCrate1, GUNSHOP_OBJECT_IDS.ammoCrate2,
   ]) {
-    assert.equal(byId.get(id)?.metadata.collider, true, `solid ${id} must be a collider`);
+    armed(id, `solid ${id}`);
   }
 
   for (const id of [

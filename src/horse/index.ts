@@ -10,7 +10,7 @@ export type { HorseAnimatorInput, HorseIdleAction } from './HorseAnimator.js';
 export { HorseStamina } from './HorseVitals.js';
 export { HorseBrain } from './HorseBrain.js';
 export type { HorseAiState, HorseBrainContext, HorseBrainOrder, HorseBrainOptions, HorseIdleActionName } from './HorseBrain.js';
-export { HorseController, mountEnterCameraMode } from './HorseController.js';
+export { HorseController, mountEnterCameraMode, dismountCameraPlan } from './HorseController.js';
 export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent } from './HorseController.js';
 export { HorsePersistence, validateHorseSave, HORSE_SAVE_KEY } from './HorsePersistence.js';
 export type { HorseSaveData, HorsePersistenceOptions } from './HorsePersistence.js';

@@ -321,14 +321,34 @@ test('CONTRACT: with W or S held, A/D stay strafe — turn-in-place never takes 
   assert.equal(wrap(slider.getBodyYaw()), 0, 'S+A never rotates the body');
   assert.ok(slider.getPosition().x < -1 && slider.getPosition().z > 1, 'S+A slides the diagonal');
 
-  // First person keeps classic strafe on A/D (the mouse owns turning there).
+  // CONTROLS-CONSISTENCY REVISION: first person A/D ALONE now TURN IN PLACE
+  // (same smoothed spin as third person) — the view rotates, the player does
+  // not translate, and the per-frame rotation is bounded (no snap).
   const fp = new PlayerController(emptyWorld(), {
     initialPosition: { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 0 },
     yaw: 0,
     cameraMode: 'first_person',
   });
-  fp.update(1 / 60, { right: true });
-  assert.ok(fp.getPosition().x > 0, 'FP D still strafes along camera-right');
+  let worstTurnStep = 0;
+  let totalTurn = 0;
+  for (let i = 0; i < 60; i += 1) {
+    const yawBefore = fp.getBodyYaw();
+    fp.update(1 / 60, { right: true });
+    const step = fp.getBodyYaw() - yawBefore;
+    worstTurnStep = Math.max(worstTurnStep, Math.abs(step));
+    totalTurn += step;
+  }
+  assert.ok(totalTurn < -0.5, `FP D turned the view right (total ${totalTurn.toFixed(3)} rad)`);
+  assert.ok(Math.abs(fp.getPosition().x) < 1e-6 && Math.abs(fp.getPosition().z) < 1e-6, 'turn-in-place never translates');
+  assert.ok(worstTurnStep <= 3.7 / 60 + 0.02, `per-frame turn bounded (${worstTurnStep.toFixed(4)}) — no snap`);
+  // Classic strafe survives on the combos: W+D moves along the diagonal.
+  const fpStrafe = new PlayerController(emptyWorld(), {
+    initialPosition: { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 0 },
+    yaw: 0,
+    cameraMode: 'first_person',
+  });
+  fpStrafe.update(1 / 60, { forward: true, right: true });
+  assert.ok(fpStrafe.getPosition().x > 0 && fpStrafe.getPosition().z < 0, 'FP W+D still strafes along the diagonal');
 });
 
 test('CONTRACT: backpedaling (S) slides the body — smooth W→S reversal through zero', () => {

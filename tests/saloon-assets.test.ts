@@ -543,6 +543,13 @@ test('SALOON LIGHT BUDGET: exactly 2 real PointLights across the whole saloon', 
 test('SALOON COLLISION: walls carry colliders, decor does not', () => {
   const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
   const byId = new Map(defs.map((d) => [d.uuid, d]));
+  // Composite solids carry the object form { boxes: [...] } (exact local
+  // collision boxes) — armed when true OR a box list without enabled:false.
+  const armed = (id: string, label: string): void => {
+    const c = byId.get(id)?.metadata.collider;
+    const ok = c === true || (typeof c === 'object' && c !== null && (c as { enabled?: unknown }).enabled !== false);
+    assert.ok(ok, `${label} must be a collider`);
+  };
 
   const wallIds = [
     SALOON_OBJECT_IDS.wallRear, SALOON_OBJECT_IDS.wallWest, SALOON_OBJECT_IDS.wallEast,
@@ -565,12 +572,12 @@ test('SALOON COLLISION: walls carry colliders, decor does not', () => {
     assert.equal(byId.get(id)?.metadata.collider, false, `decor ${id} must NOT be a collider`);
   }
 
-  // Solid furniture stays solid.
+  // Solid furniture stays solid (composites now carry exact box colliders).
   for (const id of [
     SALOON_OBJECT_IDS.barCounter, SALOON_OBJECT_IDS.backBar, SALOON_OBJECT_IDS.pokerTable,
     SALOON_OBJECT_IDS.piano, SALOON_OBJECT_IDS.barrel1, SALOON_OBJECT_IDS.barrel3,
   ]) {
-    assert.equal(byId.get(id)?.metadata.collider, true, `furniture ${id} must be a collider`);
+    armed(id, `furniture ${id}`);
   }
 });
 

@@ -138,7 +138,12 @@ export function hayClump(w: number, d: number, h = 0.12): THREE.Group {
   return g;
 }
 
-/** Straw scattered on the floor — several thin flat flakes, ~2 cm tall. */
+/** Straw scattered on the floor — several thin flat flakes, ~2 cm tall.
+ *  Z-FIGHT ROOT FIX: the old build put every flake in the SAME y band
+ *  (0…0.02), so overlapping flakes shared co-facing coplanar top/bottom
+ *  faces — the «spilled hay flicker». A deterministic 3 mm ladder gives
+ *  every flake its OWN plane (no two flakes are ever coplanar, wherever
+ *  the scatter is placed); the base stays flush with the def origin. */
 export function strawScatter(w: number, d: number, seed = 1): THREE.Group {
   const M_ = M();
   const g = new THREE.Group();
@@ -146,7 +151,7 @@ export function strawScatter(w: number, d: number, seed = 1): THREE.Group {
   const s = { v: 2000 + seed * 131 };
   for (let i = 0; i < 7; i++) {
     const flake = addBox(g, i % 2 ? M_.hay : M_.hayDark, 0.16 + rand(s) * 0.3, 0.02, 0.1 + rand(s) * 0.2,
-      (rand(s) - 0.5) * w, 0.01, (rand(s) - 0.5) * d, `flake-${i}`);
+      (rand(s) - 0.5) * w, 0.01 + i * 0.003, (rand(s) - 0.5) * d, `flake-${i}`);
     flake.rotation.y = rand(s) * Math.PI;
   }
   return g;
@@ -207,7 +212,10 @@ export function smallBarrel(r = 0.3, h = 0.85, water = false): THREE.Group {
   }
   // lid / open top with dark interior
   if (water) {
-    const surf = addCyl(g, M_.water, r * 0.82, r * 0.82, 0.015, 12, 0, h - 0.09, 0, 'barrel-water');
+    // Z-FIGHT ROOT FIX: the old disc sat at h−0.09, buried INSIDE the solid
+    // body (invisible). The surface now rests ON the open top (back-to-back
+    // contact, 6 mm proud) so the water actually reads from above.
+    const surf = addCyl(g, M_.water, r * 0.82, r * 0.82, 0.015, 12, 0, h + 0.0075, 0, 'barrel-water');
     surf.castShadow = false;
   } else {
     addCyl(g, M_.timber, r * 0.95, r * 0.95, 0.03, 12, 0, h + 0.015, 0, 'barrel-lid');
@@ -215,21 +223,36 @@ export function smallBarrel(r = 0.3, h = 0.85, water = false): THREE.Group {
   return g;
 }
 
-/** Wooden/metal bucket with a rope handle; `full` shows water. */
+/** Wooden/metal bucket with a rope handle; `full` shows water.
+ *  Z-FIGHT ROOT FIX (the «cup-like object flicker»): the old rim was a
+ *  SOLID disc whose top face sat at exactly the body's top plane (y = 0.22)
+ *  — two co-facing coplanar faces → z-fighting on every bucket mouth
+ *  (stall buckets, water station, farrier bucket — the mesh was the bug,
+ *  not any placement). Now the rim is a TORUS ring hugging the mouth
+ *  (curved — can never be coplanar with a flat face) and the water rests
+ *  ON the body top as a visible back-to-back disc. */
 export function bucket(kind: 'wood' | 'metal' = 'wood', full = true): THREE.Group {
   const M_ = M();
   const g = new THREE.Group();
   g.name = `${kind}-bucket`;
   const bodyMat = kind === 'wood' ? M_.plankDark : M_.tin;
-  addCyl(g, bodyMat, 0.115, 0.09, 0.22, 10, 0, 0.11, 0, 'bucket-body');
-  const rim = addCyl(g, kind === 'wood' ? M_.rust : M_.tin, 0.12, 0.12, 0.02, 10, 0, 0.21, 0, 'bucket-rim');
-  rim.castShadow = false;
+  // Body: top face at y = 0.20 — the ONLY flat face at that plane.
+  addCyl(g, bodyMat, 0.115, 0.09, 0.2, 10, 0, 0.1, 0, 'bucket-body');
   if (full) {
-    const surf = addCyl(g, M_.water, 0.1, 0.1, 0.012, 10, 0, 0.185, 0, 'bucket-water');
+    const surf = addCyl(g, M_.water, 0.1, 0.1, 0.012, 10, 0, 0.206, 0, 'bucket-water');
     surf.castShadow = false;
   }
+  // Rim: torus ring around the mouth (spans y 0.189…0.211 — wraps the top
+  // edge; curved-vs-flat contact can never z-fight).
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.113, 0.011, 6, 14), kind === 'wood' ? M_.rust : M_.tin);
+  rim.position.set(0, 0.2, 0);
+  rim.rotation.x = Math.PI / 2;
+  rim.castShadow = false;
+  rim.receiveShadow = true;
+  rim.name = 'bucket-rim';
+  g.add(rim);
   // rope handle arc (two posts + a bent bar reads as the handle at this size)
-  const handle = addCyl(g, M_.hayDark, 0.011, 0.011, 0.19, 6, 0, 0.29, 0, 'bucket-handle');
+  const handle = addCyl(g, M_.hayDark, 0.011, 0.011, 0.19, 6, 0, 0.27, 0, 'bucket-handle');
   handle.rotation.z = 0;
   handle.scale.set(1, 1, 1);
   handle.rotation.x = 0;

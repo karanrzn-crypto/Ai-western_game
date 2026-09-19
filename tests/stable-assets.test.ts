@@ -546,7 +546,11 @@ test('STABLE COLLIDER POLICY: structure blocks, decor does not', async () => {
   const byType = (type: string): ObjectDefinition[] => defs.filter((d) => d.assetType === type);
   const allTrue = (list: ObjectDefinition[], label: string): void => {
     for (const d of list) {
-      assert.equal(d.metadata.collider, true, `${label} "${d.metadata.name}" must carry a collider`);
+      const c = d.metadata.collider;
+      // Composite solids carry the object form { boxes: [...] } (exact local
+      // collision boxes) — armed when true OR a box list without enabled:false.
+      const ok = c === true || (typeof c === 'object' && c !== null && (c as { enabled?: unknown }).enabled !== false);
+      assert.ok(ok, `${label} "${d.metadata.name}" must carry a collider`);
     }
   };
   const allFalse = (list: ObjectDefinition[], label: string): void => {

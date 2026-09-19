@@ -234,14 +234,26 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   // (baked from the Object panel FINAL states of the 2026-09 play session):
   // counter pulled toward the entrance, stools spread wider + scaled up.
   push(SALOON_OBJECT_IDS.barCounter, 'saloon-bar-counter', 'سالون — پیشخوان بار', at(0, floorY, -2.186), {
-    collider: true,
+    // EXACT composite box (buildBarCounter real dims): 4 m body + 0.1 m top
+    // overhang, 0.7 m body + 0.12 m top overhang, 1.1 m body + 0.06 m top
+    // + 0.12 m back lip. The old transform-derived AABB covered only a 1 m
+    // cube at the anchor — the counter's ENDS/CORNERS were walk-through and
+    // the player could step inside the counter volume (bug report §3.1).
+    collider: {
+      boxes: [{ size: { x: 4.1, y: 1.22, z: 0.82 }, offset: { x: 0, y: 0.61, z: 0 } }],
+    },
   });
   // Back bar stands ON the floor slab (y = floorY). The saved scene had it
   // raised to y ≈ 1.0 — a workaround for the glassware being buried INSIDE
   // the old solid frame; the builder is now open-shelved, so it belongs on
   // the floor again (raised it also clipped the crown through the roof).
   push(SALOON_OBJECT_IDS.backBar, 'saloon-back-bar', 'سالون — قفسه پشت بار', at(0, floorY, -3.65), {
-    collider: true,
+    // EXACT composite box (buildBackBar: 3.6 m panel + 0.12 crown, 0.42 body
+    // + 0.08 countertop, 2.6 panel + 0.14 crown) — same composite-collider
+    // fix class as the bar counter (found during the §3 sweep).
+    collider: {
+      boxes: [{ size: { x: 3.72, y: 2.74, z: 0.5 }, offset: { x: 0, y: 1.37, z: 0 } }],
+    },
   });
   // User-finalized stool placement (positions + scales from the Object panel).
   const stoolPlacements: Array<{ x: number; y: number; z: number; s: [number, number, number] }> = [
@@ -262,7 +274,11 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   // --- Poker corner (east side) ----------------------------------------------
   const tableLocal = { x: 3.4, z: 0.9 };
   push(SALOON_OBJECT_IDS.pokerTable, 'saloon-poker-table', 'سالون — میز پوکر', at(tableLocal.x, floorY, tableLocal.z), {
-    collider: true,
+    // EXACT composite box (round 0.88 m tabletop → 1.8 m square footprint,
+    // 0.77 m to the armrest crown) — composite-collider fix class.
+    collider: {
+      boxes: [{ size: { x: 1.8, y: 0.77, z: 1.8 }, offset: { x: 0, y: 0.385, z: 0 } }],
+    },
   });
   // Chairs face the table. The built-in chair front is +Z, so a chair at
   // polar angle θ around the table faces the table with rotY = θ (the old
@@ -301,7 +317,14 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
     position: { x: originX - 4.5, y: floorY, z: originZ + 0.8 },
     rotation: { x: deg, y: 90, z: deg },
     scale: unitScale(),
-  }, { collider: true });
+  }, {
+    // EXACT composite box in LOCAL space (1.57 lid width, 1.34 lid top,
+    // z −0.35…+0.515 keybed overhang) — the def's yaw 90 rotates it; the
+    // CollisionWorld applies the yaw-aware extents. Composite-collider fix.
+    collider: {
+      boxes: [{ size: { x: 1.6, y: 1.34, z: 0.9 }, offset: { x: 0, y: 0.67, z: 0.08 } }],
+    },
+  });
   // Stool stands in front of the keyboard (the piano's local +Z keybed faces
   // east after its 90° yaw), just off the keys, clear of the poker corner.
   // x = player's finalized position.
@@ -321,13 +344,14 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
 
   // --- Small props -------------------------------------------------------------
   push(SALOON_OBJECT_IDS.barrel1, 'saloon-whiskey-barrel', 'سالون — بشکه ویسکی ۱', at(-4.35, floorY, -3.35), {
-    collider: true,
+    // EXACT composite box (round 0.56 m barrel, 0.6 tall) — composite fix.
+    collider: { boxes: [{ size: { x: 0.56, y: 0.6, z: 0.56 }, offset: { x: 0, y: 0.3, z: 0 } }] },
   });
   push(SALOON_OBJECT_IDS.barrel2, 'saloon-whiskey-barrel', 'سالون — بشکه ویسکی ۲', at(-3.62, floorY, -3.5), {
-    collider: true,
+    collider: { boxes: [{ size: { x: 0.56, y: 0.6, z: 0.56 }, offset: { x: 0, y: 0.3, z: 0 } }] },
   });
   push(SALOON_OBJECT_IDS.barrel3, 'saloon-whiskey-barrel', 'سالون — بشکه ویسکی ۳', at(4.35, floorY, -3.35), {
-    collider: true,
+    collider: { boxes: [{ size: { x: 0.56, y: 0.6, z: 0.56 }, offset: { x: 0, y: 0.3, z: 0 } }] },
   });
   // Spittoon 1 moved east of the bar: at its old (1.1, −2.1) it now lands
   // INSIDE the counter body, which the player pulled south to z = −2.186.

@@ -388,7 +388,14 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX, y: floorY, z: originZ - 0.1 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildTellerCounter real dims: 3.2 m + 0.1 top
+    // overhang, 0.6 + 0.1, 1.15 + 0.05) — composite-collider fix class
+    // (the §3 sweep: the old scale-1 AABB was a 1 m cube at the anchor).
+    collider: {
+      boxes: [{ size: { x: 3.3, y: 1.2, z: 0.7 }, offset: { x: 0, y: 0.6, z: 0 } }],
+    },
+  });
   // Cage sits ON the counter (base raised so its bottom rail sinks into the
   // marble top and the posts emerge from it — nothing floats, nothing
   // coplanar). Same footprint center as the counter.
@@ -553,7 +560,13 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX + 1.411, y: floorY, z: originZ - 1.975 },
     rotation: { x: 180, y: 0, z: 180 },
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildFloorSafe 0.7 body + door face) — the RX/RZ
+    // 180° flip mirrors local z, covered by the symmetric box. Composite fix.
+    collider: {
+      boxes: [{ size: { x: 0.72, y: 0.64, z: 0.62 }, offset: { x: 0, y: 0.32, z: 0 } }],
+    },
+  });
   // Money bags beside the vault rear wall (user Final).
   push(BANK_OBJECT_IDS.vaultMoneyBag1, 'money-bag', 'بانک — کیسه پول گاوصندوق ۱', {
     position: { x: originX + 1.015, y: floorY, z: originZ - 3.85 },
@@ -597,7 +610,13 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX - 4.022, y: floorY, z: originZ - 2.7 },
     rotation: { x: 180, y: -66.052, z: 180 },
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildBankersDesk 1.5 × 0.8, top to 0.8) — the
+    // RX/RZ flip + yaw leaves the y offset intact (|y| symmetric). Composite.
+    collider: {
+      boxes: [{ size: { x: 1.5, y: 0.8, z: 0.8 }, offset: { x: 0, y: 0.4, z: 0 } }],
+    },
+  });
   push(BANK_OBJECT_IDS.bankersChair, 'bankers-chair', 'بانک — صندلی مدیر', {
     position: { x: originX - 5.03, y: floorY, z: originZ - 3.119 },
     rotation: { x: 0, y: 52.68, z: 0 },

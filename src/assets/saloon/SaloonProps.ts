@@ -683,39 +683,76 @@ export function buildPianoStool(): THREE.Group {
 /* ========================================================================== */
 
 /**
- * Classic western swinging half-doors. The two leaves hang on INDEPENDENT,
- * NAMED hinge groups ('swinging-door-left-hinge' / '…-right-hinge') so a
- * future interaction system can rotate each leaf around its own edge.
- * No collider is added here — the doorway must stay walkable.
+ * Classic western saloon DOUBLE doors — FULL HEIGHT (the 2026 entrance-door
+ * revision: the old 1.1 m half-leaves vanished against the 2.3 m opening and
+ * the doorway read as a bare hole — user report: «بار هنوز در ورودی ندارند»).
+ * The same saloon style, now actually readable as a door: two paneled
+ * walnut leaves with push bars on BOTH faces meeting at the doorway center,
+ * hanging on INDEPENDENT, NAMED hinge groups ('swinging-door-left-hinge' /
+ * '…-right-hinge').
+ *
+ * House door contract (mirrors the gunshop/bank front doors): t=0 is dead
+ * closed — the leaf yaws are NEVER built in here; the runtime pose comes
+ * solely from setSaloonDoorsOpen (pure, deterministic re-derivation). E
+ * swings both leaves INWARD (into the bar): the inward sweep keeps every
+ * leaf point at z ≤ the doorway plane, so the leaves can never touch the
+ * porch deck outside (its top is 9 cm, at z ≥ the facade plane).
  */
 export function buildSwingingDoors(): THREE.Group {
   const M = createSaloonMaterials();
   const g = new THREE.Group();
   g.name = 'saloon-swinging-doors';
 
-  const doorH = 1.1;
-  const leafW = 0.72;
-  const leafT = 0.045;
+  const doorH = 2.24; // 2.3 m doorway − 6 cm: 2 cm bottom lift + 4 cm header gap
+  const leafW = 0.775; // hinge axis 1 cm off its jamb → free edge 1.5 cm off the meeting line
+  const leafT = 0.05;
 
   const buildLeaf = (side: -1 | 1): void => {
     const hinge = new THREE.Group();
     hinge.name = side === -1 ? 'swinging-door-left-hinge' : 'swinging-door-right-hinge';
-    hinge.position.set(side * 0.78, 0, 0);
-    // The leaf hangs INWARD from its hinge edge: mesh center offset is
-    // −side·leafW/2 in hinge space, so the leaf spans |x| ∈ [0.06, 0.78] —
-    // inside the doorway gap. (Offsetting +side buried the leaf in the wall
-    // solid, which the browser run caught immediately.)
-    box(hinge, M.woodMed, leafW, doorH, leafT, -side * (leafW / 2), doorH / 2, 0, `door-leaf-${side === -1 ? 'l' : 'r'}`);
-    // Push bars on both faces: backs touch the leaf faces (stacked), fronts
-    // 2 cm proud.
-    box(hinge, M.woodDark, 0.5, 0.08, 0.02, -side * (leafW / 2), 0.85, leafT / 2 + 0.01, `door-bar-front-${side === -1 ? 'l' : 'r'}`);
-    box(hinge, M.woodDark, 0.5, 0.08, 0.02, -side * (leafW / 2), 0.85, -(leafT / 2 + 0.01), `door-bar-back-${side === -1 ? 'l' : 'r'}`);
+    // Hinge axis 1 cm off its jamb; the leaf extends toward the center, free
+    // edge 1.5 cm off the meeting line. (Offsetting +side buried the leaf in
+    // the wall solid, which the browser run caught immediately.)
+    hinge.position.set(side * 0.79, 0.02, 0);
+    // INWARD swing: the LEFT leaf's tip (+x from its hinge) needs −z, i.e.
+    // R_y: z' = −x·sinθ < 0 → θ > 0 → openSign +1; the right leaf mirrors.
+    hinge.userData.openSign = side === -1 ? 1 : -1;
     g.add(hinge);
+
+    const dir = -side; // leaf extends this way from its hinge
+    // Leaf slab.
+    box(hinge, M.woodMed, leafW, doorH, leafT, dir * leafW / 2, doorH / 2, 0, `door-leaf-${side === -1 ? 'l' : 'r'}`);
+    // Recessed-look panel field per face (frame back ON the slab, field
+    // 2 mm off it — the house anti-coplanar rule).
+    for (const sz of [-1, 1] as const) {
+      box(hinge, M.woodDark, leafW - 0.24, doorH - 0.5, 0.012, dir * leafW / 2, doorH / 2, sz * (leafT / 2 + 0.009), `door-panel-frame-${side === -1 ? 'l' : 'r'}-${sz < 0 ? 'in' : 'out'}`);
+      box(hinge, M.woodLight, leafW - 0.34, doorH - 0.62, 0.008, dir * leafW / 2, doorH / 2, sz * (leafT / 2 + 0.002), `door-panel-field-${side === -1 ? 'l' : 'r'}-${sz < 0 ? 'in' : 'out'}`);
+    }
+    // Push bars on both faces (the batwing signature): backs touch the leaf
+    // faces (stacked), centers 1 cm proud.
+    box(hinge, M.woodDark, 0.52, 0.09, 0.02, dir * (leafW - 0.14), 1.05, leafT / 2 + 0.02, `door-bar-front-${side === -1 ? 'l' : 'r'}`);
+    box(hinge, M.woodDark, 0.52, 0.09, 0.02, dir * (leafW - 0.14), 1.05, -(leafT / 2 + 0.02), `door-bar-back-${side === -1 ? 'l' : 'r'}`);
   };
   buildLeaf(-1);
   buildLeaf(1);
 
   return g;
+}
+
+/**
+ * Pure pose for the saloon double doors: t=0 → CLOSED (both leaf yaws 0),
+ * t=1 → OPEN (each leaf swung inward). Reads the swing side baked into each
+ * hinge's userData at build time; derived ONLY from t (never accumulated —
+ * re-triggering mid-swing is deterministic).
+ */
+export function setSaloonDoorsOpen(root: THREE.Object3D, t: number): void {
+  for (const name of ['swinging-door-left-hinge', 'swinging-door-right-hinge']) {
+    const hinge = root.getObjectByName(name) as THREE.Group | null;
+    if (!hinge) continue;
+    const sign = Number(hinge.userData.openSign ?? 1) || 1;
+    // `+ 0` normalizes −0 to +0 — pure pose, no quirks.
+    hinge.rotation.y = THREE.MathUtils.clamp(t, 0, 1) * (100 * (Math.PI / 180)) * sign + 0;
+  }
 }
 
 /* ========================================================================== */

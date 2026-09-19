@@ -42,6 +42,7 @@ import {
   SALOON_OBJECT_IDS,
   SALOON_SITE,
   buildSaloonMapObjects,
+  setSaloonDoorsOpen,
   frontWallSegments,
   buildSaloonBottle,
   buildDecanter,
@@ -222,19 +223,39 @@ test('SALOON SWINGING DOORS: two independent named hinges, one leaf each', async
   assert.ok(left, 'left hinge group must exist');
   assert.ok(right, 'right hinge group must exist');
   assert.notEqual(left, right);
-  // Each hinge carries exactly one leaf, and each leaf hangs INSIDE the
-  // doorway gap (|x| ≤ 0.78 at the object origin): an outward offset would
-  // bury the leaves in the wall solids — the bug a browser run caught.
-  for (const hinge of [left!, right!]) {
+  // ENTRANCE-DOOR REVISION: full-height leaves (the old 1.1 m half-doors
+  // vanished against the 2.3 m opening). Each hinge carries exactly one
+  // leaf, and each leaf hangs INSIDE the doorway gap (|x| ≤ 0.8 at the
+  // object origin): an outward offset would bury the leaves in the wall
+  // solids — the bug a browser run caught.
+  for (const hinge of [left!, right!] as const) {
     const leaves = hinge.children.filter((c) => c.name.startsWith('door-leaf'));
     assert.equal(leaves.length, 1, 'each hinge carries exactly one leaf');
-    const leafBox = new THREE.Box3().setFromObject(leaves[0]);
+    // box3of composes the full parent chain first — a raw setFromObject
+    // would read the leaf against a STALE parent matrixWorld (identity) and
+    // report hinge-local numbers (the −0.0000 that failed this assert once).
+    const leafBox = box3of(leaves[0]);
     assert.ok(
       leafBox.max.x <= 0.8 && leafBox.min.x >= -0.8,
       `leaf must sit inside the doorway gap (got x [${leafBox.min.x.toFixed(3)}, ${leafBox.max.x.toFixed(3)}])`,
     );
-    assert.ok(leafBox.max.y <= 1.2, 'leaf must stay a half-door (top ≤ 1.2m)');
+    assert.ok(leafBox.max.y >= 2.1, `leaf must be FULL height (top ${leafBox.max.y.toFixed(2)} ≥ 2.1m)`);
+    assert.ok(leafBox.min.y >= 0.0, `leaf bottom stays above the object origin (no ground burial) (got y ${leafBox.min.y.toFixed(4)})`);
+    // Pure-pose contract: the built pose is DEAD CLOSED; the runtime yaw
+    // comes solely from setSaloonDoorsOpen.
+    assert.equal(hinge.rotation.y, 0, 'leaves spawn closed (hinge yaw 0)');
   }
+  // The pose function: t=0 closed, t=1 both leaves swung inward 100°, and
+  // re-deriving at t=0.5 is deterministic (pure, never accumulated).
+  setSaloonDoorsOpen(obj, 1);
+  const lOpen = left!.rotation.y;
+  const rOpen = right!.rotation.y;
+  assert.ok(Math.abs(Math.abs(lOpen) - 100 * Math.PI / 180) < 1e-9, 'left leaf opens 100°');
+  assert.ok(Math.abs(lOpen + rOpen) < 1e-9, 'the two leaves mirror each other');
+  assert.ok(lOpen > 0, 'the left leaf swings INWARD (−z)');
+  setSaloonDoorsOpen(obj, 0);
+  assert.equal(left!.rotation.y, 0, 't=0 restores dead closed');
+  assert.equal(right!.rotation.y, 0, 't=0 restores dead closed (right)');
 });
 
 test('SALOON CHANDELIER: real-light budget is at most one PointLight', async () => {
@@ -560,7 +581,7 @@ test('SALOON COLLISION: walls carry colliders, decor does not', () => {
   }
 
   const decorIds = [
-    SALOON_OBJECT_IDS.building, SALOON_OBJECT_IDS.swingingDoors,
+    SALOON_OBJECT_IDS.building,
     SALOON_OBJECT_IDS.stool1, SALOON_OBJECT_IDS.stool4,
     SALOON_OBJECT_IDS.chair1, SALOON_OBJECT_IDS.chair4,
     SALOON_OBJECT_IDS.pianoStool,
@@ -571,6 +592,9 @@ test('SALOON COLLISION: walls carry colliders, decor does not', () => {
   for (const id of decorIds) {
     assert.equal(byId.get(id)?.metadata.collider, false, `decor ${id} must NOT be a collider`);
   }
+  // ENTRANCE-DOOR REVISION: the swinging doors are the street walkability
+  // switch now — they spawn CLOSED armed with the exact closed-leaf box.
+  armed(SALOON_OBJECT_IDS.swingingDoors, 'closed saloon doors');
 
   // Solid furniture stays solid (composites now carry exact box colliders).
   for (const id of [
@@ -583,13 +607,29 @@ test('SALOON COLLISION: walls carry colliders, decor does not', () => {
 
 test('SALOON COLLISION: the doorway is genuinely walkable, the wall beside it is not', () => {
   const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
+  // ENTRANCE-DOOR REVISION: the full-height doors spawn CLOSED and ARE the
+  // street walkability switch — two worlds (closed blocks / open walks),
+  // mirroring the bank gate/vault discipline.
   const world = new CollisionWorld(defs);
+  const openDefs = defs.map((d) => d.uuid === SALOON_OBJECT_IDS.swingingDoors
+    ? { ...d, metadata: { ...d.metadata, collider: false } }
+    : d);
+  const openWorld = new CollisionWorld(openDefs as typeof defs);
 
-  // Walk straight in through the door center (x = −12): from the porch into
-  // the interior, NEVER blocked.
+  // CLOSED: the doorway blocks exactly at the leaf plane + radius.
+  {
+    const p = { x: SALOON_SITE.x, y: 1.7, z: SALOON_SITE.z + SALOON_LAYOUT.depth / 2 + 0.8 };
+    const hit = world.movePlayer(p, { x: 0, y: 0, z: -0.5 });
+    assert.equal(hit.blockedZ, true, 'the CLOSED saloon doors must block the doorway');
+    const leafFace = SALOON_SITE.z + SALOON_LAYOUT.depth / 2 + 0.05;
+    assert.ok(Math.abs(hit.position.z - (leafFace + 0.35)) < 1e-3, `player stops at the leaf face + radius (z=${hit.position.z.toFixed(3)})`);
+  }
+
+  // OPEN: walk straight in through the door center (x = −12): from the
+  // porch into the interior, NEVER blocked.
   let pos: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: -5.5 };
   for (let step = 0; step < 14; step += 1) {
-    const result = world.movePlayer(pos, { x: 0, y: 0, z: -0.5 });
+    const result = openWorld.movePlayer(pos, { x: 0, y: 0, z: -0.5 });
     assert.equal(result.blockedZ, false, `doorway path blocked at step ${step} (z=${pos.z.toFixed(2)})`);
     pos = result.position;
   }
@@ -603,7 +643,7 @@ test('SALOON COLLISION: the doorway is genuinely walkable, the wall beside it is
   // Interior is roomy: from the door to the bar counter must be walkable.
   let inside: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: -9 };
   for (let step = 0; step < 8; step += 1) {
-    const result = world.movePlayer(inside, { x: 0, y: 0, z: -0.5 });
+    const result = openWorld.movePlayer(inside, { x: 0, y: 0, z: -0.5 });
     assert.equal(result.blockedZ, false, `interior path blocked at z=${inside.z.toFixed(2)}`);
     inside = result.position;
   }

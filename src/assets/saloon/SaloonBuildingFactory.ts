@@ -252,6 +252,23 @@ export function buildSaloonShell(dims: ShellDims): THREE.Group {
     }
   }
 
+  // --- Doorway casing (the entrance-door revision) ---------------------------
+  // The doorway used to be a bare hole in the facade (user report: the bar
+  // «در ورودی ندارد»). A walnut casing — two jambs + a header, backs ON the
+  // facade face (back-to-back contact, the allowed stacked case), fronts
+  // 10 cm proud — frames the opening and seats the closed double doors.
+  // The jambs STAND ON the porch deck (bottom face opposing the deck's top
+  // face at y = 0.09 — stacked contact, never coplanar-same-normal) and the
+  // header sits ON the jamb tops, crossing the opening's top edge.
+  const caseT = 0.1;
+  const caseZ = wallFaceZ + caseT / 2;
+  const caseW = 0.16;
+  const doorH = SALOON_LAYOUT.doorHeight;
+  const deckTop = 0.09;
+  addBox(g, M.woodDark, caseW, doorH, caseT, -(SALOON_LAYOUT.doorWidth / 2 + caseW / 2), deckTop + doorH / 2, caseZ, 'saloon-door-casing-jamb-w');
+  addBox(g, M.woodDark, caseW, doorH, caseT, SALOON_LAYOUT.doorWidth / 2 + caseW / 2, deckTop + doorH / 2, caseZ, 'saloon-door-casing-jamb-e');
+  addBox(g, M.woodDark, SALOON_LAYOUT.doorWidth + caseW * 2, caseW, caseT, 0, deckTop + doorH + caseW / 2, caseZ, 'saloon-door-casing-header');
+
   return g;
 }
 

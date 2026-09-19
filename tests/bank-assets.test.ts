@@ -43,8 +43,10 @@ import {
   BANK_INTERIOR_ASSET_TYPES,
   BANK_LAYOUT,
   BANK_OBJECT_IDS,
+  BANK_DOOR_SPEC,
   BANK_SITE,
   buildBankMapObjects,
+  setBankFrontDoorOpen,
   setSecureGateOpen,
   setBankVaultDoorOpen,
 } from '../src/index.js';
@@ -161,9 +163,6 @@ test('BANK SHELL: classical facade kit builds with all its main parts', async ()
     'bank-crest-disc', 'bank-crest-ring', 'bank-crest-diamond',
     'bank-door-jamb-w', 'bank-door-jamb-e', 'bank-door-lintel',
     'bank-door-arch', 'bank-door-keystone',
-    'bank-door-leaf-left', 'bank-door-leaf-right',
-    'bank-door-panel-left-0', 'bank-door-panel-right-1',
-    'bank-door-handle-left', 'bank-door-handle-right',
     'bank-window-glass-front-w2.775', 'bank-window-glass-front-e2.775',
     'bank-window-sill-w2.775', 'bank-window-sill-e2.775',
     'bank-window-glass-side-en', 'bank-window-glass-side-ws',
@@ -172,6 +171,12 @@ test('BANK SHELL: classical facade kit builds with all its main parts', async ()
   ];
   for (const name of required) {
     assert.ok(obj.getObjectByName(name), `shell must contain "${name}"`);
+  }
+  // ENTRANCE-DOOR REVISION: the old held-open leaf pair is GONE from the
+  // shell (it read as flat wall boards) — the door is the independent
+  // 'bank-front-door' object now.
+  for (const name of ['bank-door-leaf-left', 'bank-door-leaf-right', 'bank-door-panel-left-0', 'bank-door-handle-right']) {
+    assert.equal(obj.getObjectByName(name), undefined, `shell must NOT carry "${name}" anymore`);
   }
   // GOLD "BANK" frieze letters.
   for (const name of ['bank-sign-letter-0', 'bank-sign-letter-1', 'bank-sign-letter-2', 'bank-sign-letter-3']) {
@@ -199,19 +204,17 @@ test('BANK SHELL: owns NO wall geometry (walls are separate collider objects)', 
 test('BANK SHELL: doorway leaves nothing blocking the opening', async () => {
   const registry = makeRegistry();
   const obj = (await registry.create(movedDef({ assetType: 'bank-building' }))) as THREE.Group;
-  // The open leaves must lie AGAINST the facade (z beyond the wall face),
-  // never inside the doorway span.
+  // ENTRANCE-DOOR REVISION: the shell keeps ONLY the stone surround — the
+  // opening itself is bare (the leaves are the independent 'bank-front-door'
+  // object, closed by default and E-opened). Assert the surround exists and
+  // that no leaf/panel/handle geometry remains anywhere in the shell.
   const wallFaceZ = BANK_LAYOUT.depth / 2 + BANK_LAYOUT.wallThickness / 2;
-  for (const side of ['left', 'right'] as const) {
-    const leaf = obj.getObjectByName(`bank-door-leaf-${side}`)!;
-    const bb = box3of(leaf);
-    assert.ok(
-      bb.min.z >= wallFaceZ - 0.01,
-      `${side} leaf must rest against the facade (min z ${bb.min.z.toFixed(3)} vs face ${wallFaceZ})`,
-    );
-    // Leaf height stays under the door head.
-    assert.ok(bb.max.y <= BANK_LAYOUT.floorTop + BANK_LAYOUT.doorHeight + 0.01, 'leaf must fit the opening height');
+  for (const name of ['bank-door-jamb-w', 'bank-door-jamb-e', 'bank-door-lintel', 'bank-door-arch', 'bank-door-keystone']) {
+    const part = obj.getObjectByName(name);
+    assert.ok(part, `surround must contain "${name}"`);
   }
+  const stray = obj.children.filter((c) => /bank-door-(leaf|panel|handle)/.test(c.name));
+  assert.equal(stray.length, 0, 'shell must not bundle any door leaf geometry');
   // The four columns clear the doorway (symmetry checked against the layout).
   for (const cx of BANK_LAYOUT.columns.xs) {
     assert.ok(
@@ -219,6 +222,62 @@ test('BANK SHELL: doorway leaves nothing blocking the opening', async () => {
       `column at x=${cx} would crowd the doorway`,
     );
   }
+  void wallFaceZ;
+});
+
+/* ---- The front door (the entrance-door revision) --------------------------- */
+
+test('BANK FRONT DOOR: walnut double door, real hinges, pure pose, exact closed collider', async () => {
+  const registry = makeRegistry();
+  assert.ok(BANK_EXTERIOR_ASSET_TYPES.includes('bank-front-door'), 'bank-front-door must be a registered assetType');
+
+  const obj = (await registry.create(movedDef({ assetType: 'bank-front-door', metadata: { name: 'door', ...{
+    width: BANK_LAYOUT.doorWidth,
+    height: BANK_LAYOUT.doorHeight,
+    openDeg: 100 * (Math.PI / 180),
+  } } }))) as THREE.Group;
+
+  // Two REAL hinge pivots at the outer jambs; each carries exactly one leaf.
+  const hw = obj.getObjectByName('bank-front-door-hinge-w');
+  const he = obj.getObjectByName('bank-front-door-hinge-e');
+  assert.ok(hw && he, 'both hinge groups must exist');
+  for (const hinge of [hw!, he!] as const) {
+    const leaves = hinge.children.filter((c) => c.name.startsWith('bank-front-door-leaf'));
+    assert.equal(leaves.length, 1, 'each hinge carries exactly one leaf');
+    const lb = new THREE.Box3().setFromObject(leaves[0]);
+    assert.ok(lb.min.x >= -1.15 && lb.max.x <= 1.15, 'leaf stays inside the doorway span');
+    assert.ok(lb.max.y <= BANK_LAYOUT.doorHeight + 0.01, 'leaf fits the opening height');
+    assert.equal(hinge.rotation.y, 0, 'leaves spawn DEAD CLOSED (pure pose)');
+  }
+  // Handles + panels dress each leaf; knuckles sit on the static root.
+  for (const tag of ['w', 'e'] as const) {
+    assert.ok(obj.getObjectByName(`bank-front-door-handle-${tag}`), `brass handle ${tag} exists`);
+    assert.ok(obj.getObjectByName(`bank-front-door-handle-in-${tag}`), `interior handle ${tag} exists`);
+    assert.ok(obj.getObjectByName(`bank-front-door-panel-${tag}-0`), `panel ${tag} exists`);
+  }
+  assert.ok(obj.getObjectByName('bank-front-door-knuckle-w-high'), 'hinge knuckles on the static root');
+
+  // PURE POSE: t=1 → both leaves 100° inward, mirrored; deterministic at t=0.
+  setBankFrontDoorOpen(obj, 1);
+  const wYaw = hw!.rotation.y;
+  const eYaw = he!.rotation.y;
+  assert.ok(Math.abs(Math.abs(wYaw) - 100 * Math.PI / 180) < 1e-9, 'west leaf opens 100°');
+  assert.ok(Math.abs(wYaw + eYaw) < 1e-9, 'the two leaves mirror each other');
+  assert.ok(wYaw > 0, 'the west leaf swings INWARD (−z, into the lobby)');
+  setBankFrontDoorOpen(obj, 0);
+  assert.equal(hw!.rotation.y, 0, 't=0 restores dead closed (w)');
+  assert.equal(he!.rotation.y, 0, 't=0 restores dead closed (e)');
+
+  // LAYOUT: the def exists at the doorway center on the wall mid-plane,
+  // seated on the interior floor top, with the EXACT closed-leaf collider.
+  const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
+  const doorDef = defs.find((d) => d.uuid === BANK_OBJECT_IDS.frontDoor);
+  assert.ok(doorDef, 'the layout registers the front door');
+  assert.equal(doorDef!.assetType, 'bank-front-door');
+  assert.equal(doorDef!.transform.position.x, BANK_SITE.x, 'door centered on the facade');
+  assert.equal(doorDef!.transform.position.y, BANK_LAYOUT.floorTop, 'door seated on the floor/landing top');
+  assert.equal(doorDef!.transform.position.z, BANK_SITE.z + BANK_LAYOUT.depth / 2, 'door on the wall mid-plane');
+  assert.deepEqual(doorDef!.metadata.collider, BANK_DOOR_SPEC.closedCollider, 'spawn collider = the exact closed-leaf box');
 });
 
 /* ---- Supplied interior asset fidelity ------------------------------------- */
@@ -387,8 +446,33 @@ test('BANK COLLISION: masonry and solid furniture carry colliders, decor does no
 
 test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block', () => {
   const defs = buildBankMapObjects(BANK_SITE.x, BANK_SITE.z);
+  // ENTRANCE-DOOR REVISION: the front door spawns CLOSED and IS the street
+  // walkability switch. Two worlds: the authored one (door armed — closed
+  // blocks) and an open-door one (collider released — the lobby walks),
+  // mirroring the gate/vault block-vs-pass discipline below.
   const world = new CollisionWorld(defs);
+  const doorOpenDefs = defs.map((d) => d.uuid === BANK_OBJECT_IDS.frontDoor
+    ? { ...d, metadata: { ...d.metadata, collider: false } }
+    : d);
+  const doorOpenWorld = new CollisionWorld(doorOpenDefs as typeof defs);
+  // The CLOSED door's collider must equal the real leaf volume (2.16 m of
+  // leaf face centered on the doorway).
+  const doorBounds = world.getCollisionBounds().filter((b) => b.uuid === BANK_OBJECT_IDS.frontDoor);
+  assert.equal(doorBounds.length, 1, 'the closed front door contributes exactly one collider box');
+  const db = doorBounds[0];
+  assert.ok(Math.abs((db.max.x - db.min.x) - 2.16) < 1e-6, `closed door collider spans the leaf face (got ${(db.max.x - db.min.x).toFixed(3)})`);
+  assert.ok(Math.abs((db.max.z - db.min.z) - 0.12) < 1e-6, 'closed door collider is the 12 cm leaf depth');
   const doorX = BANK_SITE.x;
+  // CLOSED: the doorway blocks exactly at the leaf plane + radius (a
+  // realistic per-frame step — a target landing beyond a collider passes).
+  {
+    const landingY = BANK_LAYOUT.floorTop + PLAYER_HEIGHT;
+    const p = { x: doorX, y: landingY, z: BANK_SITE.z + BANK_LAYOUT.depth / 2 + 0.8 };
+    const hit = world.movePlayer(p, { x: 0, y: 0, z: -0.5 });
+    assert.equal(hit.blockedZ, true, 'the CLOSED front door must block the doorway');
+    const leafFace = BANK_SITE.z + BANK_LAYOUT.depth / 2 + 0.06;
+    assert.ok(Math.abs(hit.position.z - (leafFace + 0.35)) < 1e-3, `player stops at the leaf face + radius (z=${hit.position.z.toFixed(3)})`);
+  }
 
   // 1) RAW approach at street level: the first step is a REAL collider.
   let pos: { x: number; y: number; z: number } = { x: doorX, y: PLAYER_HEIGHT, z: BANK_SITE.z + 10.5 };
@@ -411,16 +495,17 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
 
   // 2) Step-up walk (PlayerController-style: lift → move → settle) up the
   // stairs and in through the door — must reach the lobby without getting
-  // stuck anywhere along the way.
+  // stuck anywhere along the way. Runs in the OPEN-DOOR world (the player
+  // has pressed E; the closed-door block is asserted above).
   const walkIn = (): { z: number; y: number; stuckAt: number } => {
     let p: { x: number; y: number; z: number } = { x: doorX, y: PLAYER_HEIGHT, z: BANK_SITE.z + 10.5 };
     for (let i = 0; i < 60; i += 1) {
       const before = p.z;
-      let r = world.movePlayer(p, { x: 0, y: 0, z: -0.5 });
+      let r = doorOpenWorld.movePlayer(p, { x: 0, y: 0, z: -0.5 });
       if (r.blockedZ) {
-        const lifted = world.movePlayer(p, { x: 0, y: PLAYER_STEP_HEIGHT, z: 0 });
-        const moved = world.movePlayer(lifted.position, { x: 0, y: 0, z: -0.5 });
-        const settled = world.movePlayer(moved.position, { x: 0, y: -(PLAYER_STEP_HEIGHT + 0.05), z: 0 });
+        const lifted = doorOpenWorld.movePlayer(p, { x: 0, y: PLAYER_STEP_HEIGHT, z: 0 });
+        const moved = doorOpenWorld.movePlayer(lifted.position, { x: 0, y: 0, z: -0.5 });
+        const settled = doorOpenWorld.movePlayer(moved.position, { x: 0, y: -(PLAYER_STEP_HEIGHT + 0.05), z: 0 });
         if (Math.abs(settled.position.z - before) > Math.abs(r.position.z - before) + 1e-6) r = settled;
       }
       p = r.position;
@@ -438,12 +523,13 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
     `player must stand on the elevated floor (y=${walk.y.toFixed(2)})`,
   );
 
-  // 3) On the landing, the doorway path is genuinely walkable; the wall beside it is not.
+  // 3) On the landing, the OPEN doorway path is genuinely walkable; the wall
+  // beside it is not (the closed door's block was asserted at the top).
   const landingY = BANK_LAYOUT.floorTop + PLAYER_HEIGHT;
   const landingZ = BANK_SITE.z + BANK_LAYOUT.depth / 2 + BANK_LAYOUT.wallThickness / 2 + BANK_LAYOUT.landing.depth / 2;
   let inside: { x: number; y: number; z: number } = { x: doorX, y: landingY, z: landingZ };
   for (let step = 0; step < 8; step += 1) {
-    const r = world.movePlayer(inside, { x: 0, y: 0, z: -0.5 });
+    const r = doorOpenWorld.movePlayer(inside, { x: 0, y: 0, z: -0.5 });
     assert.equal(r.blockedZ, false, `doorway path blocked at step ${step} (z=${inside.z.toFixed(2)})`);
     inside = r.position;
   }
@@ -807,7 +893,8 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
   );
 
   // Everything interior stays inside the walls (the threshold slab lives in
-  // the wall band by design, like the walls themselves).
+  // the wall band by design, like the walls themselves; the front door sits
+  // ON the wall mid-plane by the same design — it IS the doorway object).
   const inner = { xMin: BANK_SITE.x - 5.8, xMax: BANK_SITE.x + 5.8, zMin: BANK_SITE.z - 4.3, zMax: BANK_SITE.z + 4.3 };
   for (const def of defs) {
     const isExterior = [
@@ -815,6 +902,7 @@ test('BANK LAYOUT: interior reads like a real bank — office room, vault room, 
       BANK_OBJECT_IDS.wallFrontWest, BANK_OBJECT_IDS.wallFrontEast, BANK_OBJECT_IDS.wallFrontHeader,
       BANK_OBJECT_IDS.atticWall, BANK_OBJECT_IDS.landing, BANK_OBJECT_IDS.step1,
       BANK_OBJECT_IDS.step2, BANK_OBJECT_IDS.step3, BANK_OBJECT_IDS.threshold,
+      BANK_OBJECT_IDS.frontDoor,
     ].includes(def.uuid);
     if (isExterior) continue;
     const { x, z } = def.transform.position;

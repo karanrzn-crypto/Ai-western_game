@@ -54,10 +54,14 @@ import {
   registerSaloonFactories,
   buildSaloonMapObjects,
   SALOON_SITE,
+  SALOON_DOOR_SPEC,
+  setSaloonDoorsOpen,
   registerAllBankFactories,
   buildBankMapObjects,
   BANK_SITE,
   BANK_OBJECT_IDS,
+  BANK_DOOR_SPEC,
+  setBankFrontDoorOpen,
   setSecureGateOpen,
   setBankVaultDoorOpen,
   registerAllSheriffFactories,
@@ -241,7 +245,12 @@ const persistence = new PersistenceManager();
 // authored layout, and saves rebuild the registry wholesale — an old save
 // would boot a town WITHOUT the gun shop. The key move drops v14 saves so
 // every player picks the shop up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v15' });
+// v16 moves for the ENTRANCE DOORS: the bank gets a real openable front door
+// (a NEW def joins the authored layout) and the saloon's swinging doors are
+// rebuilt full-height closed-by-default — an old save would boot a bank
+// without its door. The key move drops v15 saves so every player picks the
+// doors up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v16' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -796,6 +805,87 @@ function updateGunShopFrontDoor(delta: number): void {
   }
 }
 
+// --- The BANK front door (truly openable, E) ---------------------------------
+// The entrance-door revision: the old walnut leaves were held OPEN flat
+// against the facade and read as wall boards (user report: the bank
+// «در ورودی ندارد»). This is the house door contract exactly as the sheriff
+// / gun shop / stable doors run it: spawns CLOSED with the EXACT closed-leaf
+// collider armed (BANK_DOOR_SPEC.closedCollider — collider == visual), E
+// flips the swing target, setBankFrontDoorOpen re-derives the pose from t
+// every frame, and the collider metadata swaps between the closed boxes and
+// `false` (fully released — the doorway walks) at the half-open threshold.
+const bankDoorUuid = BANK_DOOR_SPEC.uuid;
+const bankDoorSwing = { value: 0, target: 0, speed: 1 / 1.1 };
+interactions.register({
+  uuid: bankDoorUuid,
+  get label() {
+    return bankDoorSwing.target > 0.5 ? BANK_DOOR_SPEC.labelClose : BANK_DOOR_SPEC.labelOpen;
+  },
+  range: BANK_DOOR_SPEC.range,
+  getPosition: () => manager.getObject(bankDoorUuid)?.transform.position
+    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
+  canInteract: () => Boolean(manager.getObject(bankDoorUuid)),
+  onInteract: () => {
+    bankDoorSwing.target = bankDoorSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(bankDoorSwing.target > 0.5
+      ? `${BANK_DOOR_SPEC.labelClose}.`
+      : `${BANK_DOOR_SPEC.labelOpen}.`);
+  },
+});
+/** Advance the bank door swing and sync its exact collider to the pose. */
+function updateBankFrontDoor(delta: number): void {
+  if (bankDoorSwing.value === bankDoorSwing.target) return;
+  const dir = Math.sign(bankDoorSwing.target - bankDoorSwing.value);
+  bankDoorSwing.value = THREE.MathUtils.clamp(bankDoorSwing.value + dir * bankDoorSwing.speed * delta, 0, 1);
+  const root = scene.getObjectByProperty('uuid', bankDoorUuid);
+  if (root) setBankFrontDoorOpen(root, bankDoorSwing.value);
+  const opened = bankDoorSwing.value > 0.5;
+  const def = manager.getObject(bankDoorUuid);
+  const closed = JSON.stringify(def?.metadata.collider) !== JSON.stringify(opened ? false : BANK_DOOR_SPEC.closedCollider);
+  if (def && closed) {
+    manager.updateObjectMetadata(bankDoorUuid, { collider: opened ? false : BANK_DOOR_SPEC.closedCollider });
+  }
+}
+
+// --- The SALOON entrance doors (truly openable, E) ---------------------------
+// The swinging half-doors are rebuilt FULL HEIGHT and closed-by-default (the
+// user report: the bar «در ورودی ندارد» — waist-high leaves vanished against
+// the 2.3 m opening). Same house door contract: the EXACT closed-leaf
+// collider arms at spawn, E swings both leaves inward (into the bar), and
+// the collider releases fully while open — the walk-through returns.
+const saloonDoorUuid = SALOON_DOOR_SPEC.uuid;
+const saloonDoorSwing = { value: 0, target: 0, speed: 1 / 0.9 };
+interactions.register({
+  uuid: saloonDoorUuid,
+  get label() {
+    return saloonDoorSwing.target > 0.5 ? SALOON_DOOR_SPEC.labelClose : SALOON_DOOR_SPEC.labelOpen;
+  },
+  range: SALOON_DOOR_SPEC.range,
+  getPosition: () => manager.getObject(saloonDoorUuid)?.transform.position
+    ?? { x: SALOON_SITE.x, y: 0, z: SALOON_SITE.z },
+  canInteract: () => Boolean(manager.getObject(saloonDoorUuid)),
+  onInteract: () => {
+    saloonDoorSwing.target = saloonDoorSwing.target > 0.5 ? 0 : 1;
+    showStatusMessage(saloonDoorSwing.target > 0.5
+      ? `${SALOON_DOOR_SPEC.labelClose}.`
+      : `${SALOON_DOOR_SPEC.labelOpen}.`);
+  },
+});
+/** Advance the saloon door swing and sync its exact collider to the pose. */
+function updateSaloonDoors(delta: number): void {
+  if (saloonDoorSwing.value === saloonDoorSwing.target) return;
+  const dir = Math.sign(saloonDoorSwing.target - saloonDoorSwing.value);
+  saloonDoorSwing.value = THREE.MathUtils.clamp(saloonDoorSwing.value + dir * saloonDoorSwing.speed * delta, 0, 1);
+  const root = scene.getObjectByProperty('uuid', saloonDoorUuid);
+  if (root) setSaloonDoorsOpen(root, saloonDoorSwing.value);
+  const opened = saloonDoorSwing.value > 0.5;
+  const def = manager.getObject(saloonDoorUuid);
+  const closed = JSON.stringify(def?.metadata.collider) !== JSON.stringify(opened ? false : SALOON_DOOR_SPEC.closedCollider);
+  if (def && closed) {
+    manager.updateObjectMetadata(saloonDoorUuid, { collider: opened ? false : SALOON_DOOR_SPEC.closedCollider });
+  }
+}
+
 // Dev verification hook (write-capable, harness-only): teleports the on-foot
 // player and reads the iron-gate mechanism so the headless browser script can
 // prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
@@ -961,6 +1051,38 @@ function updateGunShopFrontDoor(delta: number): void {
       state: at(gunShopDoorSwing.value, gunShopDoorSwing.target),
       collider: manager.getObject(gunShopDoorUuid)?.metadata.collider ?? null,
       hingeYaw: hinge ? hinge.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  // The bank + saloon entrance doors: swing + 4-state readout + collider +
+  // BOTH leaf hinge yaws (the entrance-door revision harness contract).
+  bankDoor: () => {
+    const root = scene.getObjectByProperty('uuid', bankDoorUuid);
+    const hw = root?.getObjectByName('bank-front-door-hinge-w');
+    const he = root?.getObjectByName('bank-front-door-hinge-e');
+    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    return {
+      swing: bankDoorSwing.value,
+      target: bankDoorSwing.target,
+      state: at(bankDoorSwing.value, bankDoorSwing.target),
+      collider: manager.getObject(bankDoorUuid)?.metadata.collider ?? null,
+      hingeYawW: hw ? hw.rotation.y : null,
+      hingeYawE: he ? he.rotation.y : null,
+      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
+    };
+  },
+  saloonDoor: () => {
+    const root = scene.getObjectByProperty('uuid', saloonDoorUuid);
+    const hl = root?.getObjectByName('swinging-door-left-hinge');
+    const hr = root?.getObjectByName('swinging-door-right-hinge');
+    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
+    return {
+      swing: saloonDoorSwing.value,
+      target: saloonDoorSwing.target,
+      state: at(saloonDoorSwing.value, saloonDoorSwing.target),
+      collider: manager.getObject(saloonDoorUuid)?.metadata.collider ?? null,
+      hingeYawL: hl ? hl.rotation.y : null,
+      hingeYawR: hr ? hr.rotation.y : null,
       prompt: document.getElementById('interact-prompt')?.textContent ?? '',
     };
   },
@@ -1439,6 +1561,16 @@ function loadSavedScene(): void {
     const def = manager.getObject(spec.uuid);
     if (def && def.metadata.collider !== true) {
       manager.updateObjectMetadata(spec.uuid, { collider: true });
+    }
+  }
+  // The bank + saloon entrance doors likewise rebuild CLOSED every boot (the
+  // factories build the t=0 pose); force the saved metadata back onto the
+  // exact closed-leaf collider so a save taken mid-open can never leave a
+  // closed-looking door walkable.
+  for (const doorSpec of [BANK_DOOR_SPEC, SALOON_DOOR_SPEC]) {
+    const def = manager.getObject(doorSpec.uuid);
+    if (def && JSON.stringify(def.metadata.collider) !== JSON.stringify(doorSpec.closedCollider)) {
+      manager.updateObjectMetadata(doorSpec.uuid, { collider: doorSpec.closedCollider });
     }
   }
   updateSaveStatus();
@@ -1934,6 +2066,14 @@ const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getColli
 });
 let rideYaw = horse.getYaw();
 let ridePitch = 0;
+// The horse's yaw at the previous riding frame. The FIRST-PERSON ride-cam
+// fix: the FP view used to read `rideYaw`, which only the mouse ever
+// updated — the horse turned under a frozen view and riding felt like
+// fighting a broken control. Every frame the horse's OWN yaw delta is
+// inherited by the view (below), so steering the horse steers the gaze
+// with it; the horse yaw is integrated from a bounded turn rate, so the
+// inherited motion is smooth by construction (no snap is possible).
+let lastRideHorseYaw = horse.getYaw();
 // Mount animation: a SHORT, simple 5-beat sequence — approach walk (polar
 // arc) → the left hand grips the seat edge → the body rises and turns while
 // both legs fold up-and-back OUTBOARD of the flank → the rider slides
@@ -2051,6 +2191,10 @@ function mountHorse(): void {
   horse.mount(timeline.total + 0.25);
   mountAnim = { age: 0, start, timeline };
   rideYaw = horse.getYaw();
+  // Seed the delta tracker to the SAME yaw — the first riding frame must
+  // inherit ZERO delta (a stale value from a previous ride would yaw-snap
+  // the first-person view the instant the player mounts).
+  lastRideHorseYaw = horse.getYaw();
   ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
   ridingCamera.snap();
   updateEditorHud();
@@ -2196,6 +2340,12 @@ function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot'
   // is on-foot now (the prompt was already rewritten by finishDismount), so
   // the riding camera/prompt must not run one last stale frame.
   if (!isRiding()) return;
+  // The horse's rotation THIS frame (wrap-safe). Both camera modes inherit
+  // it: third person eases the orbit behind the horse (below), first person
+  // hands the delta straight to the view — the mounted camera must never
+  // stay decoupled from the horse's transform.
+  const horseYawDelta = wrapAngle(snap.yaw - lastRideHorseYaw);
+  lastRideHorseYaw = snap.yaw;
   if (playerController.getCameraMode() === 'third_person') {
     // Chase-cam: while rolling OR TURNING and not dragging, the camera eases
     // back behind the horse (the horse-rotation follow fix: the old condition
@@ -2217,7 +2367,12 @@ function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot'
       deltaSeconds: delta,
     });
   } else {
-    // First person: the eye rides at the rider's head, view = ride yaw/pitch.
+    // First person: the eye rides at the rider's head. The horse's own yaw
+    // delta is inherited EVERY frame (smooth — the horse yaw is integrated
+    // from a bounded steering turn rate), so a horse turning left turns the
+    // view left with it and the mounted camera can never stay decoupled
+    // from the mount's transform; mouse look still moves freely on top.
+    rideYaw += horseYawDelta;
     camera.position.set(
       snap.position.x + Math.sin(snap.yaw) * HORSE_PROPORTIONS.riderZ,
       snap.position.y + HORSE_PROPORTIONS.riderFeetY + CHARACTER_PROPORTIONS.eyeHeight,
@@ -2407,6 +2562,8 @@ function animate(): void {
   updateSheriffFrontDoor(delta); // office front door swing + collider/walkability sync
   updateStableDoors(delta); // stable gate + stall/room/staff door swings + collider sync
   updateGunShopFrontDoor(delta); // gun shop front door swing + collider sync
+  updateBankFrontDoor(delta); // bank walnut double door swing + collider sync
+  updateSaloonDoors(delta); // saloon double door swing + collider sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

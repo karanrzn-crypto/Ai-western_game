@@ -101,6 +101,32 @@ export const SALOON_OBJECT_IDS = Object.freeze({
   windowEast2: saloonUuid('61'),
 });
 
+/**
+ * The saloon's full-height double entrance doors — the ONE openable street
+ * entrance (house door contract, mirrors GUNSHOP_DOOR_SPEC / BANK_DOOR_SPEC):
+ * spawns CLOSED with the exact leaf-spanning collider armed, E flips the
+ * swing target, the pose is re-derived from t every frame, the collider
+ * releases past half-open.
+ */
+export const SALOON_DOOR_SPEC = Object.freeze({
+  uuid: SALOON_OBJECT_IDS.swingingDoors,
+  labelOpen: 'Open the saloon',
+  labelClose: 'Close the saloon',
+  range: 2.4,
+  /** EXACT closed-door collider (the two leaves at the wall mid-plane):
+   *  1.56 m of leaf face, 2.24 m tall off the interior floor top, 10 cm
+   *  thick — collider == visual while closed. The 2 cm slivers between the
+   *  leaf edges and the jambs are sealed by the front-wall segments. */
+  closedCollider: Object.freeze({
+    boxes: Object.freeze([
+      Object.freeze({
+        size: Object.freeze({ x: 1.56, y: 2.24, z: 0.1 }),
+        offset: Object.freeze({ x: 0, y: 1.13, z: 0 }),
+      }),
+    ]),
+  }),
+});
+
 /** Front-wall segment geometry implied by SALOON_LAYOUT (building-local). */
 export function frontWallSegments(): Array<{ cx: number; width: number }> {
   const segWidth = (SALOON_LAYOUT.width - SALOON_LAYOUT.doorWidth) / 2;
@@ -202,12 +228,14 @@ export function buildSaloonMapObjects(originX: number, originZ: number): ObjectD
   }, { collider: true });
 
   // --- Entrance --------------------------------------------------------------
-  // Independent swinging-half-doors: two named hinge groups, no collider —
-  // nothing may ever block the walk-through (animation hooks come later).
-  // Origin sits 1 cm above the ground so no leaf bottom face is coplanar
-  // with the wall bottoms on the ground plane.
-  push(SALOON_OBJECT_IDS.swingingDoors, 'saloon-swinging-doors', 'سالون — درهای چرخان', at(0, 0.01, L.depth / 2), {
-    collider: false,
+  // FULL-HEIGHT western saloon double doors (the 2026 entrance-door revision
+  // — the old 1.1 m half-leaves vanished against the 2.3 m opening and the
+  // user reported the bar «در ورودی ندارد»). House door contract: spawns
+  // CLOSED with the EXACT closed-leaf collider armed (collider == visual),
+  // E swings both leaves inward (setSaloonDoorsOpen — pure pose), the
+  // collider releases fully while open — the doorway walks again.
+  push(SALOON_OBJECT_IDS.swingingDoors, 'saloon-swinging-doors', 'سالون — در ورودی دو لنگه', at(0, 0.05, L.depth / 2), {
+    collider: SALOON_DOOR_SPEC.closedCollider,
   });
 
   // --- Facade SIGN + WINDOWS (independent selectable entities) ---------------

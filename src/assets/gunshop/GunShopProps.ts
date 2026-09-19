@@ -432,6 +432,11 @@ export function buildPistolDisplayCase(width = 1.6): THREE.Group {
   revPose.forEach((p, i) => {
     const rev = buildRevolver(1);
     rev.name = `gunshop-display-revolver-${i + 1}`;
+    // HERO PRESENTATION PROP — stays unmerged (the documented noMerge escape
+    // hatch): the display guns keep their per-part meshes so they remain
+    // individually inspectable/animatable and browser probes can still
+    // measure each gun against the felt/glass. Draw-call cost: a handful.
+    rev.userData.noMerge = true;
     rev.rotation.order = 'YXZ';
     rev.rotation.y = p.yaw; // fan…
     rev.rotation.x = Math.PI / 2; // …then roll onto its flank (cylinder up)
@@ -443,6 +448,7 @@ export function buildPistolDisplayCase(width = 1.6): THREE.Group {
   // Derringer on its side, angled, in the front-right presentation spot.
   const der = buildDerringer(1.4);
   der.name = 'gunshop-display-derringer';
+  der.userData.noMerge = true; // hero prop — see the revolver noMerge note
   der.rotation.order = 'YXZ';
   der.rotation.y = Math.PI / 2 + 0.35;
   der.rotation.x = Math.PI / 2;
@@ -474,6 +480,7 @@ export function buildRifleWallRack(count = 7): THREE.Group {
     const x = -width / 2 + 0.15 + i * ((width - 0.3) / (count - 1));
     const gun = i % 3 === 0 ? buildDoubleBarrelShotgun(0.8) : buildLeverActionRifle(0.55);
     gun.name = `gunshop-rack-gun-${i + 1}`;
+    gun.userData.noMerge = true; // hero prop — per-part identity kept (see display case note)
     gun.position.set(x, 0.02, 0.1);
     // MUZZLE-UP: the gun's long axis (+x) stands on +y; a touch of variation.
     gun.rotation.z = Math.PI / 2 + 0.02 * (i % 2 === 0 ? 1 : -1);

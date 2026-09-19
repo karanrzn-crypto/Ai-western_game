@@ -4,6 +4,8 @@ import {
   ThreeRendererAdapter,
   AssetRegistry,
   registerPrimitiveFactories,
+  registerTownExteriorFactories,
+  TOWN_EXTERIOR_COLLIDERS,
   PersistenceManager,
   CollisionWorld,
   DayNightCycle,
@@ -203,6 +205,9 @@ registerAllBankFactories(assets);
 registerAllSheriffFactories(assets);
 registerAllStableFactories(assets);
 registerAllGunShopFactories(assets);
+// Town exteriors (5 house facades + butcher stall + yard props) — placed
+// per-def with TOWN_EXTERIOR_COLLIDERS when the street expands.
+registerTownExteriorFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -1070,6 +1075,55 @@ const headCenter = new THREE.Vector3();
       muzzleNdc: { x: muzzle.x, y: muzzle.y, z: muzzle.z },
       earLNdc: { x: earL.x, y: earL.y, z: earL.z },
       earRNdc: { x: earR.x, y: earR.y, z: earR.z },
+    };
+  },
+  // Harness-ONLY object spawn/despawn (verify-town-exterior): registers a
+  // full definition through the REAL registerObject path (adapter
+  // materialises it, CollisionWorld picks up metadata colliders, the editor
+  // save hook does NOT fire). Despawn mirrors it. Nothing here persists —
+  // only editor mutations trigger storage.saveFromManager.
+  spawnTestDef: (def: { uuid: string; assetType: string; position: { x: number; y: number; z: number }; rotationY?: number; name: string; metadata?: Record<string, unknown> }) => {
+    const created = manager.registerObject({
+      uuid: def.uuid,
+      assetType: def.assetType,
+      transform: {
+        position: def.position,
+        rotation: { x: 0, y: def.rotationY ?? 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+      metadata: { name: def.name, editable: true, ...(def.metadata ?? {}) },
+    });
+    return { uuid: created.uuid, count: manager.getObjectCount() };
+  },
+  despawnTestDef: (uuid: string) => manager.unregisterObject(uuid),
+  // The town-exterior collider table (single source of truth) so harnesses
+  // can attach the exact metadata colliders when spawning test defs.
+  townExteriorColliders: TOWN_EXTERIOR_COLLIDERS,
+  meshStats: (uuid: string) => {
+    const root = scene.getObjectByProperty('uuid', uuid);
+    if (!root) return null;
+    let meshes = 0;
+    let vertices = 0;
+    const materials = new Set<string>();
+    const geometries = new Set<string>();
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      meshes += 1;
+      if (m.geometry.attributes.position) vertices += m.geometry.attributes.position.count;
+      materials.add((Array.isArray(m.material) ? m.material[0] : m.material).uuid);
+      geometries.add(m.geometry.uuid);
+    });
+    const box = new THREE.Box3().setFromObject(root);
+    return {
+      meshes, vertices,
+      materials: materials.size,
+      geometries: geometries.size,
+      bbox: {
+        min: { x: +box.min.x.toFixed(3), y: +box.min.y.toFixed(3), z: +box.min.z.toFixed(3) },
+        max: { x: +box.max.x.toFixed(3), y: +box.max.y.toFixed(3), z: +box.max.z.toFixed(3) },
+      },
     };
   },
   // The gun shop front door: swing + 4-state readout + collider + hinge yaw

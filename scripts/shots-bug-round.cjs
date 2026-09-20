@@ -74,15 +74,15 @@ const URL = 'http://localhost:5176/';
   };
 
   /* 1 — town entrance vegetation (bushes + trees around the gate) */
-  const bush = await findPos('bush', { maxZ: -18, minX: -26, maxX: 26 });
+  const bush = await findPos('town-bush', { maxZ: -30, minX: -30, maxX: 20 });
   if (bush) await shot('01-entrance-bush', [bush.x, 0.5, bush.z], [-1.2, 0.8, -1], 3.2);
-  const entTree = await findPos('tree', { maxZ: -25, minX: -8, maxX: 8 });
+  const entTree = await findPos('town-tree', { maxZ: -30, minX: -30, maxX: 10 });
   if (entTree) await shot('02-entrance-tree', [entTree.x, 2, entTree.z], [-1.4, 0.6, -0.8], 7);
 
   /* 2 — tree + bush + grass close-ups (square entrance pair + scatter) */
-  const tree = await findPos('tree', { minX: -12.5, maxX: -10.5, minZ: -8.8, maxZ: -6.8 });
+  const tree = await findPos('town-tree', { minX: -26, maxX: -23, minZ: -48, maxZ: -44 });
   if (tree) await shot('03-tree-closeup', [tree.x, 2.2, tree.z], [2.2, 0.9, 1.6], 6.5);
-  const grass = await findPos('grass-tuft', null);
+  const grass = await findPos('town-grass', { minX: -12, maxX: -4, minZ: -38, maxZ: -32 });
   if (grass) await shot('04-grass-closeup', [grass.x, 0.2, grass.z], [1, 0.5, 1], 1.4);
   const bush2 = await findPos('bush', null);
   if (bush2) await shot('05-bush-closeup', [bush2.x, 0.35, bush2.z], [1.3, 0.5, 1.1], 1.8);
@@ -130,20 +130,20 @@ const URL = 'http://localhost:5176/';
 
   /* 4 — town square: well + benches + crate cluster */
   await shot('09-square-bench', [-4.4, 0.55, 0.5], [-2.6, 1.15, 3.2], 3.6);
-  await shot('10-square-crate', [3.9, 0.35, 4.3], [1.6, 0.9, 1.6], 2.4);
+  await shot('10-square-crate', [-6.6, 0.5, -13.2], [1.6, 0.9, 1.6], 2.6);
   await shot('11-square-overview', [0, 0.8, 1], [0.5, 5.5, -7], 11);
 
-  /* 5 — hitching post (meat shop) close-up */
-  await shot('12-hitching-post', [-10.5, 0.6, -1.8], [-2.2, 1, 2.6], 3.4);
+  /* 5 — hitching post (saloon) close-up */
+  await shot('12-hitching-post', [-5.4, 0.6, -19.3], [-2.2, 1, 2.6], 3.4);
 
   /* 6 — water troughs (farm corral + stable corral) */
-  await shot('13-trough-farm', [-29.5, 0.3, -40.5], [1.5, 0.65, 0.8], 2.5);
-  await shot('14-trough-stable', [8.8, 0.3, 29.5], [1.8, 0.8, 1.6], 2.6);
+  await shot('13-trough-farm', [-11.8, 0.35, -45], [-1.5, 0.65, 0.5], 2.5);
+  await shot('14-trough-stable', [-11.7, 0.5, -40.3], [1.8, 0.8, 1.6], 2.6);
 
   /* 7 — farm corral: aerial + interior + gate */
-  await shot('15-farm-corral-aerial', [-31, 0, -40], [3, 26, 12], 30);
-  await shot('16-farm-corral-interior', [-30, 0.6, -42], [-4, 1.4, 8], 11);
-  await shot('17-farm-corral-gate', [-27.5, 0.8, -33.5], [0.4, 1, -4.5], 6.5);
+  await shot('15-farm-corral-aerial', [-10.6, 0, -42.7], [3, 24, 10], 28);
+  await shot('16-farm-corral-interior', [-11, 0.6, -44], [-4, 1.4, 8], 11);
+  await shot('17-farm-corral-gate', [-14.5, 0.8, -41.9], [-0.5, 1, -4.5], 6.5);
 
   /* 8 — stable corral + the town aerial */
   await shot('18-stable-corral', [12, 0.6, 28], [-2, 7, -9], 13);

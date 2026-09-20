@@ -197,7 +197,7 @@ function lamp(x: number, z: number, name: string): void {
 }
 
 function bench(x: number, z: number, yaw: number, name: string, s = 1): void {
-  emit('town-bench', name, { x, y: 0, z }, { collider: true }, { x: 0, y: yaw, z: 0 }, { x: 1.08 * s, y: 0.85, z: 0.56 * s });
+  emit('town-bench', name, { x, y: 0, z }, { collider: true }, { x: 0, y: yaw, z: 0 }, { x: 2.25 * s, y: 1.05, z: 0.72 });
 }
 
 function barrel(x: number, z: number, name: string, s = 1, y = 0): void {
@@ -217,11 +217,11 @@ function rock(x: number, z: number, name: string, sx: number, sy: number, sz: nu
 }
 
 function hitching(x: number, z: number, yaw: number, name: string): void {
-  emit('town-hitching', name, { x, y: 0, z }, { collider: true }, { x: 0, y: yaw, z: 0 }, { x: 1.5, y: 1.0, z: 0.22 });
+  emit('town-hitching', name, { x, y: 0, z }, { collider: true }, { x: 0, y: yaw, z: 0 }, { x: 2.0, y: 1.1, z: 0.35 });
 }
 
 function trough(x: number, z: number, name: string, sx = 1.9): void {
-  box('town-trough', name, x, 0, z, sx, 0.58, 0.9, { collider: true });
+  box('town-trough', name, x, 0, z, sx, 0.47, 0.62, { collider: true });
 }
 
 function tree(x: number, z: number, seed: number, s: number, name: string): void {
@@ -288,15 +288,20 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   fenceRun({ name: 'حصار مزرعه — جنوب', from: [-21, -38.5], to: [-5.8, -38.5], gaps: [[-16.4, -13.8]], style: 'farm' });
   fenceRun({ name: 'حصار مزرعه — غرب', from: [-21, -57], to: [-21, -38.5], style: 'farm' });
   fenceRun({ name: 'حصار مزرعه — شرق', from: [-5.8, -57], to: [-5.8, -38.5], gaps: [[-51.5, -48.9]], style: 'farm' });
-  // livestock pen (south-east of the yard), gate on its west side
-  fenceRun({ name: 'حصار آغل — شمال', from: [-12.5, -44], to: [-6.8, -44], style: 'farm' });
-  fenceRun({ name: 'حصار آغل — جنوب', from: [-12.5, -39.5], to: [-6.8, -39.5], style: 'farm' });
-  fenceRun({ name: 'حصار آغل — غرب', from: [-12.5, -44], to: [-12.5, -39.5], gaps: [[-42.6, -41.2]], style: 'farm' });
-  fenceRun({ name: 'حصار آغل — شرق', from: [-6.8, -44], to: [-6.8, -39.5], style: 'farm' });
-  trough(-10.6, -42.8, 'آبخوری آغل', 1.8);
-  hay(-11.7, -40.3, 'علوفه آغل', 1.05, 0.8);
-  horse(-10.9, -42.4, 24, 'اسب آغل ۱');
-  horse(-8.4, -41.3, -38, 'اسب آغل ۲', 'hide');
+  // livestock pen (south-east of the yard), gate on its west side —
+  // ENLARGED (visual-defect round: 5.7×4.5 = 26 m² was too cramped for the
+  // animals; the pen now spans 7.7×6.5 = 50 m² of real movement room)
+  fenceRun({ name: 'حصار آغل — شمال', from: [-14.5, -46], to: [-6.8, -46], style: 'farm' });
+  fenceRun({ name: 'حصار آغل — جنوب', from: [-14.5, -39.5], to: [-6.8, -39.5], style: 'farm' });
+  fenceRun({ name: 'حصار آغل — غرب', from: [-14.5, -46], to: [-14.5, -39.5], gaps: [[-42.6, -41.2]], style: 'farm' });
+  fenceRun({ name: 'حصار آغل — شرق', from: [-6.8, -46], to: [-6.8, -39.5], style: 'farm' });
+  // pen furniture re-arranged (visual-defect round): the trough moved to the
+  // north fence line — the old spot put a static horse STANDING IN the water;
+  // trough, hay and both horses now keep clear separation.
+  trough(-11.8, -45, 'آبخوری آغل', 1.8);
+  hay(-12.5, -40.4, 'علوفه آغل', 1.05, 0.8);
+  horse(-9.5, -41.6, 24, 'اسب آغل ۱');
+  horse(-7.8, -42.3, -38, 'اسب آغل ۲', 'hide');
   // crop field east of the road
   emit('town-crops', 'کشتزار', { x: 7.75, y: 0, z: -51.5 }, { collider: false, rows: 7, rowGap: 1.4, length: 10 });
   // pond south of the yard

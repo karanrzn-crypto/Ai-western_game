@@ -67,6 +67,40 @@ export function addCylinder(
   return mesh;
 }
 
+/** Small deterministic PRNG (mulberry32) for the seeded prop variation. */
+function townRng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Craggy low-poly blob: detail-0 icosahedron with POSITION-HASHED radial
+ *  jitter — identical positions always get identical offsets, so the
+ *  non-indexed geometry stays watertight across seams (no cracks) while the
+ *  silhouette stops reading as a clean primitive. ~20 tris. */
+function townCraggyBlob(radius: number, salt: number, jitter = 0.12): THREE.BufferGeometry {
+  const geo = new THREE.IcosahedronGeometry(radius, 0);
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+  const hash = (x: number, y: number, z: number, k: number): number => {
+    const t = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + k * 53.13) * 43758.5453;
+    return t - Math.floor(t);
+  };
+  for (let i = 0; i < pos.count; i += 1) {
+    v.fromBufferAttribute(pos, i);
+    const h1 = hash(v.x, v.y, v.z, salt);
+    const h2 = hash(v.x, v.y, v.z, salt + 7);
+    v.multiplyScalar(1 + (h1 - 0.5) * 2 * jitter + (h2 - 0.5) * jitter);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Ground + roads                                                             */
 /* -------------------------------------------------------------------------- */
@@ -228,11 +262,30 @@ export class TownBenchFactory implements IAssetFactory {
   create(): THREE.Object3D {
     const g = new THREE.Group();
     g.name = 'town-bench';
-    addBox(g, M.woodGray, 0.09, 0.52, 0.86, -0.44, 0.26, 0, 'town-bench-frame-a');
-    addBox(g, M.woodGray, 0.09, 0.52, 0.86, 0.44, 0.26, 0, 'town-bench-frame-b');
-    addBox(g, M.woodMed, 0.96, 0.06, 0.3, 0, 0.5, -0.16, 'town-bench-seat-front');
-    addBox(g, M.woodMed, 0.96, 0.06, 0.28, 0, 0.5, 0.14, 'town-bench-seat-back');
-    addBox(g, M.woodMed, 0.96, 0.34, 0.06, 0, 0.72, 0.4, 'town-bench-backrest');
+    // ADULT-SCALE proportions in unit space (visual-defect round — the old
+    // slab-back bench read as child furniture): full-length back posts to
+    // y 1.0, raked two-slat back + cap, armrests on the side frames, four
+    // seat slats, lower stretchers. The def scale (2.3, 1.05, 0.72) sizes
+    // the real bench AND its collider in one motion.
+    for (const sx of [-1, 1]) {
+      const x = sx * 0.42;
+      addBox(g, M.woodGray, 0.045, 0.44, 0.14, x, 0.22, 0.36, `town-bench-leg-front-${sx < 0 ? 'w' : 'e'}`);
+      addBox(g, M.woodGray, 0.045, 1, 0.14, x, 0.5, -0.36, `town-bench-post-back-${sx < 0 ? 'w' : 'e'}`);
+      addBox(g, M.woodGray, 0.055, 0.06, 0.84, x, 0.45, 0, `town-bench-seat-rail-${sx < 0 ? 'w' : 'e'}`);
+      addBox(g, M.woodGray, 0.035, 0.05, 0.7, x, 0.15, 0, `town-bench-stretcher-${sx < 0 ? 'w' : 'e'}`);
+      addBox(g, M.woodMed, 0.06, 0.05, 0.9, x, 0.72, 0.02, `town-bench-armrest-${sx < 0 ? 'w' : 'e'}`);
+      addBox(g, M.woodGray, 0.03, 0.17, 0.05, x, 0.645, 0.32, `town-bench-arm-post-${sx < 0 ? 'w' : 'e'}`);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const z = 0.37 - i * 0.155;
+      addBox(g, M.woodMed, 1, 0.05, 0.14, 0, 0.525, z, `town-bench-seat-${i}`);
+    }
+    for (const y of [0.66, 0.84]) {
+      const slat = addBox(g, M.woodMed, 1, 0.14, 0.045, 0, y, -0.36, `town-bench-back-${y === 0.66 ? 'low' : 'high'}`);
+      slat.rotation.x = -0.16;
+    }
+    const cap = addBox(g, M.woodGray, 1, 0.06, 0.1, 0, 0.97, -0.36, 'town-bench-back-cap');
+    cap.rotation.x = -0.16;
     return g;
   }
 }
@@ -249,30 +302,73 @@ export class TownBarrelFactory implements IAssetFactory {
   }
 }
 
-/** Crate (unit space; plank box + corner trim read). */
+/** Crate (unit space; plank box + corner trim read).
+ *  Z-FIGHT ROOT FIX (visual-defect round): the corner trims used to end
+ *  EXACTLY at the body top plane (0.94) — coplanar co-facing top faces in
+ *  two different woods → visible flicker at the corners. The trims now rise
+ *  3% proud of the body and sink 0.5% below it (still inside the unit
+ *  collider box), all FOUR corners get trim, and a mid band wraps the body. */
 export class TownCrateFactory implements IAssetFactory {
   create(): THREE.Object3D {
     const g = new THREE.Group();
     g.name = 'town-crate';
     addBox(g, M.plankB, 0.94, 0.94, 0.94, 0, 0.47, 0, 'town-crate-body');
-    addBox(g, M.woodDark, 0.98, 0.08, 0.98, 0, 0.9, 0, 'town-crate-lid-trim');
-    addBox(g, M.woodDark, 0.1, 0.94, 0.1, -0.44, 0.47, -0.44, 'town-crate-corner-a');
-    addBox(g, M.woodDark, 0.1, 0.94, 0.1, 0.44, 0.47, 0.44, 'town-crate-corner-b');
+    addBox(g, M.woodDark, 0.98, 0.08, 0.98, 0, 0.92, 0, 'town-crate-lid-trim');
+    for (const [sx, sz, tag] of [[-1, -1, 'a'], [1, -1, 'b'], [-1, 1, 'c'], [1, 1, 'd']] as const) {
+      addBox(g, M.woodDark, 0.1, 0.965, 0.1, sx * 0.44, 0.4775, sz * 0.44, `town-crate-corner-${tag}`);
+    }
+    addBox(g, M.woodDark, 0.97, 0.05, 0.97, 0, 0.26, 0, 'town-crate-band');
     return g;
   }
 }
 
-/** Water trough (unit space): open box + water slab inside. */
+/** Water trough (unit space; the def scale y 0.47 / z 0.62 + x sx sizes it).
+ *  REAL LIVESTOCK TROUGH (visual-defect round — the old 4-wall box read as a
+ *  plain cube): plank walls on log skids, a protruding rim cap whose bottom
+ *  edge buries inside the walls, iron hoops hugging the body, a dark visible
+ *  interior floor and an inset water slab ~4.5 unit-% below the rim. Every
+ *  face pair either interpenetrates or keeps a real gap — nothing coplanar.
+ *  Unit box: length 1.0 (x ±0.5) · height 0.81 (y 0…0.81) · depth 0.69. */
 export class TownTroughFactory implements IAssetFactory {
   create(): THREE.Object3D {
     const g = new THREE.Group();
     g.name = 'town-trough';
-    addBox(g, M.woodGray, 0.96, 0.5, 0.94, 0, 0.25, -0.46, 'town-trough-wall-n');
-    addBox(g, M.woodGray, 0.96, 0.5, 0.94, 0, 0.25, 0.46, 'town-trough-wall-s');
-    addBox(g, M.woodGray, 0.1, 0.5, 0.9, -0.46, 0.25, 0, 'town-trough-wall-w');
-    addBox(g, M.woodGray, 0.1, 0.5, 0.9, 0.46, 0.25, 0, 'town-trough-wall-e');
-    addBox(g, M.woodGray, 0.96, 0.08, 0.94, 0, 0.04, 0, 'town-trough-base');
-    addBox(g, M.water, 0.84, 0.06, 0.82, 0, 0.36, 0, 'town-trough-water');
+    const H = 0.81;        // wall top (y)
+    const T = 0.08;        // plank thickness
+    const DEP = 0.69;      // opening depth (z)
+    const RIM = 0.07;      // rim cap height
+    const baseY = 0.14;    // wall bottom (sunk into the skids)
+    const bodyH = H - baseY - RIM * 0.5; // walls stop under the rim cap
+    // log skids under the body
+    for (const sx of [-1, 1]) {
+      const skid = addCylinder(g, M.woodDark, 0.045, 0.045, DEP - 0.02, 8, sx * 0.3, 0.045, 0, `town-trough-skid-${sx < 0 ? 'w' : 'e'}`);
+      skid.rotation.x = Math.PI / 2;
+    }
+    // plank walls (N/S full length; E/W nested between with a 1 cm gap)
+    for (const sz of [-1, 1]) {
+      addBox(g, M.woodGray, 1, bodyH, T, 0, baseY + bodyH / 2, sz * (DEP / 2 - T / 2), `town-trough-wall-${sz < 0 ? 'n' : 's'}`);
+    }
+    for (const sx of [-1, 1]) {
+      addBox(g, M.woodGray, T, bodyH, DEP - 2 * T - 0.02, sx * (0.5 - T / 2), baseY + bodyH / 2, 0, `town-trough-end-${sx < 0 ? 'w' : 'e'}`);
+    }
+    // dark interior floor
+    addBox(g, M.woodDark, 1 - 2 * T - 0.05, 0.02, DEP - 2 * T - 0.05, 0, baseY + 0.01, 0, 'town-trough-floor');
+    // protruding rim cap (bottom edge buried inside the walls)
+    const rimY = baseY + bodyH + RIM / 2 - 0.005;
+    for (const sz of [-1, 1]) {
+      addBox(g, M.woodGray, 1.04, RIM, T + 0.025, 0, rimY, sz * (DEP / 2 + 0.002), `town-trough-rim-${sz < 0 ? 'n' : 's'}`);
+    }
+    for (const sx of [-1, 1]) {
+      addBox(g, M.woodGray, T + 0.025, RIM, DEP + 0.04, sx * (0.5 + 0.002), rimY, 0, `town-trough-rim-${sx < 0 ? 'w' : 'e'}`);
+    }
+    // iron hoops (inside the wall band, hugging the walls)
+    for (const sx of [-1, 1]) {
+      const hoop = addCylinder(g, M.ironLight, DEP / 2 + 0.012, DEP / 2 + 0.012, 0.024, 14, sx * 0.28, baseY + bodyH * 0.45, 0, `town-trough-hoop-${sx < 0 ? 'w' : 'e'}`);
+      hoop.rotation.z = Math.PI / 2;
+      hoop.scale.y = 1;
+    }
+    // water slab: top ~4.5% of the unit height below the rim, clear of walls
+    addBox(g, M.water, 1 - 2 * T - 0.05, 0.03, DEP - 2 * T - 0.05, 0, H - 0.075, 0, 'town-trough-water');
     return g;
   }
 }
@@ -335,11 +431,22 @@ export class TownHitchingFactory implements IAssetFactory {
   create(): THREE.Object3D {
     const g = new THREE.Group();
     g.name = 'town-hitching';
-    addBox(g, M.woodDark, 0.14, 0.9, 0.5, -0.42, 0.45, 0, 'town-hitch-post-a');
-    addBox(g, M.woodDark, 0.14, 0.9, 0.5, 0.42, 0.45, 0, 'town-hitch-post-b');
-    addBox(g, M.woodDark, 0.96, 0.12, 0.16, 0, 0.86, 0, 'town-hitch-rail');
-    addCylinder(g, M.ironLight, 0.05, 0.05, 0.1, 8, -0.2, 0.68, 0, 'town-hitch-ring-a');
-    addCylinder(g, M.ironLight, 0.05, 0.05, 0.1, 8, 0.2, 0.68, 0, 'town-hitch-ring-b');
+    // REAL WESTERN HITCH RAIL (visual-defect round — the old two bare blocks
+    // read as primitive slabs): chamfered square posts with dome caps and
+    // buried feet, top + lower rails, diagonal end braces and an iron ring
+    // for the lead rope. Unit space; the def scale (2.0, 1.1, 0.35) sizes
+    // rails at ~0.93 m and the whole structure matches its collider exactly.
+    for (const sx of [-1, 1]) {
+      const x = sx * 0.4;
+      addBox(g, M.woodDark, 0.055, 0.95, 0.31, x, 0.475, 0, `town-hitch-post-${sx < 0 ? 'a' : 'b'}`);
+      addBox(g, M.woodGray, 0.075, 0.04, 0.34, x, 0.955, 0, `town-hitch-cap-${sx < 0 ? 'a' : 'b'}`);
+      const brace = addBox(g, M.woodGray, 0.025, 0.38, 0.09, x - sx * 0.085, 0.72, 0, `town-hitch-brace-${sx < 0 ? 'a' : 'b'}`);
+      brace.rotation.z = sx * 0.6;
+      const ring = addCylinder(g, M.ironLight, 0.045, 0.045, 0.09, 8, x + sx * 0.14, 0.62, 0, `town-hitch-ring-${sx < 0 ? 'a' : 'b'}`);
+      ring.rotation.z = Math.PI / 2;
+    }
+    addBox(g, M.woodMed, 0.98, 0.082, 0.145, 0, 0.845, 0, 'town-hitch-rail-top');
+    addBox(g, M.woodGray, 0.98, 0.064, 0.115, 0, 0.565, 0, 'town-hitch-rail-low');
     return g;
   }
 }
@@ -396,62 +503,109 @@ export class TownSignFactory implements IAssetFactory {
 /* Vegetation (sparse — the biome must feel alive, never a forest)            */
 /* -------------------------------------------------------------------------- */
 
-/** Tree: trunk + 2–3 olive canopy blobs. Def scale varies per tree
- *  (0.8–1.3, uniform) — natural size variety, collider false (soft). */
+/** Tree: bent tapered trunk + root flare + branches reaching into a crown of
+ *  craggy blobs (visual-defect round — the old clean icosahedra read as
+ *  primitive). Position-hashed vertex jitter keeps the low-poly blobs
+ *  watertight while breaking the silhouette. Def scale 0.8–1.3 varies size. */
 export class TownTreeFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
     const g = new THREE.Group();
     g.name = 'town-tree';
     const seed = Number(definition.metadata.seed ?? 1);
+    const rng = townRng(seed);
     const h = 2.1 + (seed % 5) * 0.22;
-    addCylinder(g, M.bark, 0.14, 0.2, h, 7, 0, h / 2, 0, 'town-tree-trunk');
     const canopyMat = seed % 3 === 0 ? M.leafDry : seed % 3 === 1 ? M.leafOlive : M.leafOliveDark;
-    const blobs: Array<[number, number, number, number]> = [
-      [0, h + 0.55, 0, 1.15],
-      [0.5, h + 0.2, 0.25, 0.8],
-      [-0.45, h + 0.35, -0.2, 0.7],
-    ];
-    blobs.forEach(([x, y, z, r], i) => {
-      const geo = new THREE.IcosahedronGeometry(r, 1);
-      const mesh = new THREE.Mesh(geo, canopyMat);
-      mesh.position.set(x * (0.8 + (seed % 4) * 0.1), y, z);
-      mesh.scale.y = 0.75 + (i % 2) * 0.15;
+    const barkMat = seed % 4 === 0 ? M.woodGray : M.bark;
+    const bendX = (rng() - 0.5) * 0.4;
+    const bendZ = (rng() - 0.5) * 0.4;
+    // bent trunk: two tapered segments + a base flare
+    const midH = h * 0.52;
+    const seg1 = addCylinder(g, barkMat, 0.14, 0.26, midH, 7, bendX * 0.1, midH / 2, bendZ * 0.1, 'town-tree-trunk-low');
+    seg1.rotation.z = -bendX * 0.1;
+    seg1.rotation.x = bendZ * 0.1;
+    const seg2 = addCylinder(g, barkMat, 0.1, 0.14, h - midH, 7, bendX * 0.55, midH + (h - midH) / 2, bendZ * 0.55, 'town-tree-trunk-up');
+    seg2.rotation.z = -bendX * 0.3;
+    seg2.rotation.x = bendZ * 0.3;
+    for (let i = 0; i < 3; i += 1) {
+      const a = rng() * Math.PI * 2;
+      const prong = addCylinder(g, barkMat, 0.03, 0.13, 0.3 + rng() * 0.12, 5, Math.cos(a) * 0.16, 0.14, Math.sin(a) * 0.16, `town-tree-flare-${i}`);
+      prong.rotation.z = Math.cos(a) * 0.5;
+      prong.rotation.x = -Math.sin(a) * 0.5;
+    }
+    // primary branches reaching into the crown
+    const crownY = h + 0.35;
+    for (let i = 0; i < 2 + (seed % 2); i += 1) {
+      const a = (i / 3) * Math.PI * 2 + rng() * 1.2;
+      const fromY = h * (0.62 + rng() * 0.2);
+      const to = new THREE.Vector3(Math.cos(a) * (0.6 + rng() * 0.4), crownY + (rng() - 0.3) * 0.5, Math.sin(a) * (0.6 + rng() * 0.4));
+      const from = new THREE.Vector3(bendX * fromY * 0.5, fromY, bendZ * fromY * 0.5);
+      const dir = to.clone().sub(from);
+      const branch = addCylinder(g, barkMat, 0.045, 0.09, dir.length(), 5, 0, 0, 0, `town-tree-branch-${i}`);
+      branch.position.copy(from.clone().add(to).multiplyScalar(0.5));
+      branch.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    }
+    // craggy crown: 4-5 jittered blobs (position-hashed — watertight)
+    const blobs = 4 + (seed % 2);
+    for (let i = 0; i < blobs; i += 1) {
+      const r = (i === 0 ? 1.05 : 0.5 + rng() * 0.45);
+      const a = rng() * Math.PI * 2;
+      const spread = i === 0 ? 0.12 : 0.4 + rng() * 0.5;
+      const mesh = new THREE.Mesh(townCraggyBlob(r, seed * 7 + i * 11, 0.14), canopyMat);
+      mesh.position.set(
+        Math.cos(a) * spread + bendX * 0.4,
+        crownY + (i === 0 ? 0.3 : (rng() - 0.4) * 0.8),
+        Math.sin(a) * spread + bendZ * 0.4,
+      );
+      mesh.scale.y = 0.72 + rng() * 0.28;
+      mesh.rotation.y = rng() * Math.PI;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.name = `town-tree-canopy-${i}`;
       g.add(mesh);
-    });
-    return g;
-  }
-}
-
-/** Bush: 1–2 small dry-olive blobs. */
-export class TownBushFactory implements IAssetFactory {
-  create(definition: ObjectDefinition): THREE.Object3D {
-    const g = new THREE.Group();
-    g.name = 'town-bush';
-    const seed = Number(definition.metadata.seed ?? 1);
-    const mat = seed % 2 ? M.leafDry : M.leafOliveDark;
-    const blob = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), mat);
-    blob.position.set(0, 0.3, 0);
-    blob.scale.set(1 + (seed % 3) * 0.14, 0.72 + (seed % 2) * 0.12, 1);
-    blob.castShadow = true;
-    blob.receiveShadow = true;
-    blob.name = 'town-bush-a';
-    g.add(blob);
-    if (seed % 3 !== 0) {
-      const b = blob.clone();
-      b.position.set(0.34, 0.22, 0.12);
-      b.scale.multiplyScalar(0.65);
-      b.name = 'town-bush-b';
-      g.add(b);
     }
     return g;
   }
 }
 
-/** Dry-grass cluster: ~14 small tufts (crossed quads) in ONE merged-style
- *  group — decorative ground cover, never a collider, never per-tuft defs. */
+/** Bush: 5-7 clustered sage lobes + twiggy branches (visual-defect round —
+ *  the old 1-2 clean blobs read as rocks). Ground-hugging, seed-varied. */
+export class TownBushFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    const g = new THREE.Group();
+    g.name = 'town-bush';
+    const seed = Number(definition.metadata.seed ?? 1);
+    const rng = townRng(seed);
+    const puffs = 5 + (seed % 3);
+    for (let i = 0; i < puffs; i += 1) {
+      const r = i === 0 ? 0.3 : 0.15 + rng() * 0.15;
+      const mat = i % 2 ? M.leafDry : M.leafOliveDark;
+      const a = rng() * Math.PI * 2;
+      const rad = i === 0 ? 0 : 0.12 + rng() * 0.26;
+      const mesh = new THREE.Mesh(townCraggyBlob(r, seed * 5 + i * 13, 0.09), mat);
+      mesh.position.set(Math.cos(a) * rad, (i === 0 ? 0.24 : 0.13 + rng() * 0.22), Math.sin(a) * rad);
+      mesh.scale.y = 0.66 + rng() * 0.22;
+      mesh.rotation.y = rng() * Math.PI;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = `town-bush-${i}`;
+      g.add(mesh);
+    }
+    for (let i = 0; i < 2 + (seed % 2); i += 1) {
+      const a = rng() * Math.PI * 2;
+      const lean = 0.35 + rng() * 0.5;
+      const h = 0.36 + rng() * 0.3;
+      const twig = addCylinder(g, M.bark, 0.008, 0.02, h, 4, Math.cos(a) * 0.12, h * 0.42, Math.sin(a) * 0.12, `town-bush-twig-${i}`);
+      twig.rotation.z = Math.cos(a) * lean;
+      twig.rotation.x = -Math.sin(a) * lean;
+    }
+    return g;
+  }
+}
+
+/** Dry-grass cluster: ~14 BLADE TUFTS (visual-defect round — the old cones
+ *  read as traffic cones). Each tuft is 5-7 tapered bent strips (4 tris each,
+ *  DoubleSide) in one of three deterministic archetypes — a real grass read
+ *  at cone-level cost. Decorative ground cover, never a collider. */
 export class TownGrassFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
     const g = new THREE.Group();
@@ -462,15 +616,45 @@ export class TownGrassFactory implements IAssetFactory {
     for (let i = 0; i < count; i += 1) {
       const a = (i * 137.5 + seed * 31) * (Math.PI / 180);
       const r = spread * Math.sqrt(((i * 61 + seed * 17) % 100) / 100);
-      const x = Math.cos(a) * r;
-      const z = Math.sin(a) * r;
-      const h = 0.22 + ((i * 29 + seed) % 10) * 0.02;
-      const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.09, h, 4), M.grassDry);
-      tuft.position.set(x, h / 2, z);
-      tuft.rotation.y = a;
-      tuft.name = `town-grass-tuft-${i}`;
-      tuft.receiveShadow = true;
-      g.add(tuft);
+      const cx = Math.cos(a) * r;
+      const cz = Math.sin(a) * r;
+      const rng = townRng(seed * 100 + i);
+      const archetype = i % 3; // fan · clump · windswept
+      const windYaw = rng() * Math.PI * 2;
+      const blades = 5 + Math.floor(rng() * 3);
+      for (let b = 0; b < blades; b += 1) {
+        const h = 0.2 + rng() * 0.24;
+        const la = rng() * Math.PI * 2;
+        let lean: number;
+        let yaw: number;
+        if (archetype === 0) {
+          lean = 0.35 + rng() * 0.55;
+          yaw = la;
+        } else if (archetype === 1) {
+          lean = 0.3 + rng() * 0.45;
+          yaw = (b % 2) * Math.PI + (rng() - 0.5) * 1.1;
+        } else {
+          lean = 0.5 + rng() * 0.6;
+          yaw = windYaw + (rng() - 0.5) * 0.9;
+        }
+        const w = 0.026;
+        const geo = new THREE.PlaneGeometry(w, h, 1, 2);
+        geo.translate(0, h / 2, 0);
+        const pos = geo.attributes.position;
+        for (let vi = 0; vi < pos.count; vi += 1) {
+          const t = pos.getY(vi) / h;
+          pos.setX(vi, pos.getX(vi) * (1 - t * 0.85));
+          pos.setZ(vi, ((rng() - 0.5) * 0.5) * t * t * h);
+        }
+        geo.computeVertexNormals();
+        const blade = new THREE.Mesh(geo, M.grassDry);
+        blade.rotation.y = yaw;
+        blade.rotation.x = lean;
+        blade.position.set(cx + (rng() - 0.5) * 0.18, 0, cz + (rng() - 0.5) * 0.18);
+        blade.receiveShadow = true;
+        blade.name = `town-grass-tuft-${i}-${b}`;
+        g.add(blade);
+      }
     }
     return g;
   }
@@ -541,7 +725,7 @@ export class TownHorseFactory implements IAssetFactory {
     addBox(g, body, 0.62, 0.68, 1.7, 0, 1.06, 0, 'town-horse-body');
     addBox(g, body, 0.34, 0.62, 0.4, 0, 1.6, -0.86, 'town-horse-neck').rotation.x = 0.35;
     addBox(g, body, 0.3, 0.34, 0.62, 0, 1.94, -1.18, 'town-horse-head');
-    addBox(g, M.horseMane, 0.1, 0.5, 0.34, 0, 1.86, -0.7, 'town-horse-mane');
+    addBox(g, M.horseMane, 0.1, 0.5, 0.34, 0, 1.88, -0.7, 'town-horse-mane');
     // legs
     for (const [x, z] of [[-0.22, -0.62], [0.22, -0.62], [-0.22, 0.66], [0.22, 0.66]] as const) {
       addBox(g, body, 0.15, 0.76, 0.17, x, 0.38, z, `town-horse-leg-${x}-${z}`);

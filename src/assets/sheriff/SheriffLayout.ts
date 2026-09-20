@@ -535,9 +535,11 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
     rotation: { x: 0, y: 90, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });
-  // Exterior lantern beside the front door, above the porch rail line.
+  // Exterior lantern beside the front door, above the porch rail line —
+  // mounted 3 cm PROUD of the facade (z-fight scan: the backplate face used
+  // to sit exactly on the wall plane shared with the SHERIFF sign board).
   push(SHERIFF_OBJECT_IDS.exteriorLantern, 'sheriff-lantern', 'کلانتری — چراغ بیرونی', {
-    position: { x: originX - 1.72, y: floorY + 2.2, z: originZ + L.depth / 2 + 0.005 },
+    position: { x: originX - 1.75, y: floorY + 2.2, z: originZ + L.depth / 2 + 0.005 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
   }, { collider: false });

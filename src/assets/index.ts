@@ -13,3 +13,5 @@ export * from './bank/index.js';
 export * from './sheriff/index.js';
 export * from './stable/index.js';
 export * from './gunshop/index.js';
+export * from './SiteTransform.js';
+export * from './town/index.js';

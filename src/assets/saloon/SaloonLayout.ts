@@ -52,8 +52,10 @@ export const SALOON_LAYOUT = Object.freeze({
   roofOverhang: 0.3,
 });
 
-/** World-space anchor of the saloon on the playable map. */
-export const SALOON_SITE = Object.freeze({ x: -12, z: -12 });
+/** World-space anchor of the saloon: WEST side of the main street of the
+ *  redesigned town, facing east onto the street (map assembly yaws it +90°
+ *  around this anchor — see TownLayout.TOWN_SITES / SiteTransform). */
+export const SALOON_SITE = Object.freeze({ x: -11.5, z: -21 });
 
 /** Canonical hex UUID block for the saloon (map uses 10000000-…-a000-…). */
 const SALOON_UUID_BASE = '10000000-0000-4000-a000-0000000000';

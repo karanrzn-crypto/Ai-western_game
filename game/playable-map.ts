@@ -77,6 +77,13 @@ import {
   GUNSHOP_SITE,
   GUNSHOP_DOOR_SPEC,
   setGunShopFrontDoorOpen,
+  registerAllTownFactories,
+  buildTownMapObjects,
+  TOWN_SITES,
+  TOWN_GROUND_SIZE,
+  TOWN_RESPAWN,
+  TOWN_HORSE_SPAWN,
+  rotateSiteDefs,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -88,8 +95,12 @@ const stage = document.getElementById('stage');
 if (!stage) throw new Error('Missing #stage');
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9a8d72);
-scene.fog = new THREE.Fog(0x9a8d72, 35, 90);
+// Warm dusty frontier haze (the reference-image biome): yellowish light over
+// compact dirt — NOT orange sand, NOT gray. Fog starts past the square so the
+// farm (≈55 m from the square) still reads while the far edge melts away.
+const SKY_DUST = 0xd8c7a2;
+scene.background = new THREE.Color(SKY_DUST);
+scene.fog = new THREE.Fog(SKY_DUST, 40, 105);
 
 const camera = new THREE.PerspectiveCamera(
   70,
@@ -138,19 +149,18 @@ const shadows = new ShadowScheduler({ idleIntervalSeconds: 0.15, movingIntervalS
 const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
-// 768² / 85m ≈ 9 texels/m — deliberately coarse (weak-laptop revision):
-// PCFSoft + normalBias 0.03 keep the soft readable look. 512² is the
-// documented next fallback if a future target needs an even cheaper pass.
-sun.shadow.mapSize.set(768, 768);
-// Shadow frustum sized to the PLAYABLE AREA: the map is a 60×60 ground
-// plane, so its farthest point from the light target (the origin) is the
-// half-diagonal 30√2 ≈ 42.4m. An ortho box of ±42.5 contains every map
-// point for EVERY sun azimuth (a projection never exceeds the vector
-// length), while the old hand-waved ±55 wasted 38% of the texel density.
-sun.shadow.camera.left = -42.5;
-sun.shadow.camera.right = 42.5;
-sun.shadow.camera.top = 42.5;
-sun.shadow.camera.bottom = -42.5;
+// Shadow frustum sized to the PLAYABLE AREA: the redesigned map is a
+// 120×120 ground plane (town redesign 2026-09), so its farthest point from
+// the light target (the origin) is the half-diagonal 60√2 ≈ 84.9 m. An ortho
+// box of ±85 contains every map point for EVERY sun azimuth. 768² would drop
+// to ≈4.5 texels/m — too soft for the new houses' rooflines — so the map
+// moves to 1024² (≈6 texels/m); the scheduled depth pass costs ≈2.5 ms per
+// refresh (every 150 ms idle) — the same trade the stable already vetted.
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -85;
+sun.shadow.camera.right = 85;
+sun.shadow.camera.top = 85;
+sun.shadow.camera.bottom = -85;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 200;
 sun.shadow.bias = -0.00035;
@@ -177,7 +187,7 @@ const characterStates = new CharacterStateMachine();
 const input = new InputBindings(window);
 input.attach();
 
-const grid = new THREE.GridHelper(60, 60, 0x514b40, 0x6b6252);
+const grid = new THREE.GridHelper(TOWN_GROUND_SIZE, TOWN_GROUND_SIZE, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
 scene.add(grid);
 
@@ -197,6 +207,7 @@ registerAllBankFactories(assets);
 registerAllSheriffFactories(assets);
 registerAllStableFactories(assets);
 registerAllGunShopFactories(assets);
+registerAllTownFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -236,11 +247,17 @@ const persistence = new PersistenceManager();
 // tack-room coil def and the stall rope extras are gone from the build, and
 // a v13 save still carries the 'rope-coil' def the factory no longer knows
 // (it would throw on materialisation). The key move drops those saves too.
-// v15 moves for the GUN SHOP: a whole new building block (34 defs) joins the
+// v15 moved for the GUN SHOP: a whole new building block (34 defs) joins the
 // authored layout, and saves rebuild the registry wholesale — an old save
 // would boot a town WITHOUT the gun shop. The key move drops v14 saves so
 // every player picks the shop up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v15' });
+// v16 moves for the TOWN REDESIGN (2026-09): the whole settlement layout —
+// ground size, road network, farm, square, six new buildings, rotated sites
+// for all five existing buildings, removed spawn cube + demo box — replaces
+// the authored layout wholesale. A v15 save would boot the OLD town over the
+// NEW one (saves rebuild the registry), so the key moves: every existing
+// player picks the redesigned town up.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v16' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -280,7 +297,9 @@ function resetAllToAuthored(): number {
 }
 
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
-const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
+// Respawn at the farm road's north end (the redesigned town's progression
+// starts at the farm and leads south — TownLayout is the single source).
+const RESPAWN_POINT = { x: TOWN_RESPAWN.x, y: CHARACTER_PROPORTIONS.eyeHeight, z: TOWN_RESPAWN.z };
 const playerController = new PlayerController(collisionWorld, {
   camera,
   initialPosition: { ...RESPAWN_POINT },
@@ -380,13 +399,13 @@ scene.add(contactIndicator.group);
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
   uuid: groundUuid,
-  assetType: 'ground',
+  assetType: 'town-ground',
   transform: {
     position: { x: 0, y: 0, z: 0 },
-    rotation: { x: -90, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
-  metadata: { name: 'زمین نقشه اصلی', size: 60, collider: false, editable: false },
+  metadata: { name: 'زمین نقشه اصلی', size: TOWN_GROUND_SIZE, collider: false, editable: false },
 });
 
 function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3): void {
@@ -402,135 +421,85 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
   });
 }
 
-addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 29.5), new THREE.Vector3(60, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
-addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(29.5, 1.5, 0), new THREE.Vector3(1, 3, 60));
+const half = TOWN_GROUND_SIZE / 2;
+addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -half + 0.5), new THREE.Vector3(TOWN_GROUND_SIZE, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, half - 0.5), new THREE.Vector3(TOWN_GROUND_SIZE, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-half + 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
+addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(half - 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
 
-const spawnUuid = '10000000-0000-4000-a000-000000000020';
-manager.registerObject({
-  uuid: spawnUuid,
-  assetType: 'cube',
-  transform: {
-    position: { x: 0, y: 0.75, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    scale: { x: 3, y: 1.5, z: 3 },
-  },
-  metadata: { name: 'مکعب اسپاون', editable: true, collider: true },
-});
-
-// A demo interactable for the generic interaction system (E key).
-interactions.register({
-  uuid: spawnUuid,
-  label: 'Inspect supply crate',
-  getPosition: () => ({ x: 0, y: 0.75, z: 0 }),
-  onInteract: () => showStatusMessage('The crate holds jerky, rifle rounds and a worn tin star.'),
-});
-
-// --- The enterable BUILDING -------------------------------------------------
-// One simple walk-in structure, built entirely from managed cubes (the same
-// primitive every other map object uses): four walls, a roof and a real
-// DOORWAY — a 1.6m gap in the south wall with a header above it — so the
-// player walks through the opening into an EMPTY enterable interior. No
-// decor, no furniture, no props: exactly walls + roof + door + interior.
-// Footprint 8×6m at (14, −12); walls 3m tall, 0.35m thick; roof slab above.
-const BUILDING = { x: 14, z: -12, w: 8, d: 6, h: 3, t: 0.35, doorW: 1.6, doorH: 2.3 };
-function addBuildingPart(
-  uuid: string,
-  name: string,
-  x: number, y: number, z: number,
-  sx: number, sy: number, sz: number,
-): void {
-  manager.registerObject({
-    uuid,
-    assetType: 'cube',
-    transform: {
-      position: { x, y, z },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: sx, y: sy, z: sz },
-    },
-    metadata: { name, editable: true, collider: true },
-  });
-}
-// North wall (back, away from the spawn) + west/east side walls.
-addBuildingPart('10000000-0000-4000-a000-000000000030', 'ساختمان - دیوار شمالی', BUILDING.x, BUILDING.h / 2, BUILDING.z - BUILDING.d / 2, BUILDING.w, BUILDING.h, BUILDING.t);
-addBuildingPart('10000000-0000-4000-a000-000000000031', 'ساختمان - دیوار غربی', BUILDING.x - BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
-addBuildingPart('10000000-0000-4000-a000-000000000032', 'ساختمان - دیوار شرقی', BUILDING.x + BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
-// South wall (facing the spawn) split around the doorway: two side segments
-// + the header above the door. The gap IS the entrance — nothing blocks it.
-{
-  const segW = (BUILDING.w - BUILDING.doorW) / 2;
-  const segCenter = BUILDING.w / 2 - segW / 2;
-  addBuildingPart('10000000-0000-4000-a000-000000000033', 'ساختمان - دیوار جنوبی (راست در)', BUILDING.x - segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
-  addBuildingPart('10000000-0000-4000-a000-000000000034', 'ساختمان - دیوار جنوبی (چپ در)', BUILDING.x + segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
-  addBuildingPart('10000000-0000-4000-a000-000000000035', 'ساختمان - بالای در', BUILDING.x, BUILDING.h - (BUILDING.h - BUILDING.doorH) / 2, BUILDING.z + BUILDING.d / 2, BUILDING.doorW, BUILDING.h - BUILDING.doorH, BUILDING.t);
-}
-// Roof — one slab with a slight overhang; its collider also stops re-entry
-// from above.
-addBuildingPart('10000000-0000-4000-a000-000000000036', 'ساختمان - سقف', BUILDING.x, BUILDING.h + 0.15, BUILDING.z, BUILDING.w + 0.7, 0.3, BUILDING.d + 0.7);
+// (The old yellow spawn cube + the empty demo "BUILDING" box were removed
+// with the town redesign: the cube sat where the fountain plaza now is and
+// the nameless box stood on the worker-house lot. Both were dev scaffolding,
+// not gameplay — the fountain square + the six new houses replace them, and
+// every wall in town still collides through the same registry mechanism.)
 
 // --- The SALOON (enterable western bar) -------------------------------------
-// A full enterable saloon on the west side of the spawn street, mirroring the
-// simple BUILDING across it: false-front facade + SALOON sign + porch face
-// south toward the spawn, the doorway gap is the real entrance, and the
-// interior carries bar / poker / piano corners as individually managed
-// objects (own UUIDs, own colliders). All placement data comes from the
-// saloon layout module — the SAME list the saloon tests assert against.
-for (const saloonDef of buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z)) {
-  manager.registerObject(saloonDef);
+// West side of the redesigned main street, facing EAST onto the street (yaw
+// +90° applied to the whole building via SiteTransform — exact quaternion
+// composition, collider-exact at 90°). Door/interact contracts unchanged:
+// door swings live in building-local space inside each def, so the yawed
+// building opens exactly like it always did.
+{
+  const yaw = TOWN_SITES.saloon.yaw;
+  for (const saloonDef of rotateSiteDefs(buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z), SALOON_SITE.x, SALOON_SITE.z, yaw)) {
+    manager.registerObject(saloonDef);
+  }
 }
 
 // --- The BANK (grand western frontier bank) ----------------------------------
-// Classical stone-facade bank terminating the street's north end, facing
-// south toward the spawn: 3-step stone stair → landing → four fluted columns
-// → entablature with gold BANK letters → triangular pediment. The doorway is
-// a real gap (elevated floor continues the landing), and the interior uses
-// the supplied bank interior asset library — teller counter + cage, vault
-// door in the rear wall, safe-deposit wall, floor safe, banker desk/chair,
-// grandfather clock, marble columns, rug, gas lamps, money bags and coins —
-// as individually managed objects. All placement data comes from the bank
-// layout module — the SAME list the bank tests assert against.
-for (const bankDef of buildBankMapObjects(BANK_SITE.x, BANK_SITE.z)) {
-  manager.registerObject(bankDef);
+// FAR side of the central square (west of the stable-road gap), yawed 180° so
+// the stair/columns/pediment face NORTH onto the square. Same rotation
+// mechanism as the saloon.
+{
+  const yaw = TOWN_SITES.bank.yaw;
+  for (const bankDef of rotateSiteDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, yaw)) {
+    manager.registerObject(bankDef);
+  }
 }
 
 // --- The SHERIFF OFFICE (western law building + two-cell jail) ---------------
-// Side-gable wood-frame office on the street's east side, facing south: porch
-// + SHERIFF sign over the public door, a full office interior (desk facing
-// the door, wanted board + badge behind it, gun rack/cabinet, stove with a
-// real stovepipe, wash stand, coat rack, key rack, ammo crates, kerosene
-// lamp) and a two-cell jail block behind a barred corridor — both cell doors
-// are genuinely openable (E). All placement data comes from the sheriff
-// layout module — the SAME list the sheriff tests assert against.
-for (const sheriffDef of buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z)) {
-  manager.registerObject(sheriffDef);
+// FAR side of the square (east of the stable-road gap), yawed 180° so the
+// porch + SHERIFF sign face north onto the square.
+{
+  const yaw = TOWN_SITES.sheriff.yaw;
+  for (const sheriffDef of rotateSiteDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, yaw)) {
+    manager.registerObject(sheriffDef);
+  }
 }
 
 // --- The LIVERY STABLE (working western horse stable + tack/feed/farrier) ---
-// Side-gable timber stable on the street's west side, south of the saloon,
-// facing south: a big double-leaf wagon gate + a staff door (both genuinely
-// openable, E), SIX stalls along a central aisle (each with its own hinged
-// stall door, trough, hay, nameplate), a tack room + a feed room in the
-// south corners (real hinged doors), a farrier bay + water station at the
-// north end under a full hay loft (deck, railing, ladder). All placement
-// data comes from the stable layout module — the SAME list the stable tests
-// assert against.
-for (const stableDef of buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z)) {
-  manager.registerObject(stableDef);
+// South of town on the stable road, yawed 180° so the big wagon gate + LIVERY
+// STABLE sign face NORTH toward the arriving player (the reference layout:
+// stable near the exit, corral across the road).
+{
+  const yaw = TOWN_SITES.stable.yaw;
+  for (const stableDef of rotateSiteDefs(buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z), STABLE_SITE.x, STABLE_SITE.z, yaw)) {
+    manager.registerObject(stableDef);
+  }
 }
 
 // --- The GUN SHOP (enterable western gunsmith store) -------------------------
-// One-story wood-frame shop on the street's east side, south of the sheriff,
-// facing south: false-front facade + hanging GUNSMITH sign + 4 facade windows
-// + porch, one real openable front door (E), and a full interior — sales
-// counter with glass display case / brass register / scale / ammo boxes, a
-// wall rack of long guns, ammo shelving, holster board, and a Gunsmith
-// workshop at the back (workbench, vise, tool rack) with powder keg + ammo
-// crates in the corner. Every firearm is a VISUAL PROP. All placement data
-// comes from the gun shop layout module — the SAME list the gun shop tests
-// assert against.
-for (const gunshopDef of buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z)) {
-  manager.registerObject(gunshopDef);
+// FIRST important building on the main street's EAST side (the player passes
+// it right after the town entrance, before the square — spec §7), yawed −90°
+// so the false front + porch face WEST onto the street.
+{
+  const yaw = TOWN_SITES.gunshop.yaw;
+  for (const gunshopDef of rotateSiteDefs(buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z), GUNSHOP_SITE.x, GUNSHOP_SITE.z, yaw)) {
+    manager.registerObject(gunshopDef);
+  }
+}
+
+// --- THE TOWN (redesigned settlement — ground, roads, farm, square, houses) --
+// Every def the town module emits: the mottled dusty ground, the road network
+// (farm road → entrance → main street → plaza → stable road → exit), the farm
+// area (house + individually-movable fence sections + livestock pen + crops +
+// pond + windmill), the ruined house on the outskirts, the central square
+// (fountain + benches + lamps + props), the six NEW buildings (farm/worker/
+// family/wealthy/meat-shop/ruined) and all street furniture + vegetation.
+// Placement source: src/assets/town/TownLayout.ts — the SAME list the town
+// tests assert against.
+for (const townDef of buildTownMapObjects()) {
+  manager.registerObject(townDef);
 }
 
 // --- The bank's barred iron gate (truly openable manager doorway) ------------
@@ -1512,6 +1481,10 @@ function applyModeState(): void {
   editor.setEditMode(editMode);
   input.setEnabled(!editMode); // gameplay + creative controls live outside edit
   debugAxes.visible = editMode;
+  // The editor's graph-paper aid never renders in play mode: over the 120 m
+  // dusty map it reads as a modern grid, not a frontier town (town redesign
+  // biome contract). Edit mode keeps it for placement reference.
+  grid.visible = editMode;
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
   updateEditorHud();
   updateControlHint();
@@ -1888,8 +1861,8 @@ scene.add(horseModel.root);
 const horseAnimator = new HorseAnimator(horseModel);
 const horsePersistence = new HorsePersistence();
 const horse = new HorseController(collisionWorld, {
-  position: { x: -5, y: 0, z: 9 },
-  yaw: 0.6,
+  position: { x: TOWN_HORSE_SPAWN.x, y: 0, z: TOWN_HORSE_SPAWN.z },
+  yaw: TOWN_HORSE_SPAWN.yaw,
 });
 const riderSocket = horseModel.riderSocket;
 

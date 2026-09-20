@@ -416,7 +416,7 @@ test('BANK WALKABILITY: stairs climb, doorway walkable, wall and counter block',
         if (Math.abs(settled.position.z - before) > Math.abs(r.position.z - before) + 1e-6) r = settled;
       }
       p = r.position;
-      if (p.z <= -19.5) return { z: p.z, y: p.y, stuckAt: -1 }; // deep inside the lobby
+      if (p.z <= BANK_SITE.z + 3.5) return { z: p.z, y: p.y, stuckAt: -1 }; // deep inside the lobby (site-relative)
       if (Math.abs(p.z - before) < 1e-6) return { z: p.z, y: p.y, stuckAt: i };
     }
     return { z: p.z, y: p.y, stuckAt: -2 };

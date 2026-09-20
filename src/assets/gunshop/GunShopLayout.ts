@@ -69,11 +69,11 @@ export const GUNSHOP_LAYOUT = Object.freeze({
   }),
 });
 
-/** World-space anchor of the Gun Shop on the playable map: east side of the
- *  street, south of the sheriff (its porch ends at z ≈ 4.0 → 1 m clear gap),
- *  facing south like every other building. Spawn (0, 12), horse (−5, 9) and
- *  the map boundary (x = 29.5) all stay clear. */
-export const GUNSHOP_SITE = Object.freeze({ x: 14, z: 8.5 });
+/** World-space anchor of the Gun Shop: FIRST building on the redesigned main
+ *  street's east side (the player passes it right after the town entrance,
+ *  before the square). Map assembly yaws it −90° so the porch faces west onto
+ *  the street. See TownLayout.TOWN_SITES / SiteTransform. */
+export const GUNSHOP_SITE = Object.freeze({ x: 10.5, z: -25 });
 
 /** Canonical hex UUID block for the gun shop (variant nibble 9 — unused:
  *  stable 8000, saloon a000, bank b000; the sheriff's 9000 sits under a

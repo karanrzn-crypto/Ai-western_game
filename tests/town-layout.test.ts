@@ -34,6 +34,8 @@ import {
   buildTownMapObjects,
   TOWN_HALF,
   TOWN_SITES,
+  TOWN_EXTERIOR_SITES,
+  TOWN_EXTERIOR_COLLIDERS,
   TOWN_RESPAWN,
   TOWN_HORSE_SPAWN,
   rotateSiteDefs,
@@ -90,19 +92,44 @@ function overlap(a: Box2, b: Box2, margin = 0): boolean {
   return a.x0 < b.x1 - margin && a.x1 > b.x0 + margin && a.z0 < b.z1 - margin && a.z1 > b.z0 + margin;
 }
 
-/** All 11 buildings of the redesigned town (5 existing + 6 new). */
+/** World footprint of a town-exterior building: the UNION of its composite
+ *  collider boxes (size × scale, offset × scale, rotated by the site yaw). */
+function exteriorFootprint(site: { x: number; z: number; yaw: number; scale: number }, type: string): Box2 {
+  const spec = TOWN_EXTERIOR_COLLIDERS[type as keyof typeof TOWN_EXTERIOR_COLLIDERS];
+  assert.ok(spec, `collider spec for ${type}`);
+  const a = (site.yaw * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+  for (const b of spec.boxes) {
+    const hx = (b.size.x * site.scale) / 2;
+    const hz = (b.size.z * site.scale) / 2;
+    const cx = site.x + (b.offset.x * site.scale) * cos + (b.offset.z * site.scale) * sin;
+    const cz = site.z - (b.offset.x * site.scale) * sin + (b.offset.z * site.scale) * cos;
+    for (const [sx, sz] of [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]] as const) {
+      // corner of the box in its own yawed frame
+      const wx = cx + sx * cos + sz * sin;
+      const wz = cz - sx * sin + sz * cos;
+      x0 = Math.min(x0, wx); x1 = Math.max(x1, wx);
+      z0 = Math.min(z0, wz); z1 = Math.max(z1, wz);
+    }
+  }
+  return { x0, x1, z0, z1 };
+}
+
+/** All 11 buildings of the redesigned town (5 original + 6 town-exterior). */
 const BUILDINGS: Array<{ name: string; box: Box2 }> = [
   { name: 'saloon', box: rotatedFootprint(SALOON_SITE, TOWN_SITES.saloon.yaw, SALOON_LAYOUT.width, SALOON_LAYOUT.depth, SALOON_LAYOUT.porchDepth) },
   { name: 'bank', box: rotatedFootprint(BANK_SITE, TOWN_SITES.bank.yaw, BANK_LAYOUT.width, BANK_LAYOUT.depth) },
   { name: 'sheriff', box: rotatedFootprint(SHERIFF_SITE, TOWN_SITES.sheriff.yaw, SHERIFF_LAYOUT.width, SHERIFF_LAYOUT.depth, SHERIFF_LAYOUT.porch.depth) },
   { name: 'stable', box: rotatedFootprint(STABLE_SITE, TOWN_SITES.stable.yaw, STABLE_LAYOUT.width, STABLE_LAYOUT.depth) },
   { name: 'gunshop', box: rotatedFootprint(GUNSHOP_SITE, TOWN_SITES.gunshop.yaw, GUNSHOP_LAYOUT.width, GUNSHOP_LAYOUT.depth, GUNSHOP_LAYOUT.porchDepth) },
-  { name: 'farmHouse', box: rotatedFootprint({ x: -12, z: -49.5 }, 90, 9, 7, 1.8) },
-  { name: 'workerHouse', box: rotatedFootprint({ x: 12, z: -2.5 }, -90, 7, 5.5, 1.2) },
-  { name: 'familyHouse', box: rotatedFootprint({ x: -20.5, z: 13 }, 180, 9, 6.5, 1.5) },
-  { name: 'wealthyHouse', box: rotatedFootprint({ x: 21, z: 13.5 }, 180, 11, 8, 2.0) },
-  { name: 'meatShop', box: rotatedFootprint({ x: -12, z: -1.5 }, 90, 8, 6, 1.9) },
-  { name: 'ruinedHouse', box: { x0: 27, x1: 35, z0: -53, z1: -47 } },
+  { name: 'farmHouse', box: exteriorFootprint(TOWN_EXTERIOR_SITES[4], 'house-farmstead') },
+  { name: 'workerHouse', box: exteriorFootprint(TOWN_EXTERIOR_SITES[1], 'house-worker') },
+  { name: 'familyHouse', box: exteriorFootprint(TOWN_EXTERIOR_SITES[2], 'house-family') },
+  { name: 'wealthyHouse', box: exteriorFootprint(TOWN_EXTERIOR_SITES[3], 'house-wealthy') },
+  { name: 'meatShop', box: exteriorFootprint(TOWN_EXTERIOR_SITES[0], 'butcher-stall') },
+  { name: 'ruinedHouse', box: exteriorFootprint(TOWN_EXTERIOR_SITES[5], 'house-abandoned') },
 ];
 
 /** The four through-streets (door spurs + the plaza are exempt by design). */
@@ -113,11 +140,31 @@ const STREETS: Array<{ name: string; box: Box2 }> = [
   { name: 'exitRoad', box: { x0: -3, x1: 3, z0: 34, z1: 60 } },
 ];
 
-/** The full assembled town: town defs + the five yawed buildings — the exact
- *  registration pipeline of game/playable-map.ts. */
+/** The six town-exterior building defs — the map's registration pipeline. */
+function buildExteriorDefs(): ObjectDefinition[] {
+  return TOWN_EXTERIOR_SITES.map((site) => ({
+    uuid: site.uuid,
+    assetType: site.type,
+    transform: {
+      position: { x: site.x, y: 0, z: site.z },
+      rotation: { x: 0, y: site.yaw, z: 0 },
+      scale: { x: site.scale, y: site.scale, z: site.scale },
+    },
+    metadata: {
+      name: site.name,
+      editable: true,
+      collider: TOWN_EXTERIOR_COLLIDERS[site.type as keyof typeof TOWN_EXTERIOR_COLLIDERS],
+    },
+  }));
+}
+
+/** The full assembled town: town defs + the six exterior buildings + the five
+ *  yawed original buildings — the exact registration pipeline of
+ *  game/playable-map.ts. */
 function assembleTown(): ObjectDefinition[] {
   return [
     ...townDefs,
+    ...buildExteriorDefs(),
     ...rotateSiteDefs(buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z), SALOON_SITE.x, SALOON_SITE.z, TOWN_SITES.saloon.yaw),
     ...rotateSiteDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, TOWN_SITES.bank.yaw),
     ...rotateSiteDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, TOWN_SITES.sheriff.yaw),
@@ -204,84 +251,23 @@ test('TOWN FENCES: the farm yard encloses with gate gaps onto the road + field',
 /* 3. Building shells                                                         */
 /* -------------------------------------------------------------------------- */
 
-test('TOWN HOUSES: walls tile the footprint; door blocks; collider policy exact', () => {
-  const houseWalls = byType('town-box').filter((d) => String(d.metadata.name).includes('دیوار') && !String(d.metadata.name).includes('خراب'));
-  assert.ok(houseWalls.length >= 24, `six houses need their wall sets (got ${houseWalls.length})`);
-  for (const wall of houseWalls) {
-    assert.equal(wall.metadata.collider, true, `wall ${wall.metadata.name} must block`);
-    assert.ok(wall.transform.scale.y >= 1.2, 'walls are real height');
-  }
-  // the front wall segments + the door must TILE the facade exactly:
-  // west segment [−W/2, −doorW/2] + door [−doorW/2, +doorW/2] + east segment
-  // [+doorW/2, +W/2] — no gap, no overlap, no corner poke-out.
-  const HOUSE_W: Record<string, number> = { 'خانه مزرعه': 9, 'خانه کارگری': 7, 'خانه خانوادگی': 9, 'خانه پولداری': 11, 'قصابی': 8 };
-  const HOUSE_SITE: Record<string, { x: number; z: number; yaw: number }> = {
-    'خانه مزرعه': { x: -12, z: -49.5, yaw: 90 },
-    'خانه کارگری': { x: 12, z: -2.5, yaw: -90 },
-    'خانه خانوادگی': { x: -20.5, z: 13, yaw: 180 },
-    'خانه پولداری': { x: 21, z: 13.5, yaw: 180 },
-    'قصابی': { x: -12, z: -1.5, yaw: 90 },
-  };
-  for (const [marker, W] of Object.entries(HOUSE_W)) {
-    // inverse-rotate the world def back into the building-local frame
-    const site = HOUSE_SITE[marker];
-    const localX = (def: ObjectDefinition): { x0: number; x1: number } => {
-      const wx = def.transform.position.x - site.x;
-      const wz = def.transform.position.z - site.z;
-      const a = (-site.yaw * Math.PI) / 180;
-      const lx = wx * Math.cos(a) + wz * Math.sin(a);
-      // rotateSiteDefs preserves the LOCAL-frame scale, so the facade-length
-      // extent of the wall is simply scale.x
-      return { x0: lx - def.transform.scale.x / 2, x1: lx + def.transform.scale.x / 2 };
-    };
-    const span = (name: string): { x0: number; x1: number } | null => {
-      const def = byType('town-box').find((d) => String(d.metadata.name) === `${marker} — ${name}`);
-      return def ? localX(def) : null;
-    };
-    const west = span('دیوار جلوئی (غربی)');
-    const east = span('دیوار جلوئی (شرقی)');
-    const door = span('در ورودی');
-    assert.ok(west && east && door, `${marker}: front kit present`);
-    assert.ok(Math.abs(west!.x0 + W / 2) < 1e-6, `${marker}: west segment starts AT the west corner (${west!.x0.toFixed(3)})`);
-    assert.ok(Math.abs(east!.x1 - W / 2) < 1e-6, `${marker}: east segment ends AT the east corner (${east!.x1.toFixed(3)})`);
-    assert.ok(Math.abs(west!.x1 - door!.x0) < 1e-6, `${marker}: west segment meets the door exactly`);
-    assert.ok(Math.abs(door!.x1 - east!.x0) < 1e-6, `${marker}: east segment meets the door exactly`);
-  }
+test('TOWN EXTERIOR BUILDINGS: the six approved buildings sit at their sites', () => {
+  const byUuid = new Map(buildExteriorDefs().map((d) => [d.uuid, d]));
 
-  // every intact house emits a blocking door box + a decor trim kit
-  const doors = byType('town-box').filter((d) => String(d.metadata.name).includes('در ورودی'));
-  const trims = byType('town-door');
-  assert.equal(doors.length, 5, 'farm/worker/family/wealthy/meat shop each close their door');
-  assert.equal(trims.length, 5, 'each door carries its trim kit');
-  for (const door of doors) assert.equal(door.metadata.collider, true, 'the closed door blocks');
-  for (const trim of trims) assert.equal(trim.metadata.collider, false, 'trim is decor');
-  // roofs and windows never collide (walls do the blocking)
-  for (const roof of byType('town-box').filter((d) => String(d.metadata.name).includes('سقف'))) {
-    assert.equal(roof.metadata.collider, false, `roof ${roof.metadata.name} is decor`);
-  }
-  for (const win of byType('town-window')) {
-    assert.equal(win.metadata.collider, false, 'windows are decor');
+  for (const site of TOWN_EXTERIOR_SITES) {
+    const def = byUuid.get(site.uuid);
+    assert.ok(def, `${site.name} (${site.uuid}) must be registered`);
+    assert.equal(def.assetType, site.type, `${site.name} asset type`);
+    assert.equal(def.metadata.name, site.name, `${site.name} name`);
+    const t = def.transform;
+    assert.ok(Math.abs(t.position.x - site.x) < 1e-6 && Math.abs(t.position.z - site.z) < 1e-6, `${site.name} site`);
+    assert.ok(Math.abs(t.rotation.y - site.yaw) < 1e-6, `${site.name} yaw`);
+    assert.ok(Math.abs(t.scale.x - site.scale) < 1e-6 && Math.abs(t.scale.z - site.scale) < 1e-6, `${site.name} scale (the model-round contract)`);
+    // composite collider boxes ride with the def (the SCALE CONTRACT)
+    const spec = TOWN_EXTERIOR_COLLIDERS[site.type as keyof typeof TOWN_EXTERIOR_COLLIDERS];
+    assert.deepEqual(def.metadata.collider, spec, `${site.name} carries the exact composite collider payload`);
   }
 });
-
-test('TOWN MEAT SHOP: false front + MEAT board + hanging meat rail + awning', () => {
-  const names = townDefs.map((d) => String(d.metadata.name));
-  assert.ok(names.some((n) => n.includes('تابلو MEAT')), 'the painted MEAT board exists');
-  assert.ok(names.some((n) => n.includes('چوبک گوشت')), 'the meat rail exists');
-  const awning = byType('town-box').filter((d) => String(d.metadata.name).includes('آفتاب‌گیر'));
-  assert.equal(awning.length, 3, 'canvas awning + two posts');
-  // the parapet (front wall to 4.15) must stand above the neighbours' eaves
-  const front = byType('town-box').filter((d) => String(d.metadata.name).includes('دیوار جلوئی'));
-  const meatFront = front.filter((d) => {
-    const s = d.transform.scale;
-    return Math.abs(s.y - 4.15) < 1e-6 || Math.abs(s.y - (4.15 - 2.1)) < 1e-6 || s.y === 4.15;
-  });
-  assert.ok(meatFront.length >= 0, 'front walls emitted');
-});
-
-/* -------------------------------------------------------------------------- */
-/* 4. Placement                                                               */
-/* -------------------------------------------------------------------------- */
 
 test('TOWN PLACEMENT: all 11 buildings pairwise clear and inside the boundaries', () => {
   for (let i = 0; i < BUILDINGS.length; i += 1) {
@@ -301,30 +287,6 @@ test('TOWN PLACEMENT: streets stay clear of every building footprint', () => {
     for (const building of BUILDINGS) {
       assert.equal(overlap(street.box, building.box, 0.2), false,
         `${building.name} must not sit on ${street.name}`);
-    }
-  }
-});
-
-test('TOWN PLACEMENT: each new house\u2019s defs really sit at its site (no origin strays)', () => {
-  // Regression guard: the town pipeline emits LOCAL defs then rotates them to
-  // the site. A pipeline bug (emitting at the origin) once parked a ruined
-  // wall on the town square — this test pins every def to its building.
-  const sites: Array<{ marker: string; box: Box2 }> = [
-    { marker: 'خانه مزرعه', box: BUILDINGS.find((b) => b.name === 'farmHouse')!.box },
-    { marker: 'خانه کارگری', box: BUILDINGS.find((b) => b.name === 'workerHouse')!.box },
-    { marker: 'خانه خانوادگی', box: BUILDINGS.find((b) => b.name === 'familyHouse')!.box },
-    { marker: 'خانه پولداری', box: BUILDINGS.find((b) => b.name === 'wealthyHouse')!.box },
-    { marker: 'قصابی', box: BUILDINGS.find((b) => b.name === 'meatShop')!.box },
-    { marker: 'خانه خراب', box: BUILDINGS.find((b) => b.name === 'ruinedHouse')!.box },
-  ];
-  for (const { marker, box } of sites) {
-    const parts = townDefs.filter((d) => String(d.metadata.name).includes(marker));
-    assert.ok(parts.length >= 6, `${marker}: expected its part set (got ${parts.length})`);
-    for (const part of parts) {
-      const p = part.transform.position;
-      // collider boxes of structural parts may poke ≤0.4 m past the footprint
-      assert.ok(p.x > box.x0 - 0.6 && p.x < box.x1 + 0.6 && p.z > box.z0 - 0.6 && p.z < box.z1 + 0.6,
-        `${marker} part "${part.metadata.name}" at (${p.x.toFixed(1)}, ${p.z.toFixed(1)}) must sit inside its footprint`);
     }
   }
 });
@@ -421,33 +383,42 @@ test('TOWN WALKABILITY: spawn → entrance → street → square → stable road
   walk({ x: 0, z: 43 }, { x: 0, z: 58 }, 'town exit');
 });
 
-test('TOWN WALKABILITY: every new house door is approachable from the street side', () => {
+test('TOWN WALKABILITY: exterior building bodies block (worker wall + butcher counter)', () => {
   const world = new CollisionWorld(assembleTown());
-  // stand in front of each door (building-local +Z side) and step toward it
-  const doors: Array<{ name: string; x: number; z: number; dx: number; dz: number }> = [
-    { name: 'farm house', x: -6.2, z: -49.5, dx: -0.5, dz: 0 },     // approach from the road (east)
-    { name: 'meat shop', x: -7.2, z: -1.5, dx: -0.5, dz: 0 },       // from the plaza (east)
-    { name: 'worker house', x: 7.6, z: -2.5, dx: 0.5, dz: 0 },      // from the plaza (west)
-    { name: 'family house', x: -20.5, z: 7.2, dx: 0, dz: 0.5 },     // from the north
-    { name: 'wealthy house', x: 21, z: 6.8, dx: 0, dz: 0.5 },       // from the north
-  ];
-  for (const d of doors) {
-    // step-up semantics (PlayerController): porches/steps are climbable, so a
-    // blocked ground move followed by lift→move→settle must still advance.
-    let pos = { x: d.x, y: PLAYER_HEIGHT, z: d.z };
-    let moved = 0;
-    for (let i = 0; i < 6; i += 1) {
-      let r = world.movePlayer(pos, { x: d.dx * 0.4, y: 0, z: d.dz * 0.4 });
-      if (r.blockedZ || r.blockedX) {
-        const lifted = world.movePlayer(pos, { x: 0, y: 0.35, z: 0 });
-        const stepped = world.movePlayer(lifted.position, { x: d.dx * 0.4, y: 0, z: d.dz * 0.4 });
-        const settled = world.movePlayer(stepped.position, { x: 0, y: -(0.35 + 0.05), z: 0 });
-        r = settled;
-      }
-      moved += Math.hypot(r.position.x - pos.x, r.position.z - pos.z);
-      pos = r.position;
+  // Exterior-only shells: the composite body boxes must stop the player.
+  // Approach runs STEP toward the face (movePlayer resolves against the
+  // destination, so a single long stride would tunnel past the wall).
+  const stepUntilBlocked = (from: { x: number; z: number }, d: { x: number; z: number }, maxSteps = 14): { blocked: boolean; x: number; z: number } => {
+    let pos = { x: from.x, z: from.z };
+    for (let i = 0; i < maxSteps; i += 1) {
+      const r = world.movePlayer({ x: pos.x, y: PLAYER_HEIGHT, z: pos.z }, { x: d.x, y: 0, z: d.z });
+      pos = { x: r.position.x, z: r.position.z };
+      if (r.blockedX || r.blockedZ) return { blocked: true, x: pos.x, z: pos.z };
     }
-    assert.ok(moved > 0.9, `${d.name}: the door approach must be reachable (moved ${moved.toFixed(2)} m)`);
+    return { blocked: false, x: pos.x, z: pos.z };
+  };
+  // worker house (site (12, −2.5) yaw −90, body 4.0×3.4 ×1.3): walking WEST
+  // into its east face stops at the face + radius.
+  {
+    const box = BUILDINGS.find((b) => b.name === 'workerHouse')!.box;
+    const r = stepUntilBlocked({ x: box.x1 + 2, z: -2.5 }, { x: -0.3, z: 0 });
+    assert.equal(r.blocked, true, 'worker house east wall must block');
+    assert.ok(Math.abs(r.x - (box.x1 + 0.35)) < 0.06, `player stops at face + radius (x=${r.x.toFixed(2)}, face ${box.x1.toFixed(2)})`);
+  }
+  // butcher stall counter (site (−12, −1.5) yaw 90): the open-front stall's
+  // counter faces the plaza (world +X) — walking WEST into it stops.
+  {
+    const box = BUILDINGS.find((b) => b.name === 'meatShop')!.box;
+    const r = stepUntilBlocked({ x: box.x0 - 2, z: -1.5 }, { x: 0.3, z: 0 });
+    assert.equal(r.blocked, true, 'butcher counter must block');
+    assert.ok(r.x < box.x0 + 1.2, `player stops at the counter (x=${r.x.toFixed(2)}, front ${box.x0.toFixed(2)})`);
+  }
+  // wealthy house (site (21, 13.5) yaw 180): walking NORTH into its front
+  // face stops at the facade.
+  {
+    const box = BUILDINGS.find((b) => b.name === 'wealthyHouse')!.box;
+    const r = stepUntilBlocked({ x: 21, z: box.z0 - 2 }, { x: 0, z: 0.3 });
+    assert.equal(r.blocked, true, 'wealthy house front wall must block');
   }
 });
 

@@ -14,15 +14,18 @@
  * PLAN (building-local, origin = footprint center on the ground, +Z = south
  * entrance, same convention as every other building in the town):
  *
- *   z = −6.25 … −0.55   hay loft deck over the north half (deck top y = 3.0)
- *   z = −6.25 … −5.65   farrier bay + water trough along the north wall
- *   z = −6.25 …  3.5    six stalls: 3 west (Stall 01–03) + 3 east (04–06),
- *                       each 3.25 frontage × ~3.31 depth, fronts on the aisle
+ *   z = −6.85 … −0.55   hay loft deck over the north half (deck top y = 3.0)
+ *   z = −6.85 … −5.15   farrier bay + water trough along the north wall
+ *   z = −6.85 …  2.9    six stalls: 3 west (Stall 01–03) + 3 east (04–06),
+ *                       each 3.25 frontage × ~3.9 depth, fronts on the aisle
  *   x = −1.975 … 1.975  CENTRAL AISLE (~3.83 m clear between stall fronts)
- *   z =  3.5 …  6.25    corner rooms: TACK (west) + FEED (east), each with a
+ *   z =  2.9 …  6.85    corner rooms: TACK (west) + FEED (east), each with a
  *                       real hinged door opening OUT into the aisle
- *   z =  6.25 …  6.5    south wall: main wagon gate (2.2 × 3.05, double
+ *   z =  6.85 …  7.1    south wall: main wagon gate (2.2 × 3.05, double
  *                       leaves, E) + staff door (1.05 × 2.25, E) + 2 windows
+ *   (the 2026 size revision grew the footprint 11.2×13.0 → 12.4×14.2 and the
+ *   eave height 3.4 → 3.8 — the stable read small against the saloon/bank;
+ *   every interior zone, prop, door and window shifted WITH its walls.)
  *
  * DOOR CONTRACT (all doors are managed objects that spawn CLOSED and are
  * E-opened; poses are pure functions of t — see StableDoors):
@@ -48,22 +51,25 @@ import type { ObjectDefinition } from '../../core/types.js';
 
 /** Building-local metric layout of the stable shell (meters, +Z = entrance). */
 export const STABLE_LAYOUT = Object.freeze({
-  /** Footprint: x ∈ [−w/2, w/2], z ∈ [−d/2, d/2] (d/2 = entrance side). */
-  width: 11.2,
-  depth: 13.0,
-  wallHeight: 3.4,
+  /** Footprint: x ∈ [−w/2, w/2], z ∈ [−d/2, d/2] (d/2 = entrance side).
+   *  Size revision: 11.2×13.0 read small against the saloon/bank block; the
+   *  12.4×14.2 footprint + 3.8 eaves keep the aisle/stall metrics identical
+   *  while every room, loft and bay gains breathing room. */
+  width: 12.4,
+  depth: 14.2,
+  wallHeight: 3.8,
   wallThickness: 0.25,
   /** Plank floor slab: y ∈ [0, floorTop] (one 0.1 step up — climbable). */
   floorTop: 0.1,
   floorSlabThickness: 0.1,
   /** Interior clear half-spans (inner wall faces). */
-  innerHalfX: 5.35,
-  innerHalfZ: 6.25,
+  innerHalfX: 5.95,
+  innerHalfZ: 6.85,
   /** Gable roof: ridge along z at x = 0 (slabs slope east/west). */
   roof: Object.freeze({
-    ridgeY: 5.5,
+    ridgeY: 5.9,
     /** Slab underside at the wall line (sits on the wall plates). */
-    wallSeatY: 3.45,
+    wallSeatY: 3.85,
     overhangX: 0.5,
     overhangZ: 0.55,
     thickness: 0.09,
@@ -89,30 +95,30 @@ export const STABLE_LAYOUT = Object.freeze({
   windows: Object.freeze([
     { wall: 'south', center: -3.6, sill: 1.55, width: 1.0, height: 1.3, bars: false, shutters: true },
     { wall: 'south', center: 2.75, sill: 1.7, width: 0.9, height: 1.1, bars: false, shutters: false },
-    { wall: 'west', center: -4.625, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
-    { wall: 'west', center: -1.375, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
-    { wall: 'west', center: 1.875, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
-    { wall: 'east', center: -4.625, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
-    { wall: 'east', center: -1.375, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
-    { wall: 'east', center: 1.875, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'west', center: -5.225, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'west', center: -1.975, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'west', center: 1.275, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'east', center: -5.225, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'east', center: -1.975, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
+    { wall: 'east', center: 1.275, sill: 1.9, width: 0.9, height: 1.15, bars: true, shutters: false },
     { wall: 'north', center: 0, sill: 1.5, width: 1.1, height: 1.2, bars: false, shutters: true },
   ] as const),
   /** Corner rooms (tack west / feed east). */
   rooms: Object.freeze({
-    /** Divider wall center z (rooms span z ∈ [3.56, 6.25]). */
-    dividerZ: 3.5,
+    /** Divider wall center z (rooms span z ∈ [2.96, 6.85]). */
+    dividerZ: 2.9,
     /** Room aisle walls at x = ±1.975 (t 0.12). */
     wallX: 1.975,
     thickness: 0.12,
     /** Room doorway in the aisle wall — doors swing OUT into the aisle. */
-    doorGap: Object.freeze({ zMin: 5.0, zMax: 6.05, height: 2.2 }),
+    doorGap: Object.freeze({ zMin: 5.6, zMax: 6.65, height: 2.2 }),
   }),
   /** Hay loft deck over the north half. */
   loft: Object.freeze({
     joistBottomY: 2.78,
     joistTopY: 2.93,
     deckTopY: 3.0,
-    zMin: -6.25,
+    zMin: -6.85,
     zMax: -0.55,
     /** Railing gap along the south edge where the ladder lands. */
     ladderGapX: Object.freeze({ min: 1.0, max: 1.8 }),
@@ -123,11 +129,12 @@ export const STABLE_LAYOUT = Object.freeze({
   }),
   /** Farrier bay solids — the bench and anvil flank the bay against the
    *  stall fronts, the trough hugs the north wall; the wagon path
-   *  (x ∈ [−0.6, 0.6]) stays clear end-to-end. */
+   *  (x ∈ [−0.6, 0.6]) stays clear end-to-end. (z −0.6 with the size
+   *  revision — the bay keeps its 0.6 m strip south of the north wall.) */
   farrier: Object.freeze({
-    anvil: Object.freeze({ x: 1.55, z: -5.3 }),
-    bench: Object.freeze({ x: -1.615, z: -5.3 }),
-    waterTrough: Object.freeze({ x: -1.1, z: -6.0 }),
+    anvil: Object.freeze({ x: 1.55, z: -5.9 }),
+    bench: Object.freeze({ x: -1.615, z: -5.9 }),
+    waterTrough: Object.freeze({ x: -1.1, z: -6.6 }),
   }),
 });
 
@@ -273,63 +280,65 @@ void propUuid();
 
 /** THE zone-prop placement table (single source, consumed by the map). */
 export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
-  // --- TACK ROOM (SW corner) ---
-  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۱', x: -5.02, y: 0.1, z: 4.35 },
-  { uuid: propUuid(), kind: 'saddle', name: 'زین ۱', x: -5.02, y: 0.845, z: 4.35, ry: deg(0.08) },
-  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۲', x: -5.02, y: 0.1, z: 5.55 },
-  { uuid: propUuid(), kind: 'saddle', name: 'زین ۲', x: -5.02, y: 0.845, z: 5.55, ry: deg(-0.12) },
-  { uuid: propUuid(), kind: 'tack-board', name: 'تخته یراق', x: -4.2, y: 1.82, z: 3.578 },
-  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۱', x: -4.75, y: 2.22, z: 3.605 },
-  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۲', x: -4.35, y: 2.22, z: 3.605, rz: deg(0.08) },
-  { uuid: propUuid(), kind: 'collar', name: 'یلغه', x: -3.85, y: 1.9, z: 3.61 },
-  { uuid: propUuid(), kind: 'strap', name: 'تسمه چرمی', x: -3.45, y: 1.95, z: 3.605, params: { len: 0.42 } },
-  { uuid: propUuid(), kind: 'tack-shelf', name: 'قفسه قوطی', x: -3.1, y: 1.6, z: 3.63 },
-  { uuid: propUuid(), kind: 'blanket-bar', name: 'میله پتو', x: -5.32, y: 1.65, z: 5.8 },
-  { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.28, y: 1.645, z: 5.8, ry: 90, params: { color: 0x7a4a3a } },
+  // --- TACK ROOM (SW corner; x −0.6 / z −0.6 + south-wall huggers +0.6 with
+  //  the 2026 size revision — every prop keeps its exact wall clearance) ---
+  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۱', x: -5.62, y: 0.1, z: 4.35 },
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۱', x: -5.62, y: 0.845, z: 4.35, ry: deg(0.08) },
+  { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۲', x: -5.62, y: 0.1, z: 5.55 },
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۲', x: -5.62, y: 0.845, z: 5.55, ry: deg(-0.12) },
+  { uuid: propUuid(), kind: 'tack-board', name: 'تخته یراق', x: -4.2, y: 1.82, z: 2.978 },
+  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۱', x: -4.75, y: 2.22, z: 3.005 },
+  { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۲', x: -4.35, y: 2.22, z: 3.005, rz: deg(0.08) },
+  { uuid: propUuid(), kind: 'collar', name: 'یلغه', x: -3.85, y: 1.9, z: 3.01 },
+  { uuid: propUuid(), kind: 'strap', name: 'تسمه چرمی', x: -3.45, y: 1.95, z: 3.005, params: { len: 0.42 } },
+  { uuid: propUuid(), kind: 'tack-shelf', name: 'قفسه قوطی', x: -3.1, y: 1.6, z: 3.03 },
+  { uuid: propUuid(), kind: 'blanket-bar', name: 'میله پتو', x: -5.92, y: 1.65, z: 5.8 },
+  { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.88, y: 1.645, z: 5.8, ry: 90, params: { color: 0x7a4a3a } },
   { uuid: propUuid(), kind: 'blanket', name: 'پتو تاشده', x: -4.85, y: 0.6, z: 5.0, ry: deg(0.16), params: { color: 0x5d5a4a } },
-  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (اتاق یراق)', x: -4.35, y: 1.95, z: 6.233, params: { side: 'south' } },
+  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (اتاق یراق)', x: -4.35, y: 1.95, z: 6.833, params: { side: 'south' } },
   { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی یراق', x: -4.85, y: 0.1, z: 5.0, ry: deg(0.16), params: { w: 0.45, h: 0.5 } },
-  { uuid: propUuid(), kind: 'tool-box', name: 'جعبه ابزار', x: -3.55, y: 0.1, z: 5.85, ry: deg(-0.4) },
-  { uuid: propUuid(), kind: 'sign', name: 'تابلوی TACK', x: -1.895, y: 2.7, z: 5.525, ry: 90, params: { text: 'TACK', w: 0.62, h: 0.26 } },
+  { uuid: propUuid(), kind: 'tool-box', name: 'جعبه ابزار', x: -3.55, y: 0.1, z: 6.45, ry: deg(-0.4) },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی TACK', x: -1.895, y: 2.7, z: 6.125, ry: 90, params: { text: 'TACK', w: 0.62, h: 0.26 } },
   { uuid: propUuid(), kind: 'sign', name: 'تابلوی RATES', x: -1.895, y: 1.85, z: 4.25, ry: 90, params: { text: 'RATES', w: 0.72, h: 0.5, sub: 'LIVERY 50c - SHOE 25c', dark: true } },
-  // --- FEED ROOM (SE corner) ---
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۱', x: 4.0, y: 0.1, z: 3.87 },
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۲', x: 4.9, y: 0.1, z: 3.87, ry: deg(0.03) },
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۳ (رویی)', x: 4.45, y: 0.6, z: 3.87, ry: deg(Math.PI / 2 + 0.05) },
+  // --- FEED ROOM (SE corner; x +0.6 with the east wall, signs follow doors) ---
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۱', x: 4.6, y: 0.1, z: 3.87 },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۲', x: 5.5, y: 0.1, z: 3.87, ry: deg(0.03) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۳ (رویی)', x: 5.05, y: 0.6, z: 3.87, ry: deg(Math.PI / 2 + 0.05) },
   { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۱', x: 2.6, y: 0.1, z: 3.95, ry: deg(0.1), params: { seed: 1 } },
   { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۲', x: 2.6, y: 0.1, z: 4.55, ry: deg(-0.15), params: { seed: 2 } },
   { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ۳', x: 2.6, y: 0.48, z: 4.25, ry: deg(0.35), params: { seed: 3 } },
   { uuid: propUuid(), kind: 'grain-sack', name: 'کیسه غله ایستاده', x: 3.3, y: 0.1, z: 4.5, params: { standing: true, seed: 4 } },
-  { uuid: propUuid(), kind: 'grain-bin', name: 'صندوق غله', x: 4.95, y: 0.1, z: 4.9 },
-  { uuid: propUuid(), kind: 'bucket', name: 'سطل فلزی', x: 5.05, y: 0.1, z: 5.9, params: { kind: 'metal', full: false } },
-  { uuid: propUuid(), kind: 'bucket', name: 'سطل چوبی رویی', x: 5.05, y: 0.33, z: 5.9, ry: deg(0.5), params: { kind: 'wood', full: false } },
-  { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی علوفه', x: 4.8, y: 0.1, z: 5.35, ry: deg(-0.22), params: { w: 0.5, h: 0.55 } },
+  { uuid: propUuid(), kind: 'grain-bin', name: 'صندوق غله', x: 5.55, y: 0.1, z: 4.9 },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل فلزی', x: 5.65, y: 0.1, z: 5.9, params: { kind: 'metal', full: false } },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل چوبی رویی', x: 5.65, y: 0.33, z: 5.9, ry: deg(0.5), params: { kind: 'wood', full: false } },
+  { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی علوفه', x: 5.4, y: 0.1, z: 5.35, ry: deg(-0.22), params: { w: 0.5, h: 0.55 } },
   { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (علوفه)', x: 3.4, y: 0.102, z: 5.3, params: { w: 2.2, d: 1.6, seed: 9 } },
-  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FEED', x: 1.895, y: 2.7, z: 5.525, ry: 90, params: { text: 'FEED', w: 0.62, h: 0.26 } },
-  // --- FARRIER BAY (north end) ---
-  { uuid: propUuid(), kind: 'hammer', name: 'چکش نعلبندی', x: -1.72, y: 1.0, z: -5.85, ry: deg(0.4) },
-  { uuid: propUuid(), kind: 'tongs', name: 'انبر نعلبندی', x: -1.52, y: 1.0, z: -5.62, ry: deg(-0.3) },
-  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۱', x: -1.68, y: 1.005, z: -5.12, rx: 90, rz: deg(-0.3) },
-  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۲', x: -1.5, y: 1.005, z: -5.2, rx: 90, rz: deg(0.5) },
-  { uuid: propUuid(), kind: 'nail-tin', name: 'قوطی میخ', x: -1.78, y: 1.05, z: -4.95 },
-  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FARRIER', x: -1.913, y: 2.42, z: -5.3, ry: 90, params: { text: 'FARRIER', w: 0.9, h: 0.32 } },
-  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (نعلبندی)', x: -0.2, y: 2.0, z: -6.233, params: { side: 'north' } },
-  { uuid: propUuid(), kind: 'scraps-box', name: 'جعبه قراضه آهن', x: -1.62, y: 0.21, z: -4.78 },
-  { uuid: propUuid(), kind: 'bucket', name: 'سطل آبکیری', x: 1.32, y: 0.1, z: -4.72, params: { kind: 'metal', full: true } },
-  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل افتاده', x: 0.92, y: 0.114, z: -4.55, rx: 90, rz: deg(1.1) },
-  { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (نعلبندی)', x: 0.5, y: 0.102, z: -4.4, params: { w: 1.0, d: 0.8, seed: 4 } },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FEED', x: 1.895, y: 2.7, z: 6.125, ry: 90, params: { text: 'FEED', w: 0.62, h: 0.26 } },
+  // --- FARRIER BAY (north end; z −0.6 with the north wall) ---
+  { uuid: propUuid(), kind: 'hammer', name: 'چکش نعلبندی', x: -1.72, y: 1.0, z: -6.45, ry: deg(0.4) },
+  { uuid: propUuid(), kind: 'tongs', name: 'انبر نعلبندی', x: -1.52, y: 1.0, z: -6.22, ry: deg(-0.3) },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۱', x: -1.68, y: 1.015, z: -5.72, rx: 90, rz: deg(-0.3) },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل روی میز ۲', x: -1.5, y: 1.015, z: -5.8, rx: 90, rz: deg(0.5) },
+  { uuid: propUuid(), kind: 'nail-tin', name: 'قوطی میخ', x: -1.78, y: 1.05, z: -5.55 },
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی FARRIER', x: -1.913, y: 2.42, z: -5.9, ry: 90, params: { text: 'FARRIER', w: 0.9, h: 0.32 } },
+  { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (نعلبندی)', x: -0.2, y: 2.0, z: -6.833, params: { side: 'north' } },
+  { uuid: propUuid(), kind: 'scraps-box', name: 'جعبه قراضه آهن', x: -1.62, y: 0.21, z: -5.38 },
+  { uuid: propUuid(), kind: 'bucket', name: 'سطل آبکیری', x: 1.32, y: 0.1, z: -5.32, params: { kind: 'metal', full: true } },
+  { uuid: propUuid(), kind: 'horseshoe', name: 'نعل افتاده', x: 0.92, y: 0.114, z: -5.15, rx: 90, rz: deg(1.1) },
+  { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (نعلبندی)', x: 0.5, y: 0.102, z: -5.0, params: { w: 1.0, d: 0.8, seed: 4 } },
   // --- WATER STATION ---
   { uuid: propUuid(), kind: 'small-barrel', name: 'بشکه آب', x: 1.45, y: 0.1, z: 4.35, params: { r: 0.3, h: 0.9 } },
   { uuid: propUuid(), kind: 'bucket', name: 'سطل آب فلزی', x: 0.92, y: 0.1, z: 5.18, ry: deg(0.6), params: { kind: 'metal', full: true } },
   { uuid: propUuid(), kind: 'bucket', name: 'سطل آب چوبی', x: 1.05, y: 0.1, z: 4.75, ry: deg(-0.4), params: { kind: 'wood', full: true } },
-  // --- HAY LOFT (deck top 3.0) ---
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۱', x: -3.7, y: 3.0, z: -5.55 },
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۲', x: -2.78, y: 3.0, z: -5.55, ry: deg(0.04) },
-  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۳ (رویی)', x: -3.24, y: 3.5, z: -5.55, ry: deg(Math.PI / 2 - 0.06) },
+  // --- HAY LOFT (deck top 3.0; north-wall huggers z −0.6 with the size
+  //  revision, mid-deck props keep their aisle-relative spots) ---
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۱', x: -3.7, y: 3.0, z: -6.15 },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۲', x: -2.78, y: 3.0, z: -6.15, ry: deg(0.04) },
+  { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۳ (رویی)', x: -3.24, y: 3.5, z: -6.15, ry: deg(Math.PI / 2 - 0.06) },
   { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۴', x: 3.1, y: 3.0, z: -4.7, ry: deg(-0.08) },
   { uuid: propUuid(), kind: 'hay-bale', name: 'باله شیروانی ۵', x: 3.99, y: 3.0, z: -4.72 },
   { uuid: propUuid(), kind: 'crate', name: 'جعبه شیروانی', x: -4.5, y: 3.0, z: -3.3, ry: deg(0.3), params: { w: 0.55, h: 0.6 } },
-  { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -5.8, params: { radius: 0.5, height: 0.32, seed: 5 } },
+  { uuid: propUuid(), kind: 'hay-pile', name: 'توده علوفه', x: 0.9, y: 3.0, z: -6.4, params: { radius: 0.5, height: 0.32, seed: 5 } },
   { uuid: propUuid(), kind: 'straw', name: 'پخش کاه (شیروانی)', x: 1.4, y: 3.002, z: -3.6, params: { w: 2.4, d: 2.0, seed: 7 } },
   // ROPE COILS — ALL deleted on user request. The hanging loft coil
   // («طناب آویز») went first (it floated mid-aisle in their save); the user
@@ -370,9 +379,9 @@ export interface StableStallSpec {
 }
 
 const stallZRows: ReadonlyArray<readonly [number, number]> = [
-  [-6.25, -3.0],
-  [-3.0, 0.25],
-  [0.25, 3.5],
+  [-6.85, -3.6],
+  [-3.6, -0.35],
+  [-0.35, 2.9],
 ];
 
 const stallVariation: ReadonlyArray<Omit<StableStallSpec, 'index' | 'side' | 'zMin' | 'zMax' | 'defX' | 'doorGapCenter' | 'troughZ'>> = [
@@ -672,7 +681,7 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
     const [b1, b2] = side === -1
       ? [STABLE_OBJECT_IDS.barWest1, STABLE_OBJECT_IDS.barWest2]
       : [STABLE_OBJECT_IDS.barEast1, STABLE_OBJECT_IDS.barEast2];
-    for (const [pi, pz] of [[0, -3.0], [1, 0.25]] as const) {
+    for (const [pi, pz] of [[0, -3.6], [1, -0.35]] as const) {
       box(side === -1 ? (pi === 0 ? z1 : z2) : (pi === 0 ? z1 : z2), 'stable-wall',
         `اسطبل — دیوار جداکننده (${side < 0 ? 'غرب' : 'شرق'} ${pi + 1})`,
         side * stripCx, floorY + L.stall.wainscotH / 2, pz,
@@ -769,7 +778,12 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
   box(STABLE_OBJECT_IDS.workbench, 'stable-workbench', 'اسطبل — میز کار نعلبندی',
     L.farrier.bench.x, floorY + 0.45, L.farrier.bench.z, 1.5, 0.9, 0.6, {}, 90);
   box(STABLE_OBJECT_IDS.anvil, 'stable-anvil', 'اسطبل — سندان',
-    L.farrier.anvil.x, floorY, L.farrier.anvil.z, 1, 1, 1);
+    L.farrier.anvil.x, floorY, L.farrier.anvil.z,
+    // EXACT composite box (anvil builder real dims: stump 0.6 + horn/heel
+    // span ≈ 0.87, 0.56 tall, 0.6 deep) — the old scale-1 transform gave a
+    // 1 m³ box that blocked 20 cm of invisible air around the visual.
+    1, 1, 1,
+    { collider: { boxes: [{ size: { x: 0.88, y: 0.56, z: 0.6 }, offset: { x: -0.1, y: 0.28, z: 0 } }] } });
 
   /* --- Zone PROPS (one managed object per logical entity) -------------------- */
   // The tack/feed/farrier/water/loft contents used to be five big groups;

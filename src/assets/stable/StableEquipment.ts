@@ -124,13 +124,15 @@ function buildGrainBin(): THREE.Group {
   return g;
 }
 
-/** Water barrel with the dipper across the rim (the dipper rides the barrel). */
+/** Water barrel with the dipper resting IN the water (the dipper rides the
+ *  barrel). Dipper bottom y = h+0.007 dips through the water surface top
+ *  (h+0.015) — it lies in the water instead of hovering above it. */
 function buildWaterBarrel(r: number, h: number): THREE.Group {
   const M_ = createStableMaterials();
   const g = new THREE.Group();
   g.name = 'water-barrel-unit';
   g.add(smallBarrel(r, h, true));
-  const dipper = addCyl(g, M_.tin, 0.05, 0.04, 0.03, 8, 0, h + 0.045, -0.22, 'water-dipper');
+  const dipper = addCyl(g, M_.tin, 0.05, 0.04, 0.03, 8, 0, h + 0.032, -0.22, 'water-dipper');
   dipper.rotation.x = Math.PI / 2;
   dipper.castShadow = true;
   return g;

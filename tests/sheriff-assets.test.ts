@@ -289,10 +289,16 @@ test('SHERIFF COLLISION: masonry and solid furniture carry colliders, decor does
   assert.equal(flag(SHERIFF_OBJECT_IDS.cellDoorB), true, 'closed cell door B must be a collider');
   // The front door spawns CLOSED — it is the office's public walkability switch.
   assert.equal(flag(SHERIFF_OBJECT_IDS.frontDoor), true, 'closed front door must be a collider');
-  // Solid furniture.
+  // Solid furniture (composites carry the object form { boxes: [...] } —
+  // exact local collision boxes; armed when true OR a box list).
+  const armed = (uuid: string, label: string): void => {
+    const c = flag(uuid);
+    const ok = c === true || (typeof c === 'object' && c !== null && (c as { enabled?: unknown }).enabled !== false);
+    assert.ok(ok, `${label} must be a collider`);
+  };
   for (const id of [SHERIFF_OBJECT_IDS.desk, SHERIFF_OBJECT_IDS.gunCabinet,
     SHERIFF_OBJECT_IDS.stove, SHERIFF_OBJECT_IDS.cotA, SHERIFF_OBJECT_IDS.cotB]) {
-    assert.equal(flag(id), true, `furniture ${id} must be a collider`);
+    armed(id, `furniture ${id}`);
   }
   // Shell kit + wall mounts + seats + small decor.
   for (const id of [SHERIFF_OBJECT_IDS.building, SHERIFF_OBJECT_IDS.chair,

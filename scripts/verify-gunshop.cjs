@@ -257,7 +257,55 @@ const IDS = {
       const root = scene.getObjectByProperty('uuid', uuid);
       return root.getObjectByName(name);
     };
-    const backing = boxOf(find(ids.rifleRack, 'gunshop-rack-backing'));
+    // Merge-aware part measurement: the perf merge pass replaces ≥2
+    // same-material static boxes of a def with ONE mesh named
+    // `<first source>+merged`, whose userData.mergedFrom lists the source
+    // part names in bucket order. Every merged gunshop source is an addBox
+    // (24-vertex indexed BoxGeometry), so a part's original world box is
+    // reconstructed from its 24-vertex chunk of the merged position
+    // attribute (bucket order == mergedFrom order == chunk order), baked in
+    // mount-local space — the host's matrixWorld maps it back to the world.
+    const partBox = (uuid, name) => {
+      const root = scene.getObjectByProperty('uuid', uuid);
+      const exact = root.getObjectByName(name);
+      if (exact) return boxOf(exact);
+      let host = null; let idx = -1;
+      root.traverse((o) => {
+        if (host || !o.userData || !o.userData.mergedFrom) return;
+        const i = o.userData.mergedFrom.indexOf(name);
+        if (i >= 0) { host = o; idx = i; }
+      });
+      if (!host) return undefined;
+      const parts = host.userData.mergedFrom.length;
+      const pos = host.geometry.attributes.position;
+      if (pos.count % parts !== 0) throw new Error('merge chunk mismatch: ' + host.name + ' ' + pos.count + ' verts / ' + parts + ' parts');
+      const per = pos.count / parts;
+      if (per !== 24) throw new Error('non-box merge chunk (' + per + ' verts) in ' + host.name + ' — chunk math assumes addBox sources');
+      const start = idx * per;
+      const lmin = [Infinity, Infinity, Infinity]; const lmax = [-Infinity, -Infinity, -Infinity];
+      for (let v = start; v < start + per; v++) {
+        const x = pos.getX(v); const y = pos.getY(v); const z = pos.getZ(v);
+        lmin[0] = Math.min(lmin[0], x); lmax[0] = Math.max(lmax[0], x);
+        lmin[1] = Math.min(lmin[1], y); lmax[1] = Math.max(lmax[1], y);
+        lmin[2] = Math.min(lmin[2], z); lmax[2] = Math.max(lmax[2], z);
+      }
+      host.updateWorldMatrix(true, false);
+      const m = host.matrixWorld.elements;
+      const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < 8; i++) {
+        const x = i & 1 ? lmax[0] : lmin[0];
+        const y = i & 2 ? lmax[1] : lmin[1];
+        const z = i & 4 ? lmax[2] : lmin[2];
+        const wx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        const wy = m[1] * x + m[5] * y + m[9] * z + m[13];
+        const wz = m[2] * x + m[6] * y + m[10] * z + m[14];
+        min[0] = Math.min(min[0], wx); max[0] = Math.max(max[0], wx);
+        min[1] = Math.min(min[1], wy); max[1] = Math.max(max[1], wy);
+        min[2] = Math.min(min[2], wz); max[2] = Math.max(max[2], wz);
+      }
+      return { min, max };
+    };
+    const backing = partBox(ids.rifleRack, 'gunshop-rack-backing');
     let gunsClear = 0;
     let gunsPlane = 0;
     const gunRoot = scene.getObjectByProperty('uuid', ids.rifleRack);
@@ -280,8 +328,8 @@ const IDS = {
       if (gb.min[0] > backing.max[0] - 0.001) gunsClear += 1;
       if (gb.max[0] - gb.min[0] < 0.1) gunsPlane += 1;
     }
-    const felt = boxOf(find(ids.displayCase, 'gunshop-display-felt'));
-    const glass = boxOf(find(ids.displayCase, 'gunshop-display-glass'));
+    const felt = partBox(ids.displayCase, 'gunshop-display-felt');
+    const glass = partBox(ids.displayCase, 'gunshop-display-glass');
     const caseRoot = scene.getObjectByProperty('uuid', ids.displayCase);
     let caseGuns = 0;
     let caseGunsFit = 0;

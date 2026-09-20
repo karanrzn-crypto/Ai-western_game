@@ -162,3 +162,133 @@ test('regression: collision bounds are cached and invalidated via the event bus'
   const bounds = world.getCollisionBounds();
   assert.equal(bounds[0].max.x, 11, 'rebuilt bounds reflect the new position');
 });
+
+// ---------------------------------------------------------------------------
+// FIX ROUND — 2026-09 «first-person controls + counters collision + stable»
+// ---------------------------------------------------------------------------
+
+import {
+  buildSaloonMapObjects,
+  buildGunShopMapObjects,
+  buildStableMapObjects,
+  SALOON_SITE,
+  GUNSHOP_SITE,
+  STABLE_SITE,
+  STABLE_LAYOUT,
+  dismountCameraPlan,
+} from '../src/index.js';
+
+test('fix round: FP A/D alone turn in place smoothly (no translation, no snap)', () => {
+  const controller = new PlayerController(new CollisionWorld([]), {
+    initialPosition: { x: 0, y: 1.7, z: 0 },
+    yaw: 0,
+    cameraMode: 'first_person',
+  });
+  let total = 0;
+  let worst = 0;
+  for (let i = 0; i < 120; i += 1) {
+    const before = controller.getBodyYaw();
+    controller.update(1 / 60, { left: true });
+    const step = controller.getBodyYaw() - before;
+    total += step;
+    worst = Math.max(worst, Math.abs(step));
+  }
+  assert.ok(total > 1.0, `FP A turned the view left (total ${total.toFixed(3)} rad)`);
+  assert.ok(Math.abs(controller.getPosition().x) < 1e-6, 'turn never translates');
+  assert.ok(worst <= 3.7 / 60 + 0.02, `per-frame turn bounded (${worst.toFixed(4)}) — no snap`);
+  // Release decays to zero (smooth stop).
+  for (let i = 0; i < 60; i += 1) controller.update(1 / 60, {});
+  assert.equal(controller.getTurnVelocity(), 0, 'spin decays to exact zero after release');
+});
+
+test('fix round: dismountCameraPlan — dismount is shown in third person, then the rider mode returns', () => {
+  const fpPlan = dismountCameraPlan('first_person');
+  assert.equal(fpPlan.during, 'third_person', 'the choreography is always visible (third person)');
+  assert.equal(fpPlan.after, 'first_person', 'a first-person rider returns to first person');
+  const tpPlan = dismountCameraPlan('third_person');
+  assert.equal(tpPlan.during, 'third_person');
+  assert.equal(tpPlan.after, 'third_person', 'a third-person rider keeps third person');
+});
+
+test('fix round: bar counter CORNERS block — the exact composite box, no oversize', () => {
+  const defs = buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z);
+  const world = new CollisionWorld(defs);
+  // Counter box (layout): x ∈ [SALOON_SITE.x−2.05, SALOON_SITE.x+2.05],
+  // z ∈ [SALOON_SITE.z−2.596, SALOON_SITE.z−1.776]. Old bug: a 1 m AABB at
+  // the anchor left both ENDS walk-through.
+  const zMid = SALOON_SITE.z - 2.186;
+  // 1) Walk INTO the counter's east END from open floor: must be stopped
+  //    just outside the visual end (x = +2.05) + player radius (0.35).
+  let pos = { x: SALOON_SITE.x + 4.5, y: 1.7, z: zMid };
+  let blocked = false;
+  for (let i = 0; i < 60; i += 1) {
+    const r = world.movePlayer(pos, { x: -0.1, y: 0, z: 0 });
+    if (r.blockedX) { blocked = true; pos = r.position; break; }
+    pos = r.position;
+  }
+  assert.ok(blocked, 'the counter east end must block the player');
+  assert.ok(pos.x > SALOON_SITE.x + 2.0,
+    `stopped at the visual end + radius (x=${pos.x.toFixed(3)}) — not deep inside, not far away`);
+  // 2) The corner zone (x ≈ +1.9, z at the counter face) must ALSO block.
+  let cornerPos = { x: SALOON_SITE.x + 1.9, y: 1.7, z: SALOON_SITE.z - 1.0 };
+  const corner = world.movePlayer(cornerPos, { x: 0, y: 0, z: -0.5 });
+  assert.ok(corner.blockedZ, 'the counter corner must block (old walk-through zone)');
+  assert.ok(corner.position.z > SALOON_SITE.z - 1.776 - 0.45,
+    `stopped just outside the counter face (z=${corner.position.z.toFixed(3)})`);
+  // 3) No oversize: standing 0.6 m EAST of the visual end must be free.
+  const free = world.movePlayer({ x: SALOON_SITE.x + 2.75, y: 1.7, z: zMid }, { x: 0.3, y: 0, z: 0 });
+  assert.equal(free.blockedX, false, 'no invisible collision beyond the visual end');
+  // 4) The poker-chair corner area stays clear (no extra collision).
+  const poker = world.movePlayer({ x: -9.413, y: 1.7, z: -11.913 }, { x: 0.4, y: 0, z: 0.4 });
+  assert.equal(poker.blockedX, false && poker.blockedZ, 'poker chair area stays walkable');
+});
+
+test('fix round: gunshop counter CORNERS block — exact box, both ends', () => {
+  const defs = buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z);
+  const world = new CollisionWorld(defs);
+  // Counter def at (GUNSHOP_SITE.x − 0.4, GUNSHOP_SITE.z + 1.4), box 3.26 × 0.73.
+  const cz = GUNSHOP_SITE.z + 1.4;
+  // East end walk-in.
+  let pos = { x: GUNSHOP_SITE.x + 2.6, y: 1.7, z: cz };
+  let blocked = false;
+  for (let i = 0; i < 60; i += 1) {
+    const r = world.movePlayer(pos, { x: -0.1, y: 0, z: 0 });
+    if (r.blockedX) { blocked = true; pos = r.position; break; }
+    pos = r.position;
+  }
+  assert.ok(blocked, 'the counter east end must block the player');
+  const eastEdge = GUNSHOP_SITE.x - 0.4 + 3.26 / 2;
+  assert.ok(pos.x > eastEdge - 0.02 && pos.x < eastEdge + 0.45,
+    `stopped at edge + radius (x=${pos.x.toFixed(3)}, edge ${eastEdge.toFixed(3)})`);
+  // West end walk-in.
+  let west = { x: GUNSHOP_SITE.x - 3.6, y: 1.7, z: cz };
+  let westBlocked = false;
+  for (let i = 0; i < 60; i += 1) {
+    const r = world.movePlayer(west, { x: 0.1, y: 0, z: 0 });
+    if (r.blockedX) { westBlocked = true; west = r.position; break; }
+    west = r.position;
+  }
+  assert.ok(westBlocked, 'the counter WEST end must also block (the old walk-through corner)');
+  const westEdge = GUNSHOP_SITE.x - 0.4 - 3.26 / 2;
+  assert.ok(west.x < westEdge + 0.02 && west.x > westEdge - 0.45,
+    `stopped at edge − radius (x=${west.x.toFixed(3)}, edge ${westEdge.toFixed(3)})`);
+});
+
+test('fix round: stable footprint grew to the 2026 size ratio (12.4 × 14.2, eaves 3.8)', () => {
+  assert.equal(STABLE_LAYOUT.width, 12.4);
+  assert.equal(STABLE_LAYOUT.depth, 14.2);
+  assert.equal(STABLE_LAYOUT.wallHeight, 3.8);
+  // Interior metrics preserved: 6 stalls of 3.25 frontage on both rows.
+  const defs = buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z);
+  const fronts = defs.filter((d) => d.assetType === 'stable-stall-front');
+  assert.equal(fronts.length, 18, 'stall front segments intact after the growth');
+  // The redesigned town places the stable on the stable road south of the
+  // square (TownLayout.TOWN_SITES.stable, yaw 180): it must stay inside the
+  // 120×120 boundary walls (±60) and clear of the corral across the road
+  // (corral east fence at x = −5.5).
+  const halfDiag = Math.hypot(STABLE_LAYOUT.width / 2, STABLE_LAYOUT.depth / 2);
+  assert.ok(STABLE_SITE.x - halfDiag > -60 && STABLE_SITE.z + halfDiag < 60,
+    'the grown stable still fits inside the boundary walls');
+  assert.ok(STABLE_SITE.x - STABLE_LAYOUT.width / 2 > -5.5 + 1.0,
+    `the stable west face (${STABLE_SITE.x - STABLE_LAYOUT.width / 2}) must clear the corral fence (−5.5)`);
+});

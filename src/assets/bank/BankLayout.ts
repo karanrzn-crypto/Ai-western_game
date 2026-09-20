@@ -231,6 +231,32 @@ export const BANK_OBJECT_IDS = Object.freeze({
   vaultMoneyBag2: bankUuid('24'),
   deskCoinStack: bankUuid('25'),
   lampVaultWest: bankUuid('32'),
+  frontDoor: bankUuid('33'),
+});
+
+/**
+ * The bank's grand walnut double door — the ONE openable street entrance.
+ * The map + tests read this table (house door contract, mirrors
+ * GUNSHOP_DOOR_SPEC): spawns CLOSED with the exact leaf-spanning collider
+ * armed, E flips the swing target, the pose is re-derived from t every
+ * frame, the collider releases past half-open.
+ */
+export const BANK_DOOR_SPEC = Object.freeze({
+  uuid: BANK_OBJECT_IDS.frontDoor,
+  labelOpen: 'Open the bank',
+  labelClose: 'Close the bank',
+  range: 2.6,
+  /** EXACT closed-door collider (the two leaves at the wall mid-plane):
+   *  2.16 m of leaf face (2 × 1.045 + meeting gaps), 2.44 m tall off the
+   *  floor top, 12 cm thick — collider == visual while closed. */
+  closedCollider: Object.freeze({
+    boxes: Object.freeze([
+      Object.freeze({
+        size: Object.freeze({ x: 2.16, y: 2.44, z: 0.12 }),
+        offset: Object.freeze({ x: 0, y: 1.22, z: 0 }),
+      }),
+    ]),
+  }),
 });
 
 const identity = () => ({ x: 0, y: 0, z: 0 });
@@ -330,6 +356,25 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     rotation: identity(),
     scale: { x: L.doorWidth, y: L.wallHeight - L.floorTop - L.doorHeight, z: t },
   }, { collider: true, brickRepeat: [2.2, 2.8] });
+
+  // --- The FRONT DOOR (real openable walnut double door, spawns CLOSED) ------
+  // Root at the doorway center on the wall MID-plane, seated on the interior
+  // floor top (= the landing top, so the threshold is seamless); the TWO
+  // hinge pivots sit 4 cm off the outer jambs. The inward sweep zone
+  // (x ∈ [−1.1, 1.1], z ∈ [3.4, 4.5] local) is kept empty by this layout —
+  // the marble columns stand at z = 1.9 and the rug passes under the raised
+  // leaf bottoms. Collider metadata = the EXACT closed-leaf box (collider
+  // == visual); the runtime toggle releases it fully while the door is open.
+  push(BANK_OBJECT_IDS.frontDoor, 'bank-front-door', 'بانک — در ورودی', {
+    position: { x: originX, y: L.floorTop, z: originZ + L.depth / 2 },
+    rotation: identity(),
+    scale: { x: 1, y: 1, z: 1 },
+  }, {
+    collider: BANK_DOOR_SPEC.closedCollider,
+    width: L.doorWidth,
+    height: L.doorHeight,
+    openDeg: 100 * (Math.PI / 180),
+  });
   // Attic story behind the entablature/pediment (rises from the roof top).
   push(BANK_OBJECT_IDS.atticWall, 'bank-wall', 'بانک — دیوار اتاق زیر شیروانی', {
     position: { x: originX, y: L.roofSlabTop + (L.entablature.friezeTopY - 0.01 - L.roofSlabTop) / 2, z: originZ + 4.4975 },
@@ -390,7 +435,14 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX, y: floorY, z: originZ - 0.1 },
     rotation: identity(),
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildTellerCounter real dims: 3.2 m + 0.1 top
+    // overhang, 0.6 + 0.1, 1.15 + 0.05) — composite-collider fix class
+    // (the §3 sweep: the old scale-1 AABB was a 1 m cube at the anchor).
+    collider: {
+      boxes: [{ size: { x: 3.3, y: 1.2, z: 0.7 }, offset: { x: 0, y: 0.6, z: 0 } }],
+    },
+  });
   // Cage sits ON the counter (base raised so its bottom rail sinks into the
   // marble top and the posts emerge from it — nothing floats, nothing
   // coplanar). Same footprint center as the counter.
@@ -555,7 +607,13 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX + 1.411, y: floorY, z: originZ - 1.975 },
     rotation: { x: 180, y: 0, z: 180 },
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildFloorSafe 0.7 body + door face) — the RX/RZ
+    // 180° flip mirrors local z, covered by the symmetric box. Composite fix.
+    collider: {
+      boxes: [{ size: { x: 0.72, y: 0.64, z: 0.62 }, offset: { x: 0, y: 0.32, z: 0 } }],
+    },
+  });
   // Money bags beside the vault rear wall (user Final).
   push(BANK_OBJECT_IDS.vaultMoneyBag1, 'money-bag', 'بانک — کیسه پول گاوصندوق ۱', {
     position: { x: originX + 1.015, y: floorY, z: originZ - 3.85 },
@@ -599,7 +657,13 @@ export function buildBankMapObjects(originX: number, originZ: number): ObjectDef
     position: { x: originX - 4.022, y: floorY, z: originZ - 2.7 },
     rotation: { x: 180, y: -66.052, z: 180 },
     scale: { x: 1, y: 1, z: 1 },
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildBankersDesk 1.5 × 0.8, top to 0.8) — the
+    // RX/RZ flip + yaw leaves the y offset intact (|y| symmetric). Composite.
+    collider: {
+      boxes: [{ size: { x: 1.5, y: 0.8, z: 0.8 }, offset: { x: 0, y: 0.4, z: 0 } }],
+    },
+  });
   push(BANK_OBJECT_IDS.bankersChair, 'bankers-chair', 'بانک — صندلی مدیر', {
     position: { x: originX - 5.03, y: floorY, z: originZ - 3.119 },
     rotation: { x: 0, y: 52.68, z: 0 },

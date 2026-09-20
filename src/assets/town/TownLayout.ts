@@ -34,13 +34,12 @@
  */
 
 import type { ObjectDefinition, Vec3 } from '../../core/types.js';
-import { rotateSiteDefs } from '../SiteTransform.js';
 import { SALOON_SITE } from '../saloon/SaloonLayout.js';
 import { BANK_SITE } from '../bank/BankLayout.js';
 import { SHERIFF_SITE } from '../sheriff/SheriffLayout.js';
 import { STABLE_SITE } from '../stable/StableLayout.js';
 import { GUNSHOP_SITE } from '../gunshop/GunShopLayout.js';
-import { emitHouseShell, emitFountain, emitRuinedHouse, type HouseShellSpec } from './TownBuildings.js';
+import { emitFountain } from './TownBuildings.js';
 
 /** Map half-size (ground is 120×120). */
 export const TOWN_GROUND_SIZE = 120;
@@ -54,6 +53,28 @@ export const TOWN_SITES = Object.freeze({
   stable: Object.freeze({ x: STABLE_SITE.x, z: STABLE_SITE.z, yaw: 180 }),
   gunshop: Object.freeze({ x: GUNSHOP_SITE.x, z: GUNSHOP_SITE.z, yaw: -90 }),
 });
+
+/**
+ * The SIX redesigned-town buildings — the user-approved scale-1.3 model round
+ * (src/assets/TownExteriorAssetFactory.ts) placed at the 17-section layout's
+ * sites. ONE def per building (composite collider boxes; CollisionWorld
+ * scales + yaws them with the def transform). Sites:
+ *   farmstead  — before town, inside the individually-fenced yard, faces the road
+ *   butcher    — RIGHT (west) side entering the square, counter faces the plaza
+ *   worker     — LEFT (east) side entering the square
+ *   family     — far side of the square, west of the bank
+ *   wealthy    — far side of the square, east of the sheriff
+ *   abandoned  — far north-east outskirts, isolated
+ * UUID block …030040+ sits far above the sequential town cursor (≤0x149).
+ */
+export const TOWN_EXTERIOR_SITES = Object.freeze([
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030040', type: 'butcher-stall', name: 'دکه قصابی', x: -12, z: -1.5, yaw: 90, scale: 1 }),
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030041', type: 'house-worker', name: 'خانه کارگری', x: 12, z: -2.5, yaw: -90, scale: 1.3 }),
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030042', type: 'house-family', name: 'خانه خانوادگی', x: -20.5, z: 13, yaw: 180, scale: 1.3 }),
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030043', type: 'house-wealthy', name: 'خانه پولداری', x: 21, z: 13.5, yaw: 180, scale: 1.3 }),
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: -12, z: -49.5, yaw: 90, scale: 1 }),
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030045', type: 'house-abandoned', name: 'خانه متروکه', x: 31, z: -50, yaw: 0, scale: 1.3 }),
+]);
 
 /** Player respawn: the farm road's north end — the progression starts at the
  *  farm and leads south into town (spec §2/§3). */
@@ -108,22 +129,6 @@ function box(
   rotation: Vec3 = { x: 0, y: 0, z: 0 },
 ): void {
   emit(assetType, name, { x, y, z }, metadata, rotation, { x: sx, y: sy, z: sz });
-}
-
-/** Building-local sink for the house emitters (rotated to the site after). */
-function localSink(ox: number, oz: number, out: ObjectDefinition[]): import('./TownBuildings.js').TownDefSink {
-  return (assetType, name, transform, metadata) => {
-    out.push({
-      uuid: townUuid(),
-      assetType,
-      transform: {
-        position: { x: ox + transform.position.x, y: transform.position.y, z: oz + transform.position.z },
-        rotation: transform.rotation,
-        scale: transform.scale,
-      },
-      metadata: { name, editable: true, ...metadata },
-    });
-  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -235,87 +240,6 @@ function horse(x: number, z: number, yaw: number, name: string, tint = 'horse'):
 /* The six new buildings — shell specs                                        */
 /* -------------------------------------------------------------------------- */
 
-const FARM_HOUSE_SPEC: HouseShellSpec = {
-  width: 9, depth: 7, wallHeight: 3.1, wallT: 0.3,
-  ridgeAlongX: true, roofPitchDeg: 24, roofOverhang: 0.35,
-  tint: 'plankB', doorWidth: 1.05, doorHeight: 2.05, doorOffsetX: 0,
-  windows: [
-    { side: 'front', offset: -2.7, w: 0.9, h: 1.25, sill: 1.15 },
-    { side: 'front', offset: 2.7, w: 0.9, h: 1.25, sill: 1.15 },
-    { side: 'back', offset: 0.4, w: 1.0, h: 1.15, sill: 1.2 },
-    { side: 'left', offset: 0.6, w: 0.85, h: 1.1, sill: 1.2 },
-    { side: 'right', offset: -0.9, w: 0.85, h: 1.1, sill: 1.2 },
-  ],
-  porchDepth: 1.8, porchRoof: true,
-  chimney: { side: 'right', offsetZ: -1.4 },
-  falseFrontTop: null, pad: true,
-};
-
-const WORKER_HOUSE_SPEC: HouseShellSpec = {
-  width: 7, depth: 5.5, wallHeight: 2.9, wallT: 0.28,
-  ridgeAlongX: true, roofPitchDeg: 20, roofOverhang: 0.3,
-  tint: 'plankC', doorWidth: 1.0, doorHeight: 2.0, doorOffsetX: 0.2,
-  windows: [
-    { side: 'front', offset: -2.1, w: 0.8, h: 1.1, sill: 1.1 },
-    { side: 'front', offset: 2.2, w: 0.8, h: 1.1, sill: 1.1 },
-    { side: 'back', offset: 0.5, w: 0.8, h: 1.0, sill: 1.15 },
-  ],
-  porchDepth: 1.2, porchRoof: false,
-  chimney: { side: 'left', offsetZ: 0.8 },
-  falseFrontTop: null, pad: true,
-};
-
-const FAMILY_HOUSE_SPEC: HouseShellSpec = {
-  width: 9, depth: 6.5, wallHeight: 3.3, wallT: 0.3,
-  ridgeAlongX: false, roofPitchDeg: 26, roofOverhang: 0.35,
-  tint: 'plankA', doorWidth: 1.05, doorHeight: 2.05, doorOffsetX: -0.3,
-  windows: [
-    { side: 'front', offset: -2.8, w: 0.9, h: 1.3, sill: 1.15 },
-    { side: 'front', offset: 2.9, w: 0.9, h: 1.3, sill: 1.15 },
-    { side: 'back', offset: 0, w: 0.95, h: 1.2, sill: 1.2 },
-    { side: 'left', offset: 1.3, w: 0.85, h: 1.15, sill: 1.2 },
-    { side: 'right', offset: -1.3, w: 0.85, h: 1.15, sill: 1.2 },
-  ],
-  porchDepth: 1.5, porchRoof: true,
-  chimney: { side: 'right', offsetZ: -1.6 },
-  falseFrontTop: null, pad: true,
-};
-
-const WEALTHY_HOUSE_SPEC: HouseShellSpec = {
-  width: 11, depth: 8, wallHeight: 5.9, wallT: 0.35,
-  ridgeAlongX: false, roofPitchDeg: 22, roofOverhang: 0.45,
-  tint: 'cream', doorWidth: 1.15, doorHeight: 2.15, doorOffsetX: 0,
-  windows: [
-    { side: 'front', offset: -3.4, w: 1.0, h: 1.4, sill: 1.25 },
-    { side: 'front', offset: 3.4, w: 1.0, h: 1.4, sill: 1.25 },
-    { side: 'front', offset: -3.4, w: 1.0, h: 1.3, sill: 4.0 },
-    { side: 'front', offset: 3.4, w: 1.0, h: 1.3, sill: 4.0 },
-    { side: 'left', offset: 1.8, w: 0.95, h: 1.35, sill: 1.25 },
-    { side: 'left', offset: -1.8, w: 0.95, h: 1.35, sill: 4.0 },
-    { side: 'right', offset: 1.8, w: 0.95, h: 1.35, sill: 1.25 },
-    { side: 'right', offset: -1.8, w: 0.95, h: 1.35, sill: 4.0 },
-    { side: 'back', offset: -2.2, w: 0.95, h: 1.3, sill: 1.25 },
-    { side: 'back', offset: 2.2, w: 0.95, h: 1.3, sill: 4.0 },
-  ],
-  porchDepth: 2.0, porchRoof: true,
-  chimney: { side: 'right', offsetZ: -2.2 },
-  falseFrontTop: null, pad: true,
-};
-
-const MEAT_SHOP_SPEC: HouseShellSpec = {
-  width: 8, depth: 6, wallHeight: 3.0, wallT: 0.3,
-  ridgeAlongX: true, roofPitchDeg: 14, roofOverhang: 0.3,
-  tint: 'plankA', doorWidth: 1.1, doorHeight: 2.1, doorOffsetX: 0,
-  windows: [
-    { side: 'front', offset: -2.5, w: 1.5, h: 1.5, sill: 0.9 },
-    { side: 'front', offset: 2.5, w: 1.5, h: 1.5, sill: 0.9 },
-    { side: 'back', offset: 0, w: 0.9, h: 1.0, sill: 1.3 },
-  ],
-  porchDepth: null, porchRoof: false,
-  chimney: null,
-  falseFrontTop: 4.15, pad: true,
-};
-
 /* -------------------------------------------------------------------------- */
 /* THE TOWN                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -359,13 +283,6 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   road('لکه خاک ۷', -13, 35, 3.8, 2.8, 0.015, 'patch');
 
   /* -- FARM AREA (north, before town — spec §3) ---------------------------- */
-  // farm house, facing east onto the farm road
-  {
-    const site = { x: -12, z: -49.5, yaw: 90 };
-    const local: ObjectDefinition[] = [];
-    emitHouseShell(localSink(site.x, site.z, local), FARM_HOUSE_SPEC, 0, 0, 'خانه مزرعه');
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
   // yard fence: rectangle X [−21, −5.8] × Z [−57, −38.5], gates east + south
   fenceRun({ name: 'حصار مزرعه — شمال', from: [-21, -57], to: [-5.8, -57], style: 'farm' });
   fenceRun({ name: 'حصار مزرعه — جنوب', from: [-21, -38.5], to: [-5.8, -38.5], gaps: [[-16.4, -13.8]], style: 'farm' });
@@ -393,13 +310,6 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   bush(14.6, -55.6, 4, 'بوته مزرعه ۲');
   rock(-22.9, -42.6, 'سنگ مزرعه', 1.1, 0.7, 1.0);
 
-  /* -- RUINED HOUSE (far north-east outskirts — spec §5) ------------------- */
-  {
-    const site = { x: 31, z: -50, yaw: 0 };
-    const local: ObjectDefinition[] = [];
-    emitRuinedHouse(localSink(site.x, site.z, local), 0, 0);
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
   fenceRun({ name: 'حصار خرابه', from: [26.5, -44.6], to: [32, -44.6], style: 'farm' });
   bush(27.4, -54.2, 5, 'بوته خرابه ۱');
   bush(36.2, -51.2, 3, 'بوته خرابه ۲');
@@ -460,43 +370,6 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   bush(-14.3, -13.6, 5, 'بوته میدان ۳', 0.9);
   bush(14.9, -13.2, 1, 'بوته میدان ۴');
 
-  /* -- MEAT SHOP — RIGHT side entering the square (west; spec §9) ----------- */
-  {
-    const site = { x: -12, z: -1.5, yaw: 90 };
-    const local: ObjectDefinition[] = [];
-    const sink = localSink(site.x, site.z, local);
-    emitHouseShell(sink, MEAT_SHOP_SPEC, 0, 0, 'قصابی');
-    // awning: canvas slab + 2 iron posts over the walk
-    sink('town-box', 'قصابی — آفتاب‌گیر', { position: { x: 0, y: 2.62, z: 3.85 }, rotation: { x: 8, y: 0, z: 0 }, scale: { x: 7.4, y: 0.07, z: 1.7 } }, { tint: 'canvas', collider: false });
-    sink('town-box', 'قصابی — پایه آفتاب‌گیر غربی', { position: { x: -3.4, y: 1.3, z: 4.55 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.12, y: 2.6, z: 0.12 } }, { tint: 'iron', collider: false });
-    sink('town-box', 'قصابی — پایه آفتاب‌گیر شرقی', { position: { x: 3.4, y: 1.3, z: 4.55 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.12, y: 2.6, z: 0.12 } }, { tint: 'iron', collider: false });
-    // hanging meat rail under the awning + painted MEAT board on the parapet
-    sink('town-meat-rail', 'قصابی — چوبک گوشت', { position: { x: 0.9, y: 2.34, z: 3.6 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }, { width: 1.9, collider: false });
-    sink('town-board', 'قصابی — تابلو MEAT', { position: { x: 0, y: 3.72, z: 3.16 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }, { text: 'MEAT', width: 2.1, height: 0.62, collider: false });
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
-
-  /* -- WORKER HOUSE — LEFT side entering the square (east; spec §9) --------- */
-  {
-    const site = { x: 12, z: -2.5, yaw: -90 };
-    const local: ObjectDefinition[] = [];
-    emitHouseShell(localSink(site.x, site.z, local), WORKER_HOUSE_SPEC, 0, 0, 'خانه کارگری');
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
-
-  /* -- FAR SIDE of the square (spec §10): family + wealthy ------------------ */
-  {
-    const site = { x: -20.5, z: 13, yaw: 180 };
-    const local: ObjectDefinition[] = [];
-    emitHouseShell(localSink(site.x, site.z, local), FAMILY_HOUSE_SPEC, 0, 0, 'خانه خانوادگی');
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
-  {
-    const site = { x: 21, z: 13.5, yaw: 180 };
-    const local: ObjectDefinition[] = [];
-    emitHouseShell(localSink(site.x, site.z, local), WEALTHY_HOUSE_SPEC, 0, 0, 'خانه پولداری');
-    defs.push(...rotateSiteDefs(local, site.x, site.z, site.yaw));
-  }
   tree(28.3, 8.0, 4, 1.05, 'درخت باغ پولداری');
   bush(14.1, 6.2, 6, 'بوته باغ پولداری ۱', 1.1);
   bush(15.6, 18.2, 2, 'بوته باغ پولداری ۲');

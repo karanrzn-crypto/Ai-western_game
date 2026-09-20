@@ -129,7 +129,9 @@ export function buildStallContents(spec: StableStallSpec): THREE.Group {
     addBox(rack, M_.hay, 0.16, hayH, rw - 0.16, wallX - side * 0.13, bottomY + 0.1 + hayH / 2, 0, 'rack-hay');
     if (spec.rack === 'full') {
       const topClump = hayPile(0.18, 0.1, spec.index + 20);
-      topClump.position.set(wallX - side * 0.16, bottomY + rh - 0.02, 0);
+      // Base ON the rack top board (back-to-back) — the old −0.02 offset
+      // buried the clump's lower slab inside the board.
+      topClump.position.set(wallX - side * 0.16, bottomY + rh, 0);
       rack.add(topClump);
     }
     rack.position.set(0, 0, northZ + 1.15);

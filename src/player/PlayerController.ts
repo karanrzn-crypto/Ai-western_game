@@ -716,29 +716,33 @@ export class PlayerController {
   }
 
   /**
-   * Body yaw logic (third person):
-   *   - A/D held ALONE (no W/S) spin the body in place: the ANGULAR
-   *     VELOCITY is what gets smoothed (never the angle per key press), so
-   *     the turn starts fast but never snaps, holds a constant dt-driven
-   *     rate while held, and decays exponentially on release — a natural
-   *     smooth stop with no jerk. The camera rotates in lockstep with the
-   *     body (it can never lag and catch up later) while any pre-existing
-   *     orbit offset eases toward "exactly behind".
-   *   - forward-dominant movement (W held, S released) turns the body
-   *     smoothly (exponential + angular-speed cap) toward the latched
-   *     movement heading, and the CAMERA FOLLOWS the body's rotation 1:1
-   *     while any residual orbit offset eases behind at moveCameraAlignRate
-   *     (= bodyTurnRate by default): W±A/D runs therefore end with the
-   *     camera settled behind the character DURING the run, never as a
-   *     post-stop catch-up. With the equal-rate pairing a pure-W realign
-   *     leaves the camera bit-stationary — the body does the whole turn.
+   * Body yaw logic (both camera modes):
+   *   - A/D held ALONE (no W/S) spin the body in place in FIRST person too
+   *     (controls-consistency revision: the game's A/D-alone = turn language
+   *     now matches across on-foot first/third person and riding). The
+   *     ANGULAR VELOCITY is what gets smoothed (never the angle per key
+   *     press), so the turn starts fast but never snaps, holds a constant
+   *     dt-driven rate while held, and decays exponentially on release — a
+   *     natural smooth stop with no jerk. In first person the body IS the
+   *     camera, so bodyYaw and cameraYaw stay locked; in third person the
+   *     camera rotates WITH the body every frame (it can never lag behind
+   *     and catch up later) while any residual orbit offset eases toward
+   *     "exactly behind".
+   *   - forward-dominant movement (W held, S released, third person) turns
+   *     the body smoothly (exponential + angular-speed cap) toward the
+   *     latched movement heading, and the CAMERA FOLLOWS the body's rotation
+   *     1:1 while any residual orbit offset eases behind at
+   *     moveCameraAlignRate (= bodyTurnRate by default): W±A/D runs therefore
+   *     end with the camera settled behind the character DURING the run,
+   *     never as a post-stop catch-up. With the equal-rate pairing a pure-W
+   *     realign leaves the camera bit-stationary — the body does the whole
+   *     turn.
    *   - W/S ± A/D and S alone slide the body without rotating it (and the
    *     camera follows nothing); idle frames rotate nothing.
-   * First person: look() owns the heading; nothing turns here.
+   * First person look(): still owns the heading when the mouse moves.
    */
   private updateBodyYaw(dt: number, move: MovementIntent): void {
     if (this.dead) return;
-    if (this.cameraMode === 'first_person') return;
 
     // --- Turn-in-place (A/D alone): dt-driven continuous spin --------------
     if (move.turn !== 0) {
@@ -752,6 +756,11 @@ export class PlayerController {
     if (this.spinVel !== 0) {
       const delta = this.spinVel * dt;
       this.bodyYaw += delta;
+      if (this.cameraMode === 'first_person') {
+        // The body IS the camera: the view rotates with it, one value.
+        this.cameraYaw = this.bodyYaw;
+        return;
+      }
       // Camera follows synchronously: it rotates WITH the body every frame
       // (it can never remain on the old side and snap later), while any
       // residual orbit offset eases toward zero behind the character.
@@ -764,6 +773,7 @@ export class PlayerController {
       return; // the spin owns the body this frame
     }
 
+    if (this.cameraMode === 'first_person') return;
     if (move.x === 0 && move.z === 0) return;
     if (!move.forwardDominant) return;
 
@@ -822,15 +832,18 @@ export class PlayerController {
 
   /**
    * Movement direction for this frame. First person stays live view-relative
-   * every frame. Third person samples the world-space heading from the
-   * CURRENT camera basis when the movement starts, when the movement key set
-   * changes, or when an RMB orbit rotated the camera (so a mid-run drag
-   * still bends the path); between those events the heading is world-fixed
-   * so the camera can follow the turning body without a perpetual chase.
+   * every frame (A/D alone turn in place via the turn branch above — they
+   * only strafe when W/S is held too). Third person samples the world-space
+   * heading from the CURRENT camera basis when the movement starts, when the
+   * movement key set changes, or when an RMB orbit rotated the camera (so a
+   * mid-run drag still bends the path); between those events the heading is
+   * world-fixed so the camera can follow the turning body without a
+   * perpetual chase.
    */
   private computeMovement(): MovementIntent {
-    // A/D held ALONE (no W/S, third person): turn in place — the body
-    // pivots quickly and smoothly while the camera follows; no translation.
+    // A/D held ALONE (no W/S, either camera mode): turn in place — the body
+    // pivots quickly and smoothly (first person: the view rotates with it;
+    // third person: the camera follows); no translation.
     const turn = this.turnInPlaceInput();
     if (turn !== 0) {
       this.moveHeading = null;
@@ -875,11 +888,12 @@ export class PlayerController {
     };
   }
 
-  /** +1 = spin left (A), −1 = spin right (D) — ONLY while A/D are held
-   *  without any forward/backward key, in third person. With W/S held,
-   *  A/D stay strafe (the existing camera-relative movement is untouched). */
+  /** +1 = spin left (A), −1 = spin right (D) — while A/D are held without
+   *  any forward/backward key, in BOTH camera modes (the controls-consistency
+   *  revision: first person now turns in place exactly like third person,
+   *  with the same smoothed angular velocity — no snap, no shake). With W/S
+   *  held, A/D stay strafe (the existing camera-relative movement). */
   private turnInPlaceInput(): number {
-    if (this.cameraMode !== 'third_person') return 0;
     if (this.input.forward || this.input.backward) return 0;
     return (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
   }

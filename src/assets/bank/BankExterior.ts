@@ -258,21 +258,13 @@ export function buildBankShell(dims: ShellDims): THREE.Group {
   g.add(arch);
   addBox(g, M.stoneCream, 0.16, 0.34, 0.1, 0, doorH + 0.8, wallFaceZ + 0.165, 'bank-door-keystone');
 
-  // --- Walnut double doors held OPEN against the entrance casing --------------
-  // Real 180° outward swing: each leaf rests ON the jamb casing front
-  // (back face 5 mm clear of it), panels + brass handles facing the street.
-  // Nothing stands in the walkable opening.
-  const leafW = dims.doorWidth / 2 + 0.01;
-  const leafZ = wallFaceZ + 0.1525; // back 4.80, front 4.855 — clears the casing
-  for (const side of [-1, 1]) {
-    addBox(g, M.walnut, leafW, L.doorHeight - 0.08, 0.055, side * (dims.doorWidth / 2 + leafW / 2), floorTop + (L.doorHeight - 0.08) / 2, leafZ, `bank-door-leaf-${side < 0 ? 'left' : 'right'}`);
-    // two recessed-look panels proud of the leaf's street face
-    [floorTop + 0.75, floorTop + 1.7].forEach((py, pi) => {
-      addBox(g, M.walnutLight, leafW - 0.36, 0.8, 0.02, side * (dims.doorWidth / 2 + leafW / 2), py, wallFaceZ + 0.19, `bank-door-panel-${side < 0 ? 'left' : 'right'}-${pi}`);
-    });
-    // brass handle bar at the meeting stile (the leaf's free edge)
-    addCyl(g, M.brass, 0.022, 0.022, 0.35, 10, side * (dims.doorWidth + 0.02 - 0.12), floorTop + 1.35, wallFaceZ + 0.21, `bank-door-handle-${side < 0 ? 'left' : 'right'}`);
-  }
+  // --- Walnut double doors: an INDEPENDENT openable object now ---------------
+  // 'bank-front-door' (buildBankFrontDoor + BankFrontDoorFactory below) is a
+  // real house-contract door: spawns CLOSED across the opening, E swings
+  // both leaves inward. The shell keeps only the stone surround (jambs,
+  // lintel, arch, keystone) — the doorway opening itself stays bare, and
+  // NOTHING of the old held-open leaf pair remains flush against the facade
+  // (it read as white planks, not as a door — user report: «در ورودی ندارند»).
 
   // --- Facade windows (one tall assembly per side of the entrance) ------------
   const W = L.window;
@@ -338,6 +330,126 @@ export function buildBankShell(dims: ShellDims): THREE.Group {
 }
 
 /* ========================================================================== */
+/* The FRONT DOOR — a real openable walnut double door (E), spawns CLOSED     */
+/* ========================================================================== */
+
+export interface BankFrontDoorMeta {
+  /** Clear doorway width (m) — the two leaves span it meeting at center. */
+  width: number;
+  /** Doorway height (m) measured from the floor/landing top. */
+  height: number;
+  /** Open angle in RADIANS (both leaves, symmetric inward swing). */
+  openDeg: number;
+}
+
+export function bankFrontDoorMetaOf(definition: ObjectDefinition): BankFrontDoorMeta {
+  const meta = definition.metadata as Record<string, unknown>;
+  const num = (key: string, fallback: number): number => {
+    const v = Number(meta[key]);
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  };
+  return {
+    width: num('width', BANK_LAYOUT.doorWidth),
+    height: num('height', BANK_LAYOUT.doorHeight),
+    openDeg: num('openDeg', 100 * (Math.PI / 180)),
+  };
+}
+
+/**
+ * Neoclassical walnut DOUBLE door for the grand south doorway (the user
+ * report: the held-open leaves read as flat wall boards — «در ورودی اصلی
+ * واضح» wants a door that IS a door). Two real hinge pivots at the outer
+ * jambs; the leaves meet at the doorway center when closed and swing
+ * INWARD (into the lobby) when opened — the sweep zone (x ∈ [−1.1, 1.1],
+ * z ∈ [3.4, 4.5] local) is kept empty by the layout (nearest prop: the
+ * marble columns at z = 1.9; the rug corner passes 5 mm under the raised
+ * leaf bottom).
+ *
+ * Geometry discipline (dw 2.2, dh 2.5 from the floor top) — seal-tight:
+ *   • each leaf 1.045 × 2.46 × 0.06 — hinge axis 4 cm off its jamb, free
+ *     edge 1.5 cm off the meeting line, top 8 mm under the lintel, bottom
+ *     2 cm over the floor (clears the 15 mm rug);
+ *   • recessed-look panel rows on the STREET face only (frame back ON the
+ *     slab, field 2 mm off the slab — every same-normal face ≥ 2 mm from
+ *     its neighbour, the house anti-coplanar rule);
+ *   • brass handle bars + rosettes at BOTH meeting stiles (street + lobby
+ *     faces), hinge knuckles on the static root at the two hinge axes;
+ *   • leaf yaws are NEVER built in here — t=0 is dead closed; the runtime
+ *     pose comes solely from setBankFrontDoorOpen (pure, deterministic).
+ */
+export function buildBankFrontDoor(meta: BankFrontDoorMeta): THREE.Group {
+  const M = createBankMaterials();
+  const g = new THREE.Group();
+  g.name = 'bank-front-door';
+
+  const dw = meta.width;
+  const dh = meta.height;
+  const hingeOffX = 0.04;
+  const leafW = dw / 2 - hingeOffX - 0.015;
+  const leafH = dh - 0.04;
+  const leafT = 0.06;
+  const bottomLift = 0.02;
+
+  for (const side of [-1, 1] as const) {
+    const tag = side < 0 ? 'w' : 'e';
+    // Hinge pivot at the TRUE hinge axis (4 cm off the jamb), leaf extends
+    // toward the center. userData.openSign: +1 swings the WEST leaf's tip
+    // toward −z (inward, R_y: z' = −x·sinθ) and −1 the EAST leaf — the
+    // symmetric inward pair; read only by setBankFrontDoorOpen.
+    const hinge = new THREE.Group();
+    hinge.name = `bank-front-door-hinge-${tag}`;
+    hinge.userData.dynamic = true; // MergeStatic contract: never batched
+    hinge.position.set(side * (dw / 2 - hingeOffX), bottomLift, 0);
+    hinge.userData.openSign = side < 0 ? 1 : -1;
+    hinge.userData.openDeg = meta.openDeg;
+    g.add(hinge);
+
+    const dir = -side; // leaf extends this way from its hinge
+    // Leaf slab.
+    addBox(hinge, M.walnut, leafW, leafH, leafT, dir * leafW / 2, leafH / 2, 0, `bank-front-door-leaf-${tag}`);
+    // Two recessed-look panels on the street face (+z), stacked rows.
+    [0.62, 1.62].forEach((py, pi) => {
+      addBox(hinge, M.walnutLight, leafW - 0.22, 0.78, 0.014, dir * leafW / 2, py, leafT / 2 + 0.008, `bank-front-door-panel-${tag}-${pi}`);
+    });
+    // Brass handle bar at the meeting stile (the leaf's free edge), both
+    // faces; rosette discs where the bar meets the stile.
+    const handleX = dir * (leafW - 0.1);
+    addCyl(hinge, M.brass, 0.02, 0.02, 0.34, 10, handleX, 1.28, leafT / 2 + 0.024, `bank-front-door-handle-${tag}`).rotation.x = Math.PI / 2;
+    addCyl(hinge, M.brass, 0.045, 0.045, 0.014, 10, handleX, 1.28, leafT / 2 + 0.008, `bank-front-door-handle-rose-${tag}`).rotation.x = Math.PI / 2;
+    addCyl(hinge, M.brassDark, 0.02, 0.02, 0.34, 10, handleX, 1.28, -leafT / 2 - 0.024, `bank-front-door-handle-in-${tag}`).rotation.x = Math.PI / 2;
+    addCyl(hinge, M.brassDark, 0.045, 0.045, 0.014, 10, handleX, 1.28, -leafT / 2 - 0.008, `bank-front-door-handle-rose-in-${tag}`).rotation.x = Math.PI / 2;
+  }
+
+  // Hinge knuckles on the STATIC root at the two hinge axes (jamb side).
+  for (const side of [-1, 1] as const) {
+    const hx = side * (dw / 2 - hingeOffX);
+    [bottomLift + 0.4, bottomLift + leafH - 0.4].forEach((sy, i) => {
+      const knuckle = addCyl(g, M.brassDark, 0.022, 0.022, 0.1, 10, hx, sy, 0, `bank-front-door-knuckle-${side < 0 ? 'w' : 'e'}-${i === 0 ? 'low' : 'high'}`);
+      knuckle.rotation.z = Math.PI / 2;
+    });
+  }
+
+  return g;
+}
+
+/**
+ * Pure pose for the walnut double door: t=0 → CLOSED (both leaf yaws 0),
+ * t=1 → OPEN (each leaf swung `openDeg` inward). Reads the swing side and
+ * angle baked into each hinge's userData at build time; derived ONLY from t
+ * (never accumulated — re-triggering mid-swing is deterministic).
+ */
+export function setBankFrontDoorOpen(root: THREE.Object3D, t: number): void {
+  for (const tag of ['w', 'e'] as const) {
+    const hinge = root.getObjectByName(`bank-front-door-hinge-${tag}`) as THREE.Group | null;
+    if (!hinge) continue;
+    const sign = Number(hinge.userData.openSign ?? (tag === 'w' ? 1 : -1)) || 1;
+    const openDeg = Number(hinge.userData.openDeg) || 100 * (Math.PI / 180);
+    // `+ 0` normalizes −0 to +0 — pure pose, no quirks.
+    hinge.rotation.y = THREE.MathUtils.clamp(t, 0, 1) * openDeg * sign + 0;
+  }
+}
+
+/* ========================================================================== */
 /* Masonry factories (unit box × transform scale → collider == visual)        */
 /* ========================================================================== */
 
@@ -398,6 +510,7 @@ export class BankFloorFactory implements IAssetFactory {
 /** All assetType strings the bank EXTERIOR module registers (UI lists / tests). */
 export const BANK_EXTERIOR_ASSET_TYPES = Object.freeze([
   'bank-building',
+  'bank-front-door',
   'bank-wall',
   'bank-stair',
   'bank-floor',
@@ -410,9 +523,17 @@ export const BANK_EXTERIOR_ASSET_TYPES = Object.freeze([
  */
 export function registerBankExteriorFactories(registry: AssetRegistry): void {
   registry.register('bank-building', new BankBuildingFactory(), 'Bank Building');
+  registry.register('bank-front-door', new BankFrontDoorFactory(), 'Bank Front Door');
   registry.register('bank-wall', new BankWallFactory(), 'Bank Wall');
   registry.register('bank-stair', new BankStairFactory(), 'Bank Stair');
   registry.register('bank-floor', new BankFloorFactory(), 'Bank Floor');
+}
+
+/** The openable walnut double door — reads width/height/openDeg from metadata. */
+export class BankFrontDoorFactory implements IAssetFactory {
+  create(definition: ObjectDefinition): THREE.Object3D {
+    return buildBankFrontDoor(bankFrontDoorMetaOf(definition));
+  }
 }
 
 /** The saloon-style shell factory — reads width/depth/height/doorWidth from metadata. */

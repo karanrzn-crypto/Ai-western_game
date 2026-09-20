@@ -129,6 +129,9 @@ export {
   HORSE_TURN_RATES,
   HORSE_STAMINA,
   HORSE_AI,
+  RIDER_SEATED_EYE_RISE,
+  RIDER_SEATED_EYE_Y,
+  RIDER_SEATED_EYE_Z,
 } from './horse/HorseProportions.js';
 export type { HorseGait, GaitSpec } from './horse/HorseProportions.js';
 export { createHorseModel, HORSE_DETAIL_DISTANCE } from './horse/HorseModel.js';
@@ -138,8 +141,8 @@ export type { HorseAnimatorInput, HorseIdleAction } from './horse/HorseAnimator.
 export { HorseStamina } from './horse/HorseVitals.js';
 export { HorseBrain } from './horse/HorseBrain.js';
 export type { HorseAiState, HorseBrainContext, HorseBrainOrder, HorseBrainOptions, HorseIdleActionName } from './horse/HorseBrain.js';
-export { HorseController, mountEnterCameraMode, HORSE_RUN_WINDUP_SECONDS } from './horse/HorseController.js';
-export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent } from './horse/HorseController.js';
+export { HorseController, mountEnterCameraMode, dismountCameraPlan, HORSE_RUN_WINDUP_SECONDS } from './horse/HorseController.js';
+export type { HorseRidingInput, HorseWorldContext, HorseSnapshot, HorseEvent, DismountCameraPlan } from './horse/HorseController.js';
 export { HorsePersistence, validateHorseSave, HORSE_SAVE_KEY } from './horse/HorsePersistence.js';
 export type { HorseSaveData, HorsePersistenceOptions } from './horse/HorsePersistence.js';
 export {

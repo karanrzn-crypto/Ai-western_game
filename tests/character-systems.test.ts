@@ -249,6 +249,37 @@ test('InteractionSystem respects canInteract, facing preference and prompts', ()
   assert.equal(prompted, null, 'prompt cleared with the system');
 });
 
+test('InteractionSystem re-renders the prompt when the SAME candidate changes its label', () => {
+  // The door contract: a live label getter flips Open ↔ Close the instant E
+  // is pressed. The player usually stays INSIDE the interaction range after
+  // pressing (standing at the door), so the candidate object never changes —
+  // the HUD prompt must still update to advertise the new action.
+  let open = false;
+  const renders: Array<string | null> = [];
+  const system = new InteractionSystem({
+    defaultRange: 3,
+    onPromptChange: (i) => { renders.push(i ? `[E] ${i.label}` : null); },
+  });
+  system.register({
+    uuid: 'door',
+    get label() { return open ? 'Close the door' : 'Open the door'; },
+    getPosition: () => ({ x: 0, y: 1, z: -2 }),
+    onInteract: () => { open = !open; },
+  });
+  // Walk up: first render advertises the open action.
+  system.update({ x: 0, y: 1, z: 0 }, null);
+  assert.deepEqual(renders, ['[E] Open the door']);
+  // Press E while staying in range: the label flips on the SAME candidate.
+  system.tryInteract();
+  system.update({ x: 0, y: 1, z: 0 }, null); // next frame's re-evaluation
+  assert.deepEqual(renders, ['[E] Open the door', '[E] Close the door'],
+    'prompt must re-render when the label changes under the same candidate');
+  // Pressing again flips back; also no duplicate render while unchanged.
+  system.tryInteract();
+  system.update({ x: 0, y: 1, z: 0 }, null);
+  assert.deepEqual(renders, ['[E] Open the door', '[E] Close the door', '[E] Open the door']);
+});
+
 // --- ThirdPersonCamera ----------------------------------------------------------
 
 test('rayAabbDistance solves slab tests correctly', () => {

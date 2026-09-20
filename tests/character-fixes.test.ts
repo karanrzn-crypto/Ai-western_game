@@ -74,11 +74,13 @@ test('REGRESSION: WASD moves along the CAMERA forward (yaw-relative), both camer
   const west = facingWest.getPosition();
   assert.ok(west.x < -0.5 && Math.abs(west.z) < 1e-6, 'W follows the rotated camera forward');
 
-  // Strafe: D moves along camera-right. At yaw 0 right = +X.
+  // Strafe with a W/S key held: W+D moves along the camera-right diagonal.
+  // (A/D ALONE now turn in place in BOTH modes — the controls-consistency
+  // revision; classic strafe survives on the W/S ± A/D combos.)
   const strafing = new PlayerController(emptyWorld(), { initialPosition: { x: 0, y: 1.7, z: 0 }, yaw: 0 });
-  strafing.update(0.25, { right: true });
+  strafing.update(0.25, { forward: true, right: true });
   const strafed = strafing.getPosition();
-  assert.ok(strafed.x > 0.5 && Math.abs(strafed.z) < 1e-6, 'D strafes along camera right');
+  assert.ok(strafed.x > 0.5 && strafed.z < -0.5, 'W+D strafes along the camera-right diagonal');
 
   // Mode must not matter: movement math is presentation-agnostic.
   const fp = new PlayerController(emptyWorld(), { initialPosition: { x: 0, y: 1.7, z: 0 }, yaw: 0, cameraMode: 'first_person' });

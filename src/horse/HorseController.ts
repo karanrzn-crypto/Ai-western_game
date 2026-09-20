@@ -122,6 +122,24 @@ export function mountEnterCameraMode(_current: CameraMode): CameraMode {
   return 'third_person';
 }
 
+/**
+ * DISMOUNT CAMERA contract (the first-person dismount revision): the dismount
+ * choreography must be SEEN. A dismount that starts while the rider views
+ * first person switches the camera to THIRD PERSON for the whole timeline
+ * (grip → leg over the cantle → slide down → settle) and returns to the
+ * rider's original viewing mode the instant the on-foot handover completes.
+ * The plan is a pure function so tests can lock the contract:
+ *   during = 'third_person' (the choreography is always visible),
+ *   after   = the mode the player was riding in.
+ */
+export interface DismountCameraPlan {
+  during: CameraMode;
+  after: CameraMode;
+}
+export function dismountCameraPlan(ridingMode: CameraMode): DismountCameraPlan {
+  return { during: 'third_person', after: ridingMode };
+}
+
 export class HorseController {
   private readonly collisionWorld: CollisionWorld;
   readonly health: HealthSystem;

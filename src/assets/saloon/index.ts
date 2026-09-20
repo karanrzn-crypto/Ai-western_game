@@ -5,7 +5,7 @@
  * -----------------------------------------------------------------------------
  */
 
-export { SALOON_LAYOUT, SALOON_SITE, SALOON_OBJECT_IDS, frontWallSegments, buildSaloonMapObjects } from './SaloonLayout.js';
+export { SALOON_LAYOUT, SALOON_SITE, SALOON_OBJECT_IDS, SALOON_DOOR_SPEC, frontWallSegments, buildSaloonMapObjects } from './SaloonLayout.js';
 export { SALOON_PALETTE, createSaloonMaterials } from './SaloonMaterials.js';
 export type { SaloonMaterials } from './SaloonMaterials.js';
 export {
@@ -32,6 +32,7 @@ export {
   buildPiano,
   buildPianoStool,
   buildSwingingDoors,
+  setSaloonDoorsOpen,
   buildChandelier,
   buildSpittoon,
   buildWhiskeyBarrel,

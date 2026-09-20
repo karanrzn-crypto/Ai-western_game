@@ -35,6 +35,11 @@ export class InteractionSystem {
   private readonly facingWeight: number;
   private readonly onPromptChange?: (interactable: Interactable | null) => void;
   private current: Interactable | null = null;
+  /** The label text the HUD last rendered for `current`. Doors expose a LIVE
+   * label getter (Open ↔ Close flips the instant E is pressed) — the prompt
+   * must re-render when the TEXT changes even though the candidate object
+   * itself stayed the same, or the HUD would advertise a stale action. */
+  private renderedLabel: string | null = null;
 
   constructor(options: InteractionSystemOptions = {}) {
     this.defaultRange = Math.max(0.1, options.defaultRange ?? 2.6);
@@ -100,8 +105,12 @@ export class InteractionSystem {
   }
 
   private setCurrent(next: Interactable | null): void {
-    if (this.current === next) return;
+    const nextLabel = next ? next.label : null;
+    // Same candidate AND unchanged label → nothing to re-render. A changed
+    // label on the SAME candidate (door toggled in place) must re-render.
+    if (this.current === next && this.renderedLabel === nextLabel) return;
     this.current = next;
+    this.renderedLabel = nextLabel;
     this.onPromptChange?.(next);
   }
 }

@@ -100,8 +100,15 @@ fs.mkdirSync(OUT, { recursive: true });
     });
     return { town, total, unique: uuids.size };
   });
+  // the six town-exterior buildings live as ONE def each (uuid block …030040+)
+  const exterior = await page.evaluate(() => {
+    const s = window.__westTest.scene();
+    const want = ['000000030040', '000000030041', '000000030042', '000000030043', '000000030044', '000000030045'];
+    return want.map((tail) => !!s.getObjectByProperty('uuid', `c0000000-0000-4000-8000-${tail}`));
+  });
   check(errors.length === 0, `zero page errors (${errors.length})`);
-  check(census.town >= 300, `town defs live in the scene (${census.town} >= 300)`);
+  check(census.town >= 210, `town defs live in the scene (${census.town} >= 210)`);
+  check(exterior.every(Boolean), 'all six town-exterior buildings live (butcher + 5 houses)');
   check(census.total >= 900, `total scene objects (${census.total} >= 900)`);
   check(census.unique === census.total, `all uuids unique (${census.unique})`);
 

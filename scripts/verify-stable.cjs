@@ -23,7 +23,10 @@ const ok = (name, pass, detail) => {
   console.log(`${pass ? 'PASS' : 'FAIL'} | ${name} | ${detail}`);
 };
 
-const SITE = { x: -16, z: 6 };
+// TOWN REDESIGN: the stable sits at (10.5, 36) with building yaw 180 — the
+  // local +Z gate face points NORTH (world −z) and local +x maps to world −x.
+  const SITE = { x: 10.5, z: 36 };
+  const W = (lx, lz) => [SITE.x - lx, SITE.z - lz]; // yaw-180 local → world
 const IDS = {
   building: '10000000-0000-4000-8000-000000000001',
   gate: '10000000-0000-4000-8000-000000000052',
@@ -148,8 +151,12 @@ const IDS = {
         const before = p[axis];
         await page.waitForTimeout(420);
         p = await player();
+        // fps-robust stall guard: at ~1 fps real frames arrive far slower
+        // than the 420 ms poll — 20 silent polls (~8 s) can be ONE frame of
+        // a slow depth pass. (The 2026 size revision also added 0.6 m to the
+        // in-stall walks, so this guard must not fire early.)
         stalled = Math.abs(p[axis] - before) < 0.004 ? stalled + 1 : 0;
-        if (stalled >= 10) {
+        if (stalled >= 20) {
           console.log(`  stall at (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`);
           break;
         }
@@ -184,13 +191,13 @@ const IDS = {
   ok('boot: all 6 stall doors + tack/feed/staff doors spawn CLOSED + armed', allClosed, '9/9 closed+armed');
 
   // --- 2) the CLOSED gate blocks the wagon entrance ---------------------------
-  await teleport(SITE.x, 1.7, 14.6, 0);
+  await teleport(W(0, 8.6)[0], 1.7, W(0, 8.6)[1], Math.PI);
   await settle();
-  let p = await walk('z', -1, 11.0, 60000, 'approach the closed gate');
+  let p = await walk('z', 1, W(0, 5.0)[1], 60000, 'approach the closed gate');
   await shot('01-exterior-gate-closed');
   ok('closed gate: physically BLOCKS the wagon entrance',
-    p.z > SITE.z + 6.0,
-    `stopped at z=${p.z.toFixed(2)} (gate plane ≈ ${SITE.z + 6.375})`);
+    p.z < SITE.z - 6.0,
+    `stopped at z=${p.z.toFixed(2)} (gate plane ≈ ${SITE.z - 6.375})`);
   const blocked = await sdoor('gate');
   ok('closed gate: [E] prompt visible at the door', blocked.prompt.includes('stable gate'),
     `prompt="${blocked.prompt}"`);
@@ -201,14 +208,14 @@ const IDS = {
     opened.swing === 1 && opened.collider === false && opened.leafYawW < -1.7,
     `swing=${opened.swing} collider=${opened.collider} leafYaw=${opened.leafYawW?.toFixed(3)}`);
 
-  p = await walk('z', -1, 2.0, 90000, 'walk the aisle to the farrier bay');
+  p = await walk('z', 1, W(0, -4.0)[1], 90000, 'walk the aisle to the farrier bay');
   ok('open gate: the player WALKS THE FULL AISLE into the north half',
-    p.z < SITE.z - 3.0,
-    `reached z=${p.z.toFixed(2)} (local ${((p.z - SITE.z)).toFixed(2)})`);
+    p.z > SITE.z + 3.0,
+    `reached z=${p.z.toFixed(2)} (local ${(SITE.z - p.z).toFixed(2)})`);
   await shot('02-aisle-north-farrier');
 
   // --- 4) back out; close the gate from inside --------------------------------
-  p = await walk('z', 1, 11.2, 90000, 'walk back to the gate');
+  p = await walk('z', -1, W(0, 5.2)[1], 90000, 'walk back to the gate');
   const closed = await pressStableUntil('gate', 0, 'gate close');
   ok('gate: E from inside CLOSES it (collider re-arms)',
     closed.swing === 0 && closed.collider === true,
@@ -217,49 +224,51 @@ const IDS = {
   ok('gate: E re-opens for the stall walkthrough', reopened.swing === 1, `swing=${reopened.swing}`);
 
   // --- 5) stall one: the full cell-door chain ----------------------------------
-  // Stall 01's door sits at world (-17.975, 2.3) — gap center local z −3.7.
-  await teleport(SITE.x - 0.9, 1.7, 2.3, Math.PI / 2);
+  // Stall 01's door sits at world (-17.975, 1.7) — gap center local z −4.3
+  // (the 2026 size revision moved the stall rows 0.6 m north).
+  await teleport(W(-0.9, -4.3)[0], 1.7, W(-0.9, -4.3)[1], -Math.PI / 2);
   await settle();
   const s1closed = await sdoor('s1');
   ok('stall 1: [E] prompt at the closed stall door', s1closed.prompt.toLowerCase().includes('stall one'),
     `prompt="${s1closed.prompt}"`);
-  let w = await walk('x', -1, SITE.x - 2.6, 30000, 'push against the closed stall door');
-  ok('stall 1: the CLOSED door blocks the stall', w.x > SITE.x - 2.95,
-    `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x - 1.975 - 0.5 - 0.35})`);
+  let w = await walk('x', 1, W(-2.6, 0)[0], 30000, 'push against the closed stall door');
+  ok('stall 1: the CLOSED door blocks the stall', w.x < SITE.x + 2.95,
+    `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x + 1.975 + 0.5 + 0.35})`);
   const s1open = await pressStableUntil('s1', 1, 'stall 1 open');
   ok('stall 1: E opens (collider released)', s1open.swing === 1 && s1open.collider === false,
     `swing=${s1open.swing} collider=${s1open.collider}`);
-  w = await walk('x', -1, SITE.x - 3.4, 60000, 'walk into stall 1');
-  ok('stall 1: the player WALKS INTO the stall', w.x < SITE.x - 2.5, `reached x=${w.x.toFixed(2)}`);
+  w = await walk('x', 1, W(-3.4, 0)[0], 60000, 'walk into stall 1');
+  ok('stall 1: the player WALKS INTO the stall', w.x > SITE.x + 2.5, `reached x=${w.x.toFixed(2)}`);
   await shot('03-stall-one-inside');
   // pin a deterministic inside position facing the door (the walk's z drift
   // can push the player out of the 2.0 m interaction range)
-  await teleport(-19.2, 1.7, 2.3, -Math.PI / 2);
+  await teleport(W(-3.2, -4.3)[0], 1.7, W(-3.2, -4.3)[1], Math.PI / 2);
   await settle();
   const s1shut = await pressStableUntil('s1', 0, 'stall 1 close');
   ok('stall 1: E from inside CLOSES it (the stall holds)', s1shut.swing === 0 && s1shut.collider === true,
     `swing=${s1shut.swing} collider=${s1shut.collider}`);
-  w = await walk('x', 1, SITE.x - 2.4, 30000, 'push against the closed door from inside');
-  ok('stall 1: the closed door blocks FROM INSIDE', w.x < SITE.x - 2.0,
-    `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x - 1.975 + 0.5 + 0.35})`);
+  w = await walk('x', -1, W(2.4, 0)[0], 30000, 'push against the closed door from inside');
+  ok('stall 1: the closed door blocks FROM INSIDE', w.x > SITE.x + 2.0,
+    `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x + 1.975 - 0.5 - 0.35})`);
   await pressStableUntil('s1', 1, 'stall 1 re-open');
-  w = await walk('x', 1, SITE.x - 0.9, 60000, 'walk back out of stall 1');
-  ok('stall 1: re-open lets the player walk back out', w.x > SITE.x - 2.2, `reached x=${w.x.toFixed(2)}`);
+  w = await walk('x', -1, W(0.9, 0)[0], 60000, 'walk back out of stall 1');
+  ok('stall 1: re-open lets the player walk back out', w.x < SITE.x + 2.2, `reached x=${w.x.toFixed(2)}`);
 
   // --- 6) the tack room --------------------------------------------------------
-  await teleport(SITE.x - 0.9, 1.7, SITE.z + 5.525, Math.PI / 2);
+  // The room doorway gap moved with the growth: local 5.6–6.65 → world center 12.125.
+  await teleport(W(-0.9, 6.125)[0], 1.7, W(-0.9, 6.125)[1], -Math.PI / 2);
   await settle();
   const tackOpen = await pressStableUntil('tack', 1, 'tack open');
   ok('tack room: E opens its door', tackOpen.swing === 1 && tackOpen.collider === false,
     `swing=${tackOpen.swing} collider=${tackOpen.collider}`);
-  w = await walk('x', -1, SITE.x - 3.6, 60000, 'walk into the tack room');
-  ok('tack room: the player WALKS IN', w.x < SITE.x - 2.6, `reached x=${w.x.toFixed(2)}`);
+  w = await walk('x', 1, W(-3.6, 6.125)[0], 60000, 'walk into the tack room');
+  ok('tack room: the player WALKS IN', w.x > SITE.x + 2.6, `reached x=${w.x.toFixed(2)}`);
   await shot('04-tack-room-inside');
-  await teleport(-19.2, 1.7, SITE.z + 5.525, -Math.PI / 2);
+  await teleport(W(-3.2, 6.125)[0], 1.7, W(-3.2, 6.125)[1], Math.PI / 2);
   await settle();
   await pressStableUntil('tack', 0, 'tack close');
-  w = await walk('x', 1, SITE.x - 2.4, 30000, 'push against the closed tack door from inside');
-  ok('tack room: the closed door blocks', w.x < SITE.x - 2.0, `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x - 1.975 + 0.5 + 0.35})`);
+  w = await walk('x', -1, W(2.4, 6.125)[0], 30000, 'push against the closed tack door from inside');
+  ok('tack room: the closed door blocks', w.x > SITE.x + 2.0, `stopped at x=${w.x.toFixed(2)} (blocked ≈ ${SITE.x + 1.975 - 0.5 - 0.35})`);
 
   // --- 7) console clean ---------------------------------------------------------
   ok('console clean', errors.length === 0, errors.slice(0, 3).join(' | ') || 'no page errors');

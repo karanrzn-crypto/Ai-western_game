@@ -19,11 +19,16 @@ export {
   BANK_LAYOUT,
   BANK_SITE,
   BANK_OBJECT_IDS,
+  BANK_DOOR_SPEC,
   buildBankMapObjects,
 } from './BankLayout.js';
 export {
   buildBankShell,
+  buildBankFrontDoor,
+  setBankFrontDoorOpen,
+  bankFrontDoorMetaOf,
   BankBuildingFactory,
+  BankFrontDoorFactory,
   BankWallFactory,
   BankStairFactory,
   BankFloorFactory,

@@ -314,7 +314,13 @@ export function buildGunShopMapObjects(originX: number, originZ: number): Object
   // Counter runs E-W south of center; the entrance path (door → counter
   // front) and BOTH side aisles stay clear (walkability contract).
   push(GUNSHOP_OBJECT_IDS.counter, 'gunshop-counter', 'مغازه اسلحه‌فروشی — پیشخوان فروش', at(-0.4, floorY, 1.4), {
-    collider: true,
+    // EXACT composite box (buildGunshopCounter real dims): 3.2 m body + 0.06
+    // top overhang, 0.65 body + 0.08 top overhang, 1.05 body + 0.04 top.
+    // The old transform-derived AABB covered only a 1 m cube at the anchor —
+    // the counter's ends/corners were walk-through (bug report §3.2).
+    collider: {
+      boxes: [{ size: { x: 3.26, y: 1.09, z: 0.73 }, offset: { x: 0, y: 0.545, z: 0 } }],
+    },
   });
   // Counter-top dressing (each its own logical object; none collides).
   push(GUNSHOP_OBJECT_IDS.displayCase, 'gunshop-pistol-display-case', 'مغازه اسلحه‌فروشی — ویترین اسلحه', at(-1.05, counterTop, 1.4), {
@@ -356,7 +362,13 @@ export function buildGunShopMapObjects(originX: number, originZ: number): Object
     position: { x: originX + L.width / 2 - t / 2 - 0.16, y: floorY, z: originZ + 1.4 },
     rotation: { x: 0, y: -90, z: 0 },
     scale: unitScale(),
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildGunShelfUnit 1.4 × 1.8 × 0.35, local space —
+    // the def yaw −90 rotates it). Composite-collider fix class (§3 sweep).
+    collider: {
+      boxes: [{ size: { x: 1.4, y: 1.8, z: 0.35 }, offset: { x: 0, y: 0.9, z: 0 } }],
+    },
+  });
   // FRONT-wall interior, east of the door: holster board (backs buried).
   push(GUNSHOP_OBJECT_IDS.holsterDisplay, 'gunshop-holster-display', 'مغازه اسلحه‌فروشی — تخته هولستر', {
     position: { x: originX + 2.4, y: 1.5, z: originZ + L.depth / 2 - t / 2 - 0.015 },
@@ -366,7 +378,10 @@ export function buildGunShopMapObjects(originX: number, originZ: number): Object
 
   // --- Back area — the Gunsmith WORKSHOP (north end) ---------------------------
   push(GUNSHOP_OBJECT_IDS.workbench, 'gunshop-workbench', 'مغازه اسلحه‌فروشی — میز کار اسلحه‌سازی', at(1.5, floorY, -3.01), {
-    collider: true,
+    // EXACT composite box (buildGunshopWorkbench 1.6 × 0.7, top slab to 0.95).
+    collider: {
+      boxes: [{ size: { x: 1.6, y: 0.95, z: 0.7 }, offset: { x: 0, y: 0.475, z: 0 } }],
+    },
   });
   // Vise mounted ON the workbench top (top surface = floorY + 0.95).
   push(GUNSHOP_OBJECT_IDS.vise, 'gunshop-vise', 'مغازه اسلحه‌فروشی — گیره میز کار', at(1.05, floorY + 0.95, -3.1), {
@@ -381,19 +396,30 @@ export function buildGunShopMapObjects(originX: number, originZ: number): Object
 
   // --- Corner storage (west-back, small and logical) ---------------------------
   push(GUNSHOP_OBJECT_IDS.powderKeg, 'gunshop-powder-keg', 'مغازه اسلحه‌فروشی — بشکه باروت', at(-3.8, floorY, -2.9), {
-    collider: true,
+    // EXACT composite box (round 0.4 m keg, 0.42 tall) — composite fix class.
+    collider: { boxes: [{ size: { x: 0.4, y: 0.42, z: 0.4 }, offset: { x: 0, y: 0.21, z: 0 } }] },
   });
   push(GUNSHOP_OBJECT_IDS.ammoCrate1, 'gunshop-ammo-crate', 'مغازه اسلحه‌فروشی — صندوق مهمات ۱', {
     position: { x: originX - 3.7, y: floorY, z: originZ - 2.15 },
     rotation: { x: 0, y: 7, z: 0 },
     scale: unitScale(),
-  }, { collider: true });
+  }, {
+    // EXACT composite box (buildGunshopAmmoCrate 0.4 × 0.26 × 0.28); the 7°
+    // yaw grows the conservative extents by < 2 cm.
+    collider: {
+      boxes: [{ size: { x: 0.4, y: 0.26, z: 0.28 }, offset: { x: 0, y: 0.13, z: 0 } }],
+    },
+  });
   // Crate 2 stacked ON crate 1 (crate top = floorY + 0.26); slight counter-yaw.
   push(GUNSHOP_OBJECT_IDS.ammoCrate2, 'gunshop-ammo-crate', 'مغازه اسلحه‌فروشی — صندوق مهمات ۲', {
     position: { x: originX - 3.7, y: floorY + 0.26, z: originZ - 2.15 },
     rotation: { x: 0, y: -5, z: 0 },
     scale: unitScale(),
-  }, { collider: true });
+  }, {
+    collider: {
+      boxes: [{ size: { x: 0.4, y: 0.26, z: 0.28 }, offset: { x: 0, y: 0.13, z: 0 } }],
+    },
+  });
 
   return defs;
 }

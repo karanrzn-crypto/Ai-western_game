@@ -173,15 +173,46 @@ export function buildTownWell(): THREE.Group {
   return group;
 }
 
-/** Porch bench: side frames, seat slats, tilted backrest. Faces local +Z. */
+/**
+ * Porch/square bench — ADULT SCALE (user bug round: the old 1.72 m bench read
+ * as child furniture next to the 1.83 m Ranger). Seat 2.3 × 0.66 m at 0.53 m,
+ * full-height back posts to 1.04 m with a raked two-slat back + cap, armrests
+ * on the side frames. Faces local +Z (the back leans to local −Z).
+ */
 export function buildBench(): THREE.Group {
   const group = new THREE.Group();
-  group.add(box(0.09, 0.46, 0.55, woodDarkMat, -0.78, 0.23, 0));
-  group.add(box(0.09, 0.46, 0.55, woodDarkMat, 0.78, 0.23, 0));
-  for (const z of [-0.18, 0, 0.18]) group.add(box(1.72, 0.05, 0.15, woodMat, 0, 0.48, z));
-  const back1 = box(1.72, 0.13, 0.05, woodMat, 0, 0.72, -0.26); back1.rotation.x = -0.15;
-  const back2 = box(1.72, 0.13, 0.05, woodMat, 0, 0.92, -0.31); back2.rotation.x = -0.15;
-  group.add(back1, back2);
+  const len = 2.3;
+  const depth = 0.66;
+  const seatTop = 0.55;
+  const backTop = 1.04;
+  const halfL = len / 2;
+  for (const sx of [-1, 1]) {
+    const x = sx * (halfL - 0.07);
+    // Front leg (to the seat rail) + full-height back post.
+    group.add(box(0.1, seatTop - 0.08, 0.09, woodDarkMat, x, (seatTop - 0.08) / 2, depth / 2 - 0.08));
+    group.add(box(0.1, backTop, 0.09, woodDarkMat, x, backTop / 2, -depth / 2 + 0.09));
+    // Seat rail + lower stretcher between the legs.
+    group.add(box(0.12, 0.06, depth - 0.1, woodDarkMat, x, seatTop - 0.07, 0));
+    group.add(box(0.07, 0.05, depth - 0.24, woodDarkMat, x, 0.16, 0));
+    // Armrest: back post → forward support → front tip.
+    group.add(box(0.13, 0.05, depth - 0.04, woodMat, x, 0.75, 0.02));
+    group.add(box(0.06, 0.19, 0.06, woodDarkMat, x, 0.645, depth / 2 - 0.14));
+  }
+  // Seat slats (4 × 0.15 with gaps) on the seat rails.
+  for (let i = 0; i < 4; i++) {
+    const z = depth / 2 - 0.095 - i * 0.157;
+    group.add(box(len, 0.045, 0.15, woodMat, 0, seatTop - 0.0225, z));
+  }
+  // Backrest: two raked slats + top cap, mounted on the back posts.
+  const tilt = -0.16; // ~9° rake back
+  for (const y of [0.68, 0.86]) {
+    const slat = box(len - 0.02, 0.14, 0.045, woodMat, 0, y, -depth / 2 + 0.09);
+    slat.rotation.x = tilt;
+    group.add(slat);
+  }
+  const cap = box(len, 0.06, 0.1, woodDarkMat, 0, backTop - 0.03, -depth / 2 + 0.09);
+  cap.rotation.x = tilt;
+  group.add(cap);
   return group;
 }
 
@@ -202,12 +233,46 @@ export function buildStreetLamp(): THREE.Group {
   return group;
 }
 
-/** Hitching rail: two posts + one horizontal rail (built along X). */
-export function buildHitchingPost(): THREE.Group {
+/**
+ * Hitching rail — REAL WESTERN STRUCTURE (user bug round: two bare posts + one
+ * plank read as primitive blocks). Square chamfered posts with dome caps and
+ * buried feet, top + lower rails, diagonal end braces, and a coiled rope loop
+ * hung over the top rail. metadata.seed drives slight per-instance variation
+ * (height ±4 cm, lean ±1.5°, rope side) — the layout ships a distinct seed.
+ * Built along X; total length 1.9 m, rails at 0.93 / 0.62 m.
+ */
+export function buildHitchingPost(definition?: ObjectDefinition): THREE.Group {
   const group = new THREE.Group();
-  group.add(cyl(0.07, 0.09, 1.15, woodDarkMat, -0.8, 0.575, 0, 8));
-  group.add(cyl(0.07, 0.09, 1.15, woodDarkMat, 0.8, 0.575, 0, 8));
-  group.add(box(1.9, 0.1, 0.12, woodMat, 0, 1.05, 0));
+  const seed = Number((definition?.metadata as { seed?: number } | undefined)?.seed ?? 3);
+  const rng = mulberry32(seed);
+  const j = (range: number) => (rng() - 0.5) * 2 * range;
+
+  const postH = 1.02 + j(0.04);
+  const ropeSide = rng() > 0.5 ? 1 : -1;
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.8;
+    // Post: buried 2 cm, tiny lean, chamfer cap.
+    const post = box(0.11, postH + 0.02, 0.11, woodDarkMat, x, (postH + 0.02) / 2 - 0.02, 0);
+    post.rotation.z = j(0.015);
+    post.rotation.x = j(0.015);
+    group.add(post);
+    group.add(box(0.15, 0.045, 0.15, woodWeatherMat, x, postH + 0.02, 0)); // dome cap
+    // Diagonal brace post→rail.
+    const brace = box(0.05, 0.42, 0.05, woodWeatherMat, x - sx * 0.17, postH - 0.24, 0);
+    brace.rotation.z = sx * 0.62;
+    group.add(brace);
+  }
+  // Top rail + lower rail (slightly narrower), plus a rope loop.
+  group.add(box(1.9, 0.09, 0.055, woodMat, 0, postH - 0.09 + j(0.015), 0));
+  group.add(box(1.9, 0.07, 0.04, woodWeatherMat, 0, 0.62 + j(0.02), 0));
+  const rope = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.013, 6, 14, Math.PI * 1.25), ironMat);
+  rope.name = 'hitch-rope-loop';
+  rope.position.set(ropeSide * 0.45, postH - 0.13, 0);
+  rope.rotation.z = Math.PI; // arc hangs DOWN over the rail
+  rope.rotation.y = Math.PI / 2;
+  rope.castShadow = false;
+  rope.receiveShadow = true;
+  group.add(rope);
   return group;
 }
 
@@ -341,7 +406,7 @@ export const ENV_PROP_COLLIDERS: Readonly<Record<string, { readonly boxes: reado
     boxes: Object.freeze([Object.freeze({ size: Object.freeze({ x: 2.3, y: 1.7, z: 2.3 }), offset: Object.freeze({ x: 0, y: 0.85, z: 0 }) })]),
   }),
   'bench': Object.freeze({
-    boxes: Object.freeze([Object.freeze({ size: Object.freeze({ x: 1.8, y: 0.95, z: 0.62 }), offset: Object.freeze({ x: 0, y: 0.47, z: 0 }) })]),
+    boxes: Object.freeze([Object.freeze({ size: Object.freeze({ x: 2.36, y: 1.05, z: 0.7 }), offset: Object.freeze({ x: 0, y: 0.525, z: 0 }) })]),
   }),
   'street-lamp': Object.freeze({
     boxes: Object.freeze([Object.freeze({ size: Object.freeze({ x: 0.36, y: 3.3, z: 0.36 }), offset: Object.freeze({ x: 0.1, y: 1.65, z: 0 }) })]),
@@ -385,7 +450,7 @@ export function registerEnvPropFactories(registry: AssetRegistry): void {
     'town-well': () => buildTownWell(),
     'bench': () => buildBench(),
     'street-lamp': () => buildStreetLamp(),
-    'hitching-post': () => buildHitchingPost(),
+    'hitching-post': (def) => buildHitchingPost(def),
     'wagon': () => buildWagon(),
     'town-sign': (def) => buildTownSign(def),
     'hay-bale': () => buildHayBale(),

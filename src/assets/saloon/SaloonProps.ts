@@ -480,7 +480,10 @@ export function buildPokerTable(): THREE.Group {
   cyl(g, M.woodMed, 0.29, 0.345, 0.06, 12, 0, 0.12, 0, 'poker-pedestal-upper');
 
   // --- Turned column: shaft + two collar rings + capital ----------------------
-  cyl(g, M.woodMed, 0.1, 0.12, 0.42, 10, 0, 0.34, 0, 'poker-column');
+  // Z-FIGHT SCAN FIX: the shaft used to end EXACTLY at the high collar's top
+  // plane (both caps co-facing at 0.55 → flicker across the whole shaft cap).
+  // It now stops 2 cm short — the cap buries inside the collar ring.
+  cyl(g, M.woodMed, 0.1, 0.12, 0.4, 10, 0, 0.33, 0, 'poker-column');
   cyl(g, M.woodDark, 0.14, 0.16, 0.06, 10, 0, 0.23, 0, 'poker-collar-low');
   cyl(g, M.woodDark, 0.14, 0.16, 0.06, 10, 0, 0.52, 0, 'poker-collar-high');
   cyl(g, M.woodMed, 0.19, 0.21, 0.09, 10, 0, 0.59, 0, 'poker-capital');
@@ -603,8 +606,14 @@ export function buildPiano(): THREE.Group {
   box(g, M.woodDark, w + 0.05, 0.06, d + 0.05, 0, 1.31, 0, 'piano-lid');
 
   // --- Side pilasters: full-height strips proud of cabinet + band fronts ------
+  // Z-FIGHT SCAN FIX (two rounds): (1) the pilasters used to end EXACTLY at
+  // the top-band's top plane — coplanar co-facing tops in two different woods;
+  // they now stop 5 cm below it. (2) their BACKS shared the cabinet's back
+  // plane (z −0.325) — both back faces co-facing across a ~830 cm² overlap;
+  // the strips now sit 2 cm forward of the cabinet back (still proud at the
+  // front, same silhouette from the room side).
   for (const side of [-1, 1]) {
-    box(g, M.woodLight, 0.09, 1.18, 0.54, side * 0.68, 0.69, -0.055, `piano-pilaster-${side < 0 ? 'l' : 'r'}`);
+    box(g, M.woodLight, 0.09, 1.13, 0.52, side * 0.68, 0.665, -0.045, `piano-pilaster-${side < 0 ? 'l' : 'r'}`);
   }
 
   // --- Red silk decorative panel + wooden lattice on the top-band front -------

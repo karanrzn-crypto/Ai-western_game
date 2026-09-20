@@ -300,7 +300,12 @@ const persistence = new PersistenceManager();
 // Saves rebuild the registry wholesale — a v19 save would boot the OLD street
 // grid on top of the new plan. The key move drops v19 saves so every player
 // boots the new town.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v20' });
+// v21 moves for the VISUAL-DEFECT round (user bug report): vegetation rebuilt
+// (craggy trees/twiggly scrub/blade grass), real troughs (bigger footprint),
+// adult benches, structured hitching rails, coplanar-free crates, and the
+// farm corral ENLARGED to 15×15 — a v20 save would keep the old pen + old
+// props, so the key moves and every browser rebuilds from the new layout.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v21' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -469,11 +474,14 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
   });
 }
 
-// Map expansion 60×60 → 100×100 (±30 → ±50): same 3 m wall profile, same
-// overlap-at-corners pattern; the corridor between the walls and the town
-// core is the room the new residential row + outskirts houses move into.
-addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -49.5), new THREE.Vector3(100, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 49.5), new THREE.Vector3(100, 3, 1));
+// Map expansion 60×60 → 100×100 (±30 → ±50): same 3 m wall profile.
+// CORNER-SEAM FIX (z-fight scan round): the N/S walls used to run the full
+// 100 m so their end caps sat EXACTLY coplanar with the E/W walls' outer
+// faces (co-facing pair at the map corners). The N/S walls are now 98 m:
+// their end caps bury INSIDE the E/W wall volumes (±49…±50) and no outer
+// faces overlap any more. The player is still sealed by the inner faces ±49.
+addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -49.5), new THREE.Vector3(98, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 49.5), new THREE.Vector3(98, 3, 1));
 addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
 addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
 
@@ -639,7 +647,7 @@ for (const envPlacement of collectEnvironmentPlacements()) {
     uuid: envPlacement.uuid,
     assetType: envPlacement.type,
     transform: {
-      position: { x: envPlacement.x, y: 0, z: envPlacement.z },
+      position: { x: envPlacement.x, y: envPlacement.y ?? 0, z: envPlacement.z },
       rotation: { x: 0, y: envPlacement.yaw ?? 0, z: 0 },
       scale: { x: envPlacement.scale ?? 1, y: envPlacement.scale ?? 1, z: envPlacement.scale ?? 1 },
     },

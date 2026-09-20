@@ -792,10 +792,17 @@ export function buildGunRack(): THREE.Group {
   // Carcass: plinth, backboard, stiles, top cap.
   g.add(mesh(new THREE.BoxGeometry(W, 0.1, D), MAT.woodDark(), 0, 0.05, D / 2));
   g.add(mesh(new THREE.BoxGeometry(W, 1.44, 0.035), MAT.woodDark(), 0, 0.82, 0.0175));
+  // Z-FIGHT SCAN FIX: the stiles used to be centered at ±(W/2 − 0.03), which
+  // put their OUTER faces exactly on the backboard/plinth edge planes (±W/2)
+  // — co-facing side faces in two woods (~216 + 50 cm²). They now sit 1 cm
+  // further out: proud side posts, no shared plane with any carcass edge.
   for (const sx of [-1, 1] as const) {
-    g.add(mesh(new THREE.BoxGeometry(0.06, H, 0.05), MAT.woodTrim(), sx * (W / 2 - 0.03), H / 2, 0.045));
+    g.add(mesh(new THREE.BoxGeometry(0.06, H, 0.05), MAT.woodTrim(), sx * (W / 2 - 0.02), H / 2, 0.045));
   }
-  g.add(mesh(new THREE.BoxGeometry(W, 0.04, D), MAT.woodTrim(), 0, 1.6, D / 2));
+  // Z-FIGHT SCAN FIX: the cap used to span the full depth (back face at z=0,
+  // coplanar with the backboard's back face — two woods, ~216 cm² overlap).
+  // Its back edge now buries 5 mm INTO the backboard volume (0.03…0.24).
+  g.add(mesh(new THREE.BoxGeometry(W, 0.04, 0.21), MAT.woodTrim(), 0, 1.6, 0.135));
 
   // Butt shelf (top y 0.34) + 4 brass pegs the butts rest on + front rail.
   g.add(mesh(new THREE.BoxGeometry(W - 0.12, 0.035, D - 0.04), MAT.woodMed(), 0, 0.3225, D / 2));
@@ -843,7 +850,10 @@ export function buildGunCabinet(): THREE.Group {
   }
   const deck = mesh(new THREE.BoxGeometry(W - 0.08, 0.04, 0.3), MAT.woodMed(), 0, 0.21, 0.15);
   g.add(deck);
-  const backPanel = mesh(new THREE.BoxGeometry(W - 0.08, 1.36, 0.03), MAT.woodDark(), 0, 0.87, 0.015);
+  // Z-FIGHT SCAN FIX: the back panel used to START at local z=0 — the same
+  // plane as the deck's back face (both facing the wall → co-facing pair).
+  // It now starts 5 mm forward, buried inside the deck's depth band.
+  const backPanel = mesh(new THREE.BoxGeometry(W - 0.08, 1.36, 0.03), MAT.woodDark(), 0, 0.87, 0.02);
   g.add(backPanel);
   const top = mesh(new THREE.BoxGeometry(W, 0.08, 0.3), MAT.woodDark(), 0, 1.59, 0.15);
   g.add(top);
@@ -853,8 +863,12 @@ export function buildGunCabinet(): THREE.Group {
   // Glazed front: stiles + rails (front face 0.32), glass INSET (front face
   // 0.2925 — 2.75 cm behind the frame), a mid glazing bar 2.5 mm clear of
   // the glass, brass knob + key plate on the right stile.
+  // Z-FIGHT SCAN FIX: the stiles used to rise to EXACTLY the side-panel top
+  // plane (1.55) — stile tops coplanar with the side tops (two different
+  // woods, co-facing overlap at both flanks → flicker). They now stop 1 cm
+  // below the carcass top; the top slab overhangs them as before.
   for (const sx of [-1, 1] as const) {
-    const stile = mesh(new THREE.BoxGeometry(0.05, 1.36, 0.07), MAT.woodMed(), sx * 0.435, 0.87, 0.285);
+    const stile = mesh(new THREE.BoxGeometry(0.05, 1.35, 0.07), MAT.woodMed(), sx * 0.435, 0.865, 0.285);
     g.add(stile);
   }
   for (const ry of [0.26, 1.48] as const) {
@@ -1164,10 +1178,13 @@ export function buildAmmoCrate(): THREE.Group {
   const body = mesh(new THREE.BoxGeometry(w, h, d), stdMat(WOOD_MED, stencilTex), 0, h / 2, 0);
   g.add(body);
 
-  // corner + edge battens
+  // corner + edge battens — Z-FIGHT ROOT FIX: the battens used to end EXACTLY
+  // at the body top (coplanar co-facing top faces, different materials →
+  // color flicker at the corners; same shared defect as the town-square and
+  // gunshop crates). They now rise 9 mm proud and sink 5 mm below the body.
   const battenMat = MAT.woodDark();
   [-1, 1].forEach((sx) => {
-    const vBatten = mesh(new THREE.BoxGeometry(0.03, h, 0.03), battenMat, (sx * w) / 2, h / 2, (sx * d) / 2);
+    const vBatten = mesh(new THREE.BoxGeometry(0.03, h + 0.014, 0.03), battenMat, (sx * w) / 2, h / 2 + 0.002, (sx * d) / 2);
     g.add(vBatten);
   });
   [0.03, h - 0.03].forEach((y) => {

@@ -38,6 +38,9 @@ export interface EnvPlacement {
   name: string;
   x: number;
   z: number;
+  /** Optional explicit height — props on raised floors (stable/gunshop
+   *  interiors) must sit at the floor-top plane, not the ground. */
+  y?: number;
   yaw?: number;
   scale?: number;
   /** Road patch dims (meters) — the builder snakes/jitters along these. */
@@ -110,7 +113,7 @@ const ROAD_SEGS: readonly RoadSeg[] = [
   { name: 'محوطه دروازه اصطبل', x1: -6, z1: 23.5, x2: 1, z2: 23.5, width: 6, lift: 0.048 },
   { name: 'محوطه حصار اسب‌ها', x1: 1, z1: 27.5, x2: 6.5, z2: 27.5, width: 4, lift: 0.048 },
   { name: 'حیاط مزرعه', x1: -15.5, z1: -38, x2: -15.5, z2: -38, width: 7, lift: 0.044, wobble: 0 }, // square patch, length via seg
-  { name: 'کف حصار مزرعه', x1: -29, z1: -40, x2: -29, z2: -40, width: 10, lift: 0.044, wobble: 0 },
+  { name: 'کف حصار مزرعه', x1: -31, z1: -40, x2: -31, z2: -40, width: 15.6, lift: 0.044, wobble: 0 },
   { name: 'کف حصار اسب‌ها', x1: 12, z1: 28, x2: 12, z2: 28, width: 9, lift: 0.044, wobble: 0 },
 ];
 
@@ -156,16 +159,16 @@ const lamp = (x: number, z: number): EnvPlacement => ({
   uuid: envUuid(), type: 'street-lamp', name: 'چراغ خیابانی', x, z,
 });
 
-const hitch = (x: number, z: number, yaw = 0): EnvPlacement => ({
-  uuid: envUuid(), type: 'hitching-post', name: 'جای بستن اسب', x, z, yaw,
+const hitch = (x: number, z: number, yaw = 0, seed = 3): EnvPlacement => ({
+  uuid: envUuid(), type: 'hitching-post', name: 'جای بستن اسب', x, z, yaw, seed,
 });
 
 const barrel = (x: number, z: number, yaw = 0): EnvPlacement => ({
   uuid: envUuid(), type: 'barrel-prop', name: 'بشکه چوبی', x, z, yaw,
 });
 
-const crate = (x: number, z: number, yaw = 0): EnvPlacement => ({
-  uuid: envUuid(), type: 'wood-crate', name: 'جعبه چوبی', x, z, yaw,
+const crate = (x: number, z: number, yaw = 0, y = 0): EnvPlacement => ({
+  uuid: envUuid(), type: 'wood-crate', name: 'جعبه چوبی', x, z, y, yaw,
 });
 
 const hay = (x: number, z: number): EnvPlacement => ({
@@ -187,8 +190,10 @@ const firewood = (x: number, z: number, yaw = 0): EnvPlacement => ({
 export const PROP_PLACEMENTS: readonly EnvPlacement[] = Object.freeze([
   // The square centerpiece sits slightly off-axis (organic feel).
   { uuid: envUuid(), type: 'town-well', name: 'چاه مرکزی شهر', x: -1, z: 0.5, yaw: 15 },
-  // Benches around the well (each faces the centerpiece).
-  bench(-4.4, 0.5, 90), bench(2.4, -1.4, -90), bench(2.4, 2.6, -90), bench(-1, 4.1, 180),
+  // Benches around the well (each faces the centerpiece). Adult-scale benches
+  // (2.3 m) — the east pair nudged so the collar collider stays clear of the
+  // square's barrel cluster.
+  bench(-4.4, 0.5, 90), bench(2.4, -1.4, -90), bench(2.4, 2.3, -90), bench(-1, 4.1, 180),
   // Street lamps — main street.
   lamp(-6.5, -23), lamp(6.5, -19.5), lamp(-6.5, -13.5), lamp(6.5, -10.5),
   // Town entrance pair.
@@ -203,18 +208,19 @@ export const PROP_PLACEMENTS: readonly EnvPlacement[] = Object.freeze([
   // Farm lane.
   lamp(-13.5, -36.5),
   // Hitching posts — meat shop (right/west) & worker house (left/east).
-  hitch(-10.5, -1.8), hitch(10.5, 0.8),
+  hitch(-10.5, -1.8, 0, 11), hitch(10.5, 0.8, 0, 23),
   // Saloon / gunshop porches.
-  hitch(-6, -11.2), hitch(6, -11.2),
+  hitch(-6, -11.2, 0, 31), hitch(6, -11.2, 0, 47),
   // Stable gate + corral.
-  hitch(-4.2, 20.5), hitch(5.8, 20.5), hitch(6, 31, 90),
-  // Farm lane.
-  hitch(-16.5, -36, 90),
+  hitch(-4.2, 20.5, 0, 59), hitch(5.8, 20.5, 0, 67), hitch(6, 31, 90, 71),
+  // Farm lane — moved to the ROAD EDGE (z-fight/walk round: it used to stand
+  // at x −16.5, mid-road, and body-blocked anyone riding the lane down).
+  hitch(-18.6, -36, 90, 83),
   // Barrels & crates — square clusters.
   barrel(2.9, 3.9), barrel(3.5, 3.4), barrel(2.5, 4.5),
   crate(3.9, 4.3), crate(3.5, 4.9),
   barrel(-8.6, -12.4), barrel(-9.2, -11.7),       // saloon porch
-  barrel(9.9, -13.2), barrel(10.4, -12.5), crate(11, -14.1), // gunshop
+  barrel(9.9, -13.2), barrel(10.4, -12.5), crate(11, -14.1, 0, 0.1), // gunshop — ON the raised plank floor
   barrel(-15.6, 3.1),                              // behind meat shop
   crate(11.4, -0.4),                               // worker house front
   // Wagons — main street edge, near exit, corral, farm.
@@ -228,8 +234,10 @@ export const PROP_PLACEMENTS: readonly EnvPlacement[] = Object.freeze([
   firewood(-21.9, 19.6, 90), firewood(13.2, 2.8, -90), firewood(-22.5, -38.6, 90), firewood(16.8, 12.5),
   // Farm barrels/crates near the house porch.
   barrel(-18.6, -37.4), barrel(-18.1, -36.8), crate(-19.6, -40.2), crate(-19.1, -40.7),
-  // Stable gate side props.
-  barrel(-5.9, 20.6), barrel(-6.5, 21.1), crate(-7.1, 22.4),
+  // Stable gate side props — the crate moved WEST out of the stable
+  // footprint (it used to stand INSIDE the building at (−7.1, 22.4), buried
+  // 9.5 cm into the raised plank floor; walk-round fix).
+  barrel(-5.9, 20.6), barrel(-6.5, 21.1), crate(-5.9, 21.6),
 ]);
 
 export const SIGN_PLACEMENTS: readonly EnvPlacement[] = [
@@ -290,15 +298,18 @@ function fenceRun(
 }
 
 /**
- * FARM CORRAL (livestock yard west of the farm house):
- * rect x −34…−24, z −46…−34, gate on the SOUTH run (x −29.5…−26.5).
- * Every section is a separate object — the whole fence is never merged.
+ * FARM CORRAL (livestock yard west of the farm house) — ENLARGED (user bug
+ * round: 10×12 m read as a cramped pen): now 15×15 m (x −38.5…−23.5,
+ * z −47.5…−32.5), ~225 m² of real surrounding land for the livestock,
+ * trough, hay and movement. Gate on the SOUTH run (world x −29.5…−26.5,
+ * i.e. run parameter d 9.0…12.0). Every section is a separate object —
+ * the whole fence is never merged.
  */
 export const FARM_FENCE_PLACEMENTS: readonly EnvPlacement[] = Object.freeze([
-  ...fenceRun('حصار مزرعه — ضلع جنوبی', -34, -34, -24, -34, [[4.2, 7.8]]),
-  ...fenceRun('حصار مزرعه — ضلع شمالی', -34, -46, -24, -46),
-  ...fenceRun('حصار مزرعه — ضلع غربی', -34, -46, -34, -34),
-  ...fenceRun('حصار مزرعه — ضلع شرقی', -24, -46, -24, -34),
+  ...fenceRun('حصار مزرعه — ضلع جنوبی', -38.5, -32.5, -23.5, -32.5, [[9.0, 12.0]]),
+  ...fenceRun('حصار مزرعه — ضلع شمالی', -38.5, -47.5, -23.5, -47.5),
+  ...fenceRun('حصار مزرعه — ضلع غربی', -38.5, -47.5, -38.5, -32.5),
+  ...fenceRun('حصار مزرعه — ضلع شرقی', -23.5, -47.5, -23.5, -32.5),
 ]);
 
 /**
@@ -339,7 +350,7 @@ const KEEP_OUT_RECTS: readonly Footprint[] = [
   ...BUILDING_FOOTPRINTS,
   { name: 'plaza', minX: -11.5, maxX: 11.5, minZ: -8.5, maxZ: 9.5 },
   { name: 'crop-field', minX: -11.5, maxX: -2, minZ: -44, maxZ: -36.5 },
-  { name: 'farm-corral', minX: -34.6, maxX: -23.4, minZ: -46.6, maxZ: -33.4 },
+  { name: 'farm-corral', minX: -39.1, maxX: -22.9, minZ: -48.1, maxZ: -31.9 },
   { name: 'stable-corral', minX: 6.4, maxX: 17.6, minZ: 21.4, maxZ: 34.6 },
 ];
 

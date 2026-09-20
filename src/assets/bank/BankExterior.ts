@@ -413,9 +413,14 @@ export function buildBankFrontDoor(meta: BankFrontDoorMeta): THREE.Group {
     });
     // Brass handle bar at the meeting stile (the leaf's free edge), both
     // faces; rosette discs where the bar meets the stile.
+    // Z-FIGHT SCAN FIX: the street rosette sat in the SAME z band as the
+    // raised panels (both 0.031…0.045), its rim coplanar with the panel front
+    // (walnut vs brass → flicker at the rim). It now buries 3 mm INTO the
+    // panel and stands 1.1 cm proud — mounted look, no shared plane. The
+    // inside rosette keeps its original seat (no panels on the inner face).
     const handleX = dir * (leafW - 0.1);
     addCyl(hinge, M.brass, 0.02, 0.02, 0.34, 10, handleX, 1.28, leafT / 2 + 0.024, `bank-front-door-handle-${tag}`).rotation.x = Math.PI / 2;
-    addCyl(hinge, M.brass, 0.045, 0.045, 0.014, 10, handleX, 1.28, leafT / 2 + 0.008, `bank-front-door-handle-rose-${tag}`).rotation.x = Math.PI / 2;
+    addCyl(hinge, M.brass, 0.045, 0.045, 0.014, 10, handleX, 1.28, leafT / 2 + 0.019, `bank-front-door-handle-rose-${tag}`).rotation.x = Math.PI / 2;
     addCyl(hinge, M.brassDark, 0.02, 0.02, 0.34, 10, handleX, 1.28, -leafT / 2 - 0.024, `bank-front-door-handle-in-${tag}`).rotation.x = Math.PI / 2;
     addCyl(hinge, M.brassDark, 0.045, 0.045, 0.014, 10, handleX, 1.28, -leafT / 2 - 0.008, `bank-front-door-handle-rose-in-${tag}`).rotation.x = Math.PI / 2;
   }

@@ -689,14 +689,27 @@ function buildChimney(height = 1.0): THREE.Group {
 // Reusable yard/stall props
 // ---------------------------------------------------------------------------
 
+/**
+ * Wooden crate (town-square/farm/yard). Z-FIGHT ROOT FIX (user bug round):
+ * the corner battens used to be EXACTLY the body height, so every batten top
+ * face was coplanar with the body top face in a DIFFERENT material — visible
+ * color flicker at all four top corners (same defect as the gunshop/sheriff
+ * ammo crates). Battens now rise 8 mm PROUD of the body and sink 4 mm below
+ * it: no coplanar pair anywhere, and the proud corner trim reads better.
+ */
 export function buildWoodCrate(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'wood-crate';
   const size = 0.42;
   box(g, woodMat(0.45), size, size, size, 0, size / 2, 0, 'crate-body');
   [-1, 1].forEach((sx) => {
-    box(g, woodMat(0.5), 0.035, size, 0.035, (sx * size) / 2, size / 2, (sx * size) / 2);
+    [-1, 1].forEach((sz) => {
+      box(g, woodMat(0.5), 0.035, size + 0.012, 0.035, (sx * size) / 2, size / 2 + 0.002, (sz * size) / 2,
+        `crate-batten-${sx > 0 ? 'e' : 'w'}${sz > 0 ? 's' : 'n'}`);
+    });
   });
+  // Horizontal trim band (proud of the body — never coplanar with its faces).
+  box(g, woodMat(0.5), size + 0.02, 0.03, size + 0.02, 0, 0.08, 0, 'crate-band');
   return g;
 }
 
@@ -790,20 +803,61 @@ export function buildFenceSection(length = 1.4, wear = 0.35): THREE.Group {
   return g;
 }
 
-/** Farmyard water trough: plank box + sunken water surface (2 cm below the
- *  rim — visible on top, never coplanar with the rim). */
+/**
+ * Farmyard/ranch water trough — REAL LIVESTOCK TROUGH (user bug round: the
+ * old 4-plank box read as a plain cube). Plank body on two log skids, a
+ * protruding rim cap around the top, iron reinforcement hoops, a visible dark
+ * interior floor and an inset water surface ~4.5 cm below the rim (every
+ * pair of faces either interpenetrates or has a real gap — nothing coplanar).
+ * Origin = ground center; length along local X (1.55 m incl. rim).
+ */
 export function buildWaterTrough(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'water-trough';
-  const w = 1.0;
-  const h = 0.3;
-  const d = 0.42;
-  const t = 0.04;
-  box(g, woodMat(0.5), w, h, t, 0, h / 2, -d / 2);
-  box(g, woodMat(0.5), w, h, t, 0, h / 2, d / 2);
-  box(g, woodMat(0.5), t, h, d, -w / 2 + t / 2, h / 2, 0);
-  box(g, woodMat(0.5), t, h, d, w / 2 - t / 2, h / 2, 0);
-  const water = mesh(new THREE.BoxGeometry(w - 2 * t - 0.01, 0.02, d - 2 * t - 0.01), stdMat('#3d5a66', null, { roughness: 0.15, metalness: 0.1 }), 0, h - 0.05, 0);
+  const len = 1.5;
+  const d = 0.55;      // opening depth (Z)
+  const t = 0.045;     // plank thickness
+  const rimH = 0.035;
+  const bodyH = 0.355; // wall height (walls 0.08 … 0.435, rim caps 0.43 … 0.465)
+  const baseY = 0.08;  // body bottom (sunk 2 cm into the skids — never floats)
+
+  // Two log skids under the body (ground the trough, western look).
+  for (const sx of [-1, 1]) {
+    const skid = mesh(new THREE.CylinderGeometry(0.05, 0.05, d - 0.01, 8), woodMat(0.6), sx * (len / 2 - 0.22), 0.05, 0);
+    skid.rotation.x = Math.PI / 2;
+    g.add(skid);
+  }
+  // Plank walls (N/S run the length, E/W nest between them with a 1 cm gap).
+  for (const sz of [-1, 1]) {
+    box(g, woodMat(0.5), len, bodyH, t, 0, baseY + bodyH / 2, sz * (d / 2 - t / 2), `trough-wall-${sz > 0 ? 's' : 'n'}`);
+  }
+  for (const sx of [-1, 1]) {
+    box(g, woodMat(0.5), t, bodyH, d - 2 * t - 0.01, sx * (len / 2 - t / 2), baseY + bodyH / 2, 0, `trough-end-${sx > 0 ? 'e' : 'w'}`);
+  }
+  // Interior floor (dark, visible from above through the opening).
+  box(g, woodMat(0.72), len - 2 * t - 0.04, 0.02, d - 2 * t - 0.04, 0, baseY + 0.01, 0, 'trough-floor');
+  // Protruding rim cap around the top: the wall tops bury 5 mm INSIDE the
+  // rim volume (rim bottom 0.43 < wall top 0.435 < rim top 0.465) — the
+  // wall/rim interface can never produce a coplanar co-facing pair.
+  const wallTop = baseY + bodyH;      // 0.435
+  const rimY = wallTop - 0.005 + rimH / 2; // rim spans 0.43 … 0.465
+  for (const sz of [-1, 1]) {
+    box(g, woodMat(0.42), len + 0.05, rimH, t + 0.025, 0, rimY, sz * (d / 2 + 0.002), `trough-rim-${sz > 0 ? 's' : 'n'}`);
+  }
+  for (const sx of [-1, 1]) {
+    box(g, woodMat(0.42), t + 0.025, rimH, d + 0.05, sx * (len / 2 + 0.002), rimY, 0, `trough-rim-${sx > 0 ? 'e' : 'w'}`);
+  }
+  // Iron reinforcement hoops hugging the walls (inside the body band).
+  for (const sx of [-1, 1]) {
+    const hoop = mesh(new THREE.TorusGeometry(d / 2 + 0.012, 0.012, 5, 14), MAT.iron(), sx * 0.45, baseY + bodyH / 2, 0);
+    hoop.rotation.y = Math.PI / 2;
+    hoop.scale.y = (bodyH / 2) / (d / 2 + 0.012);
+    g.add(hoop);
+  }
+  // Water: top ~4.5 cm below the rim top, 1 cm clear of every wall face.
+  const rimTop = rimY + rimH / 2;
+  const water = mesh(new THREE.BoxGeometry(len - 2 * t - 0.04, 0.015, d - 2 * t - 0.04),
+    stdMat('#3d5a66', null, { roughness: 0.12, metalness: 0.1 }), 0, rimTop - 0.0525, 0);
   water.name = 'trough-water';
   water.castShadow = false;
   g.add(water);
@@ -1345,13 +1399,13 @@ export function buildFarmhouse(): THREE.Group {
   }
 
   // water trough by the fence (§2 farmyard identity)
-  // TROUGH/FENCE FIX (user §5): at x 1.9 the trough's box (x 1.4..2.4)
-  // intersected the 4th fence section (posts at x 0.63/1.97, z 3.55) — a
-  // fence post stood SUNK inside the water. The trough moves east of the
-  // fence line's end (fence ends x 2.0, trough spans x ≈ 2.37..3.43): no
-  // water/fence overlap, still hard by the fence, clear of house and shed.
+  // TROUGH/FENCE FIX (user §5) + trough rebuild (bug round): the trough is now
+  // a REAL livestock trough 1.55 m long incl. rim — it stays east of the fence
+  // line's end (last section spans x …2.0; the rotated 1.55 m trough spans
+  // x ≈ 2.21..3.79): no water/fence overlap, still hard by the fence, clear
+  // of house and shed.
   const trough = buildWaterTrough();
-  trough.position.set(2.9, 0, depth / 2 + 1.4);
+  trough.position.set(3.0, 0, depth / 2 + 1.4);
   trough.rotation.y = -0.2;
   g.add(trough);
 
@@ -1554,7 +1608,7 @@ export const TOWN_EXTERIOR_COLLIDERS: Readonly<Record<string, { readonly boxes: 
   }),
   'wood-crate': Object.freeze({
     boxes: Object.freeze([
-      Object.freeze({ size: Object.freeze({ x: 0.42, y: 0.42, z: 0.42 }), offset: Object.freeze({ x: 0, y: 0.21, z: 0 }) }),
+      Object.freeze({ size: Object.freeze({ x: 0.43, y: 0.44, z: 0.43 }), offset: Object.freeze({ x: 0, y: 0.212, z: 0 }) }),
     ]),
   }),
   'barrel-prop': Object.freeze({
@@ -1569,7 +1623,7 @@ export const TOWN_EXTERIOR_COLLIDERS: Readonly<Record<string, { readonly boxes: 
   }),
   'water-trough': Object.freeze({
     boxes: Object.freeze([
-      Object.freeze({ size: Object.freeze({ x: 1.0, y: 0.3, z: 0.42 }), offset: Object.freeze({ x: 0, y: 0.15, z: 0 }) }),
+      Object.freeze({ size: Object.freeze({ x: 1.56, y: 0.47, z: 0.62 }), offset: Object.freeze({ x: 0, y: 0.235, z: 0 }) }),
     ]),
   }),
 });

@@ -104,19 +104,23 @@ test('town-plan: FARM FENCE is individual sections with own uuids + colliders', 
   const payload = (ENV_PROP_COLLIDERS as Record<string, unknown>)['fence-section']
     ?? 'carried by TOWN_EXTERIOR_COLLIDERS (fence-section type registered there)';
   assert.ok(payload, 'fence-section collider payload exists');
-  // All sections hug the corral ring (x −34…−24, z −46…−34).
+  // ENLARGED corral ring (user bug round): x −38.5…−23.5, z −47.5…−32.5.
   for (const f of FARM_FENCE_PLACEMENTS) {
     const onRing =
-      (Math.abs(f.z - -34) < 0.8 && f.x >= -34.6 && f.x <= -23.4) ||
-      (Math.abs(f.z - -46) < 0.8 && f.x >= -34.6 && f.x <= -23.4) ||
-      (Math.abs(f.x - -34) < 0.8 && f.z >= -46.6 && f.z <= -33.4) ||
-      (Math.abs(f.x - -24) < 0.8 && f.z >= -46.6 && f.z <= -33.4);
+      (Math.abs(f.z - -32.5) < 0.8 && f.x >= -39.1 && f.x <= -22.9) ||
+      (Math.abs(f.z - -47.5) < 0.8 && f.x >= -39.1 && f.x <= -22.9) ||
+      (Math.abs(f.x - -38.5) < 0.8 && f.z >= -48.1 && f.z <= -31.9) ||
+      (Math.abs(f.x - -23.5) < 0.8 && f.z >= -48.1 && f.z <= -31.9);
     assert.ok(onRing, `section ${f.uuid} sits on the corral ring (${f.x.toFixed(1)}, ${f.z.toFixed(1)})`);
   }
-  // Gate gap on the south run (x −29.5…−26.5) stays open.
-  const gapBlocked = FARM_FENCE_PLACEMENTS.filter((f) =>
-    Math.abs(f.z - -34) < 0.8 && f.x > -29.6 && f.x < -26.4);
+  // The corral is REAL surrounding land: at least 180 m² inside the ring.
+  assert.ok(FARM_FENCE_PLACEMENTS.length >= 38, `enlarged corral has a long perimeter (${FARM_FENCE_PLACEMENTS.length})`);
+  // Gate gap on the south run (clear span x ≈ −28.8…−26.1) stays open, and
+  // the gate is FRAMED by sections on both sides.
+  const south = FARM_FENCE_PLACEMENTS.filter((f) => Math.abs(f.z - -32.5) < 0.8);
+  const gapBlocked = south.filter((f) => f.x > -28.7 && f.x < -26.2);
   assert.equal(gapBlocked.length, 0, 'farm corral gate gap is clear');
+  assert.ok(south.some((f) => f.x <= -29.2) && south.some((f) => f.x >= -25.7), 'gate framed by sections');
 });
 
 test('town-plan: STABLE corral fence individual + gate toward the road', () => {

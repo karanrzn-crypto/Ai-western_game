@@ -283,9 +283,12 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   // --- TACK ROOM (SW corner; x −0.6 / z −0.6 + south-wall huggers +0.6 with
   //  the 2026 size revision — every prop keeps its exact wall clearance) ---
   { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۱', x: -5.62, y: 0.1, z: 4.35 },
-  { uuid: propUuid(), kind: 'saddle', name: 'زین ۱', x: -5.62, y: 0.845, z: 4.35, ry: deg(0.08) },
+  // saddle origin = the RACK TOP surface (0.1 + 0.845): the old 0.845 put the
+  // blanket's top face exactly flush with the rack-top plane (coplanar
+  // co-facing pair, z-fight scan round).
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۱', x: -5.62, y: 0.945, z: 4.35, ry: deg(0.08) },
   { uuid: propUuid(), kind: 'saddle-rack', name: 'پایه زین ۲', x: -5.62, y: 0.1, z: 5.55 },
-  { uuid: propUuid(), kind: 'saddle', name: 'زین ۲', x: -5.62, y: 0.845, z: 5.55, ry: deg(-0.12) },
+  { uuid: propUuid(), kind: 'saddle', name: 'زین ۲', x: -5.62, y: 0.945, z: 5.55, ry: deg(-0.12) },
   { uuid: propUuid(), kind: 'tack-board', name: 'تخته یراق', x: -4.2, y: 1.82, z: 2.978 },
   { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۱', x: -4.75, y: 2.22, z: 3.005 },
   { uuid: propUuid(), kind: 'bridle', name: 'دهنه ۲', x: -4.35, y: 2.22, z: 3.005, rz: deg(0.08) },
@@ -293,12 +296,18 @@ export const STABLE_PROPS: readonly StablePropSpec[] = Object.freeze([
   { uuid: propUuid(), kind: 'strap', name: 'تسمه چرمی', x: -3.45, y: 1.95, z: 3.005, params: { len: 0.42 } },
   { uuid: propUuid(), kind: 'tack-shelf', name: 'قفسه قوطی', x: -3.1, y: 1.6, z: 3.03 },
   { uuid: propUuid(), kind: 'blanket-bar', name: 'میله پتو', x: -5.92, y: 1.65, z: 5.8 },
-  { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.88, y: 1.645, z: 5.8, ry: 90, params: { color: 0x7a4a3a } },
-  { uuid: propUuid(), kind: 'blanket', name: 'پتو تاشده', x: -4.85, y: 0.6, z: 5.0, ry: deg(0.16), params: { color: 0x5d5a4a } },
+  // blanket origin = the BAR TOP (1.65 + 0.025): the over-fold contacts the
+  // bar top plane (hidden interface) instead of being sunk flush with it
+  // (z-fight scan fix); wallT = the 0.05 bar so the drops hug it; ry 0 —
+  // the new builder's local thickness axis is X (the bar runs along Z).
+  { uuid: propUuid(), kind: 'blanket', name: 'پتو آویزان', x: -5.88, y: 1.675, z: 5.8, ry: 0, params: { color: 0x7a4a3a, wallT: 0.05 } },
+  { uuid: propUuid(), kind: 'blanket', name: 'پتو تاشده', x: -4.85, y: 0.6, z: 5.0, ry: deg(0.16), params: { color: 0x5d5a4a, folded: true } },
   { uuid: propUuid(), kind: 'shoe-rack', name: 'پایه نعل (اتاق یراق)', x: -4.35, y: 1.95, z: 6.833, params: { side: 'south' } },
   { uuid: propUuid(), kind: 'crate', name: 'جعبه چوبی یراق', x: -4.85, y: 0.1, z: 5.0, ry: deg(0.16), params: { w: 0.45, h: 0.5 } },
   { uuid: propUuid(), kind: 'tool-box', name: 'جعبه ابزار', x: -3.55, y: 0.1, z: 6.45, ry: deg(-0.4) },
-  { uuid: propUuid(), kind: 'sign', name: 'تابلوی TACK', x: -1.895, y: 2.7, z: 6.125, ry: 90, params: { text: 'TACK', w: 0.62, h: 0.26 } },
+  // sign y 2.685 (was 2.7): the board's top face used to land exactly on the
+  // stone trim band's top behind it (coplanar co-facing pair, scan round).
+  { uuid: propUuid(), kind: 'sign', name: 'تابلوی TACK', x: -1.895, y: 2.685, z: 6.125, ry: 90, params: { text: 'TACK', w: 0.62, h: 0.26 } },
   { uuid: propUuid(), kind: 'sign', name: 'تابلوی RATES', x: -1.895, y: 1.85, z: 4.25, ry: 90, params: { text: 'RATES', w: 0.72, h: 0.5, sub: 'LIVERY 50c - SHOE 25c', dark: true } },
   // --- FEED ROOM (SE corner; x +0.6 with the east wall, signs follow doors) ---
   { uuid: propUuid(), kind: 'hay-bale', name: 'باله علوفه ۱', x: 4.6, y: 0.1, z: 3.87 },

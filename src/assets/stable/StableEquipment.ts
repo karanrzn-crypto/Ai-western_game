@@ -49,6 +49,7 @@ import {
   horseCollar,
   leatherStrap,
   drapedBlanket,
+  foldedBlanket,
 } from './StableProps.js';
 
 const FLOOR = STABLE_LAYOUT.floorTop;
@@ -176,7 +177,13 @@ export class StablePropFactory implements IAssetFactory {
         addBox(g, M_.timber, 0.05, 0.05, 0.8, 0, 0, 0, 'blanket-bar');
         return g;
       }
-      case 'blanket': return drapedBlanket(num('w', 0.6), Number(p('color')) || 0x7a4a3a);
+      case 'blanket': {
+        // folded blankets lie FLAT (no drops → nothing coplanar with the
+        // surface below); draped blankets take the host wall's thickness so
+        // the drops hug its faces (z-fight scan fix).
+        if (p('folded')) return foldedBlanket(num('w', 0.6), Number(p('color')) || 0x5d5a4a);
+        return drapedBlanket(num('w', 0.6), Number(p('color')) || 0x7a4a3a, num('wallT', 0.5));
+      }
       case 'shoe-rack': return buildShoeRack(p('side') === 'north' ? 'north' : 'south');
       case 'crate': return woodCrate(num('w', 0.5), num('h', 0.5));
       case 'tool-box': return toolBox();

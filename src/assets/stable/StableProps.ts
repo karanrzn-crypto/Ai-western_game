@@ -468,19 +468,54 @@ export function leatherStrap(len = 0.5): THREE.Group {
   return g;
 }
 
-/** Folded blanket draped over a rail: origin at the contact top. */
-export function drapedBlanket(w = 0.7, color = 0x7a4a3a): THREE.Group {
+/**
+ * Folded blanket lying flat; origin at the contact bottom.
+ * (The folded stack has NO hanging drops — nothing drapes, so nothing can
+ * land coplanar on the surface it rests on.)
+ */
+export function foldedBlanket(w = 0.6, color = 0x5d5a4a): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'folded-blanket';
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.95 });
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, w * 0.67), mat);
+  lower.position.y = 0.025;
+  lower.name = 'blanket-fold-lower';
+  lower.castShadow = true;
+  g.add(lower);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(w * 0.9, 0.05, w * 0.58), mat);
+  upper.position.y = 0.075;
+  upper.name = 'blanket-fold-upper';
+  upper.castShadow = true;
+  g.add(upper);
+  return g;
+}
+
+/**
+ * Blanket draped over a wall/rail of thickness `wallT`; origin at the
+ * CONTACT TOP of the wall (the over-fold sits ON that plane).
+ * Z-FIGHT ROOT FIX (z-fight scan round): the drops used to span exactly
+ * [origin − dropH, origin], so every drop's TOP face was coplanar with the
+ * wall's top face it hung beside (co-facing pair → flicker), and the drops
+ * floated well clear of thin walls (a 0.12 m partition vs ±0.235 m drops).
+ * Now the drops hug the wall faces (wallT/2 + 14 mm) and their tops sink
+ * 6 mm BELOW the contact plane — no coplanar pair, no floating cloth.
+ */
+export function drapedBlanket(w = 0.7, color = 0x7a4a3a, wallT = 0.5): THREE.Group {
   const g = new THREE.Group();
   g.name = 'draped-blanket';
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.95 });
-  const over = new THREE.Mesh(new THREE.BoxGeometry(w, 0.03, 0.5), mat);
+  const dropTopY = -0.006;                       // below the contact plane
+  const dropX = wallT / 2 + 0.014;               // hug the wall faces
+  const dropLen = 0.4;
+  const overDepth = wallT + 2 * (dropX - wallT / 2) + 0.03; // covers the drops
+  const over = new THREE.Mesh(new THREE.BoxGeometry(w, 0.03, overDepth), mat);
   over.position.y = 0.015;
   over.name = 'blanket-top';
   over.castShadow = true;
   g.add(over);
-  for (const sz of [-1, 1]) {
-    const drop = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, 0.03), mat);
-    drop.position.set(0, -0.2, sz * 0.245);
+  for (const sx of [-1, 1]) {
+    const drop = new THREE.Mesh(new THREE.BoxGeometry(0.03, dropLen, w * 0.94), mat);
+    drop.position.set(sx * dropX, dropTopY - dropLen / 2, 0);
     drop.name = 'blanket-drop';
     drop.castShadow = true;
     g.add(drop);

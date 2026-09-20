@@ -349,9 +349,16 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
       addBox(g, M_.timber, L.innerHalfX * 2, 0.15, 0.1, 0, L.loft.joistBottomY + 0.075, z, `loft-joist-${z.toFixed(1)}`);
     }
     const segLen = (L.loft.zMax - L.loft.zMin - 0.06) / 4;
+    // Z-FIGHT SCAN FIX: the deck segments used to run the FULL inner width,
+    // so their side faces were coplanar with the joist end faces (same ±x
+    // planes) and the deck top strip slid under the east wall's window-sill
+    // liner (both UP faces at deckTopY). The segments now stop 8 cm short of
+    // each wall: no coplanar end planes, no overlap with the wall liners,
+    // and the joists (still full-width) carry the edge visually.
+    const deckLen = L.innerHalfX * 2 - 0.16;
     for (let i = 0; i < 4; i++) {
       const zc = L.loft.zMin + segLen / 2 + i * (segLen + 0.02);
-      addBox(g, i % 2 ? M_.plankDark : M_.plank, L.innerHalfX * 2, 0.07, segLen, 0, L.loft.joistTopY + 0.035, zc, `loft-deck-${i}`);
+      addBox(g, i % 2 ? M_.plankDark : M_.plank, deckLen, 0.07, segLen, 0, L.loft.joistTopY + 0.035, zc, `loft-deck-${i}`);
     }
     addBox(g, M_.trim, L.innerHalfX * 2 - 0.02, 0.28, 0.06, 0, L.loft.joistBottomY + 0.135, L.loft.zMax - 0.025, 'loft-edge-board');
     // Railing along the south edge with the ladder gap.

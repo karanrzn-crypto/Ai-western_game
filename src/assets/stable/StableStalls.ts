@@ -185,8 +185,10 @@ export function buildStallContents(spec: StableStallSpec): THREE.Group {
   // read as a stray «door ring» that stayed behind when the door swung.
   switch (spec.extra) {
     case 'blanket': {
-      // draped over the partition top (visible through the grill bars)
-      const blanket = drapedBlanket(0.7, 0x7a4a3a);
+      // draped over the partition top (visible through the grill bars) —
+      // wallT = the partition thickness so the drops HUG the wall faces
+      // (z-fight scan fix: drop tops no longer coplanar with the wall top).
+      const blanket = drapedBlanket(0.7, 0x7a4a3a, STABLE_LAYOUT.stall.frontThickness);
       blanket.position.set(side * 0.5, FLOOR + 1.35, northZ + 0.04);
       blanket.rotation.y = Math.PI / 2;
       g.add(blanket);

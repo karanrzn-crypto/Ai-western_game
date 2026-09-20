@@ -405,17 +405,23 @@ export function buildPistolDisplayCase(width = 1.6): THREE.Group {
   const baseH = 0.03;
 
   addBox(g, M.woodDark, width, baseH, d, 0, baseH / 2, 0, 'gunshop-display-base');
-  addBox(g, M.felt, width - 0.05, 0.006, d - 0.05, 0, baseH + 0.003, 0, 'gunshop-display-felt');
+  // felt sits 0.5 mm ABOVE the base top (the old exact-contact pair was a
+  // latent coplanar defect — invisible only because the felt is opaque).
+  addBox(g, M.felt, width - 0.05, 0.006, d - 0.05, 0, baseH + 0.0035, 0, 'gunshop-display-felt');
   // four walls (y ∈ [0.03, 0.19]); front/back run the full width, sides nest
   // BETWEEN them (no corner interpenetration).
   addBox(g, M.woodDark, width, wallH, 0.02, 0, baseH + wallH / 2, d / 2 - 0.01, 'gunshop-display-wall-front');
   addBox(g, M.woodDark, width, wallH, 0.02, 0, baseH + wallH / 2, -(d / 2 - 0.01), 'gunshop-display-wall-back');
   addBox(g, M.woodDark, 0.02, wallH, d - 0.04, -(width / 2 - 0.01), baseH + wallH / 2, 0, 'gunshop-display-wall-left');
   addBox(g, M.woodDark, 0.02, wallH, d - 0.04, width / 2 - 0.01, baseH + wallH / 2, 0, 'gunshop-display-wall-right');
-  // glass lid sits ON the walls (back-to-back contact, never coplanar overlap)
-  addBox(g, M.glass, width - 0.02, 0.008, d - 0.02, 0, baseH + wallH + 0.004, 0, 'gunshop-display-glass', false);
+  // Z-FIGHT FIX (user bug round — the flickering display case): the glass lid
+  // used to START exactly at the wall-top plane (bottom face coplanar with
+  // all four wall tops, visible through the transparent glass at grazing
+  // angles). The lid now FLOATS 4 mm clear of the walls — visually identical
+  // (sitting on the walls), geometrically unambiguous.
+  addBox(g, M.glass, width - 0.02, 0.008, d - 0.02, 0, baseH + wallH + 0.008, 0, 'gunshop-display-glass', false);
 
-  const feltTop = baseH + 0.006;
+  const feltTop = baseH + 0.0065;
 
   // Felt riser + brass label under the hero revolver (classic gunstore display).
   addBox(g, M.felt, 0.36, 0.022, 0.12, -0.06, feltTop + 0.011 + 0.0012, 0.075, 'gunshop-display-riser', false);
@@ -524,7 +530,12 @@ export function buildGunshopAmmoBox(caliber = '.45 COLT'): THREE.Group {
 
 /** Wood ammunition crate, stencilled with a caliber, with rope handles.
  *  (`Gunshop` prefix: `buildAmmoCrate` already exists in the sheriff module —
- *  the two coexist under the barrel's `export *`.) */
+ *  the two coexist under the barrel's `export *`.)
+ *  Z-FIGHT ROOT FIX (user bug round): the corner battens used to end EXACTLY
+ *  at the body top, so every batten top face was coplanar with the body top
+ *  in a different material — visible flicker at the four top corners (the
+ *  same defect as the town-square crate; fixed at the shared pattern).
+ *  Battens now rise 9 mm proud of the body and sink 5 mm below it. */
 export function buildGunshopAmmoCrate(caliber = '.44-40 WCF'): THREE.Group {
   const M = createGunShopMaterials();
   const g = new THREE.Group();
@@ -542,7 +553,7 @@ export function buildGunshopAmmoCrate(caliber = '.44-40 WCF'): THREE.Group {
   addBox(g, bodyMat, w, h, d, 0, h / 2, 0, 'gunshop-ammo-crate-body');
 
   ([-1, 1] as const).forEach((sx, i) => {
-    addBox(g, M.woodDark, 0.03, h, 0.03, (sx * w) / 2, h / 2, (sx * d) / 2, `gunshop-ammo-crate-batten-v-${i === 0 ? 'l' : 'r'}`);
+    addBox(g, M.woodDark, 0.03, h + 0.014, 0.03, (sx * w) / 2, h / 2 + 0.002, (sx * d) / 2, `gunshop-ammo-crate-batten-v-${i === 0 ? 'l' : 'r'}`);
   });
   ([0.03, h - 0.03] as const).forEach((y, i) => {
     addBox(g, M.woodDark, w + 0.02, 0.025, d + 0.02, 0, y, 0, `gunshop-ammo-crate-batten-h-${i === 0 ? 'lo' : 'hi'}`);

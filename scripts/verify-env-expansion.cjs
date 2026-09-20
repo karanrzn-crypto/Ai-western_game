@@ -118,7 +118,7 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
   ok('§2 boundary walls moved to ±49.5 (length 100)',
     mapState.wallZ.every((v) => Math.abs(Math.abs(v) - 49.5) < 0.01) &&
     mapState.wallX.every((v) => Math.abs(Math.abs(v) - 49.5) < 0.01) &&
-    mapState.wallLen === 100,
+    mapState.wallLen === 98, // corner-seam fix: N/S walls shortened 100 → 98 (caps buried in E/W walls)
     `z=${JSON.stringify(mapState.wallZ)} x=${JSON.stringify(mapState.wallX)} len=${mapState.wallLen}`);
 
   // §2a the south boundary BLOCKS: walk south from mid-prairie (z=44) →

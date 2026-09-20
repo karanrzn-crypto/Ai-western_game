@@ -116,6 +116,27 @@ export class CreativeFlightController {
   }
 
   /**
+   * Dev/harness teleport for the fly camera (screenshot + verify scripts):
+   * instantly moves the ACTIVE creative view to (x,y,z) and aims it at a
+   * target point (yaw/pitch derived from the look direction, same YXZ
+   * convention as applyTo). Zero gameplay effect — creative mode owns the
+   * camera while active, so the pose persists until the next input.
+   */
+  flyTo(x: number, y: number, z: number, lookX: number, lookY: number, lookZ: number): void {
+    if (!this.active) return;
+    this.position.set(x, y, z);
+    this.velocity.set(0, 0, 0);
+    const dx = lookX - x; const dy = lookY - y; const dz = lookZ - z;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    this.pitch = THREE.MathUtils.clamp(Math.asin(dy / len), -this.maxPitch, this.maxPitch);
+    this.yaw = Math.atan2(-dx, -dz);
+    if (this.lastCamera) this.applyTo(this.lastCamera);
+  }
+
+  /** Remember the camera the session handed us (flyTo's apply target). */
+  private lastCamera: THREE.Camera | null = null;
+
+  /**
    * Fly the camera for this frame. The direction basis is rebuilt from the
    * CURRENT yaw every frame (nothing cached), velocity is exponentially
    * smoothed (fast start, smooth stop, no jerk), and the result is written
@@ -155,5 +176,6 @@ export class CreativeFlightController {
     camera.rotation.order = 'YXZ';
     camera.position.copy(this.position);
     camera.rotation.set(this.pitch, this.yaw, 0);
+    this.lastCamera = camera;
   }
 }

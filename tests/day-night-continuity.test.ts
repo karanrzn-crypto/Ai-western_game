@@ -117,9 +117,10 @@ test('keyframe values at 12:00, 18:00 and 00:00 are preserved exactly', () => {
   cycle.setTimeOfDay(12);
   assert.equal(sun.intensity, 2.35);
   assert.equal(hemisphere.intensity, 1.04);
-  assert.equal((scene.background as THREE.Color).getHex(), 0xc2d3da);
-  assert.equal((scene.fog as THREE.Fog).color.getHex(), 0xd6c49a);
-  assert.equal(sun.color.getHex(), 0xfff4e0);
+  // the town-redesign biome pins the noon sky/fog to warm dust tones
+  assert.equal((scene.background as THREE.Color).getHex(), 0xdccbaa);
+  assert.equal((scene.fog as THREE.Fog).color.getHex(), 0xcdbb99);
+  assert.equal(sun.color.getHex(), 0xffffff);
   assert.ok(Math.abs(sun.position.y - 42) < 1e-6);
   cycle.setTimeOfDay(18);
   assert.equal(sun.intensity, 0.62);

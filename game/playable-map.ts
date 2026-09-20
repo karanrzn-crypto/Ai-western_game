@@ -85,10 +85,14 @@ import {
   GUNSHOP_SITE,
   GUNSHOP_DOOR_SPEC,
   setGunShopFrontDoorOpen,
-  registerEnvPropFactories,
-  registerEnvNatureFactories,
-  collectEnvironmentPlacements,
-  ENV_PROP_COLLIDERS,
+  registerAllTownFactories,
+  buildTownMapObjects,
+  TOWN_SITES,
+  TOWN_GROUND_SIZE,
+  TOWN_RESPAWN,
+  TOWN_HORSE_SPAWN,
+  TOWN_EXTERIOR_SITES,
+  rotateSiteDefs,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform, CameraMode } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -100,14 +104,11 @@ const stage = document.getElementById('stage');
 if (!stage) throw new Error('Missing #stage');
 
 const scene = new THREE.Scene();
-// Biome: warm dusty haze over the yellow western soil (reference image).
-scene.background = new THREE.Color(0xd6c49a);
-// Fog rescaled for the enlarged map: the old 90 m end would visibly dissolve
-// the new boundary walls and outskirt buildings from mid-street. 40→110 keeps
-// the dusty-distance read on the prairie edges while the whole playable
-// envelope stays legible. The DayNightCycle re-drives the color every frame;
-// these boot values only cover the first painted frame.
-scene.fog = new THREE.Fog(0xd6c49a, 40, 110);
+// Warm dusty frontier haze (the reference-image biome; the DayNightCycle
+// owns the live sky/fog and its daytime palette is retuned to these tones).
+const SKY_DUST = 0xd8c7a2;
+scene.background = new THREE.Color(SKY_DUST);
+scene.fog = new THREE.Fog(SKY_DUST, 40, 105);
 
 const camera = new THREE.PerspectiveCamera(
   70,
@@ -159,20 +160,18 @@ const shadows = new ShadowScheduler({ idleIntervalSeconds: 0.15, movingIntervalS
 const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
 sun.position.set(-25, 35, 15);
 sun.castShadow = true;
-// Map expansion rescale: the shadow frustum must still contain every CASTER
-// (shadows on empty prairie are invisible, so the frustum follows the town,
-// not the ground plane). Every current caster sits ≤36 m from the light
-// target (the origin) — an ortho box of ±50 contains all of them for EVERY
-// sun azimuth (a projection never exceeds the vector length) and leaves
-// headroom for future buildings inside that radius. 1024² over the ±50 box
-// ≈ 10.2 texels/m — BETTER texel density than the old 768²/±42.5 ≈ 9; the
-// scheduled depth pass grows ~1.4 ms → ~2.5 ms per refresh, paid by the
-// ShadowScheduler's idle/moving cadence, not per frame.
+// Shadow frustum sized to the PLAYABLE AREA: the redesigned map is a
+// 120×120 ground plane (town redesign 2026-09), so its farthest point from
+// the light target (the origin) is the half-diagonal 60√2 ≈ 84.9 m. An ortho
+// box of ±85 contains every map point for EVERY sun azimuth (the farm and
+// the ruined house cast too — the ±50 town-only box would drop them).
+// 1024² over ±85 ≈ 6 texels/m; the scheduled depth pass costs ≈2.5 ms per
+// refresh (every 150 ms idle) — the same trade the stable already vetted.
 sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = -50;
-sun.shadow.camera.right = 50;
-sun.shadow.camera.top = 50;
-sun.shadow.camera.bottom = -50;
+sun.shadow.camera.left = -85;
+sun.shadow.camera.right = 85;
+sun.shadow.camera.top = 85;
+sun.shadow.camera.bottom = -85;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 200;
 sun.shadow.bias = -0.00035;
@@ -199,12 +198,8 @@ const characterStates = new CharacterStateMachine();
 const input = new InputBindings(window);
 input.attach();
 
-const grid = new THREE.GridHelper(100, 100, 0x514b40, 0x6b6252);
+const grid = new THREE.GridHelper(TOWN_GROUND_SIZE, TOWN_GROUND_SIZE, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
-// The editor grid fights the new painted dusty ground (visual noise over the
-// biome texture). Edit Mode still has the gizmo + debug axes; the grid stays
-// available for dev rounds by flipping this flag.
-grid.visible = false;
 scene.add(grid);
 
 // Coordinate reference: world origin (0,0,0) + X/Y/Z direction axes.
@@ -223,12 +218,11 @@ registerAllBankFactories(assets);
 registerAllSheriffFactories(assets);
 registerAllStableFactories(assets);
 registerAllGunShopFactories(assets);
-// Town exteriors (5 house facades + butcher stall + yard props) — placed
-// per-def with TOWN_EXTERIOR_COLLIDERS when the street expands.
+registerAllTownFactories(assets);
+// Town exteriors (user-approved scale-1.3 buildings: farmstead, worker,
+// family, wealthy, abandoned + butcher stall) — the six REDesigned-town
+// buildings, placed per-def with TOWN_EXTERIOR_COLLIDERS at the town sites.
 registerTownExteriorFactories(assets);
-// Environment layer: roads, square/street/farm props, signs, vegetation.
-registerEnvPropFactories(assets);
-registerEnvNatureFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -268,7 +262,7 @@ const persistence = new PersistenceManager();
 // tack-room coil def and the stall rope extras are gone from the build, and
 // a v13 save still carries the 'rope-coil' def the factory no longer knows
 // (it would throw on materialisation). The key move drops those saves too.
-// v15 moves for the GUN SHOP: a whole new building block (34 defs) joins the
+// v15 moved for the GUN SHOP: a whole new building block (34 defs) joins the
 // authored layout, and saves rebuild the registry wholesale — an old save
 // would boot a town WITHOUT the gun shop. The key move drops v14 saves so
 // every player picks the shop up.
@@ -279,31 +273,23 @@ const persistence = new PersistenceManager();
 // doors up.
 // v17 moves for the TOWN EXPANSION: the spawn/test cube def is DELETED and
 // six town-exterior defs (butcher stall + five houses) join the authored
-// layout, and the ground/boundary rescale to 100×100. Saves rebuild the
-// registry wholesale — a v16 save would boot the OLD map with the test cube
-// back and without the new street. The key move drops v16 saves so every
-// player picks the new town up.
+// layout, and the ground/boundary rescale. Saves rebuild the registry
+// wholesale — a v16 save would boot the OLD map. The key move drops v16
+// saves so every player picks the new town up.
 // v18 moves for the 'ساختمان' deletion (user request): the plain cream
 // cube-built structure (7 defs, uuid block …030–…036) is gone from the
-// authored layout, and a v17 save still carries all 7 defs (saves rebuild
-// the registry wholesale) — the key move drops v17 saves so the cream box
-// can never come back and the cleaned town loads for every player.
+// authored layout, and a v17 save still carries all 7 defs — the key move
+// drops v17 saves so the cream box can never come back.
 // v19 moves for the MODEL-FIX round (user request): the four shell houses
 // spawn at SCALE 1.3 and the factory/collider fixes are baked into the
-// builders — a v18 save would keep the old scale-1 defs with stale collider
-// geometry, so the key moves again and every browser rebuilds the town from
-// the NEW authored layout (bigger houses, seated lean-to, clean butcher).
-// v20 moves for the TOWN REDESIGN (reference-image round): the whole plan is
-// re-authored — farm before town, entrance → main street → square → stable
-// → exit, bank/sheriff/stable rotated to face the square/road, butcher +
-// worker flanking the square, roads/well/lamps/fences/vegetation everywhere.
-// Saves rebuild the registry wholesale — a v19 save would boot the OLD street
-// grid on top of the new plan. The key move drops v19 saves so every player
-// boots the new town.
+// builders — every browser rebuilds the town from the NEW authored layout.
+// v20 moved for the TOWN REDESIGN (2026-09): the whole settlement layout —
+// 120×120 ground, road network, farm, square, the six town-exterior buildings
+// at NEW sites/yaws, rotated sites for the five original buildings.
 // v21 moves for the VISUAL-DEFECT round (user bug report): vegetation rebuilt
 // (craggy trees/twiggly scrub/blade grass), real troughs (bigger footprint),
-// adult benches, structured hitching rails, coplanar-free crates, and the
-// farm corral ENLARGED to 15×15 — a v20 save would keep the old pen + old
+// adult benches, structured hitching rails, coplanar-free crates, farm corral
+// enlarged, plus the town-props prop round — a v20 save would keep the old
 // props, so the key moves and every browser rebuilds from the new layout.
 const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v21' });
 
@@ -345,17 +331,12 @@ function resetAllToAuthored(): number {
 }
 
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
-// Spawn: the player boots on the FARM LANE at the north prairie (the new
-// progression starts BEFORE the town: farm → entrance → main street →
-// square → stable → exit). yaw π faces +Z (south) — straight down the lane
-// past the farmstead toward the town entrance.
-const RESPAWN_POINT = { x: -16, y: CHARACTER_PROPORTIONS.eyeHeight, z: -43 };
-const RESPAWN_YAW = Math.PI;
+// Respawn at the farm road's north end (the redesigned town's progression
+// starts at the farm and leads south — TownLayout is the single source).
+const RESPAWN_POINT = { x: TOWN_RESPAWN.x, y: CHARACTER_PROPORTIONS.eyeHeight, z: TOWN_RESPAWN.z };
 const playerController = new PlayerController(collisionWorld, {
   camera,
   initialPosition: { ...RESPAWN_POINT },
-  // Boot facing SOUTH down the farm lane (yaw 0 faces −Z north).
-  yaw: RESPAWN_YAW,
   cameraMode: 'third_person',
   stamina,
   crouchSpeed: 2.6,
@@ -452,13 +433,13 @@ scene.add(contactIndicator.group);
 const groundUuid = '10000000-0000-4000-a000-000000000001';
 manager.registerObject({
   uuid: groundUuid,
-  assetType: 'ground',
+  assetType: 'town-ground',
   transform: {
     position: { x: 0, y: 0, z: 0 },
-    rotation: { x: -90, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
   },
-  metadata: { name: 'زمین نقشه اصلی', size: 100, collider: false, editable: false },
+  metadata: { name: 'زمین نقشه اصلی', size: TOWN_GROUND_SIZE, collider: false, editable: false },
 });
 
 function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3): void {
@@ -474,127 +455,104 @@ function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale:
   });
 }
 
-// Map expansion 60×60 → 100×100 (±30 → ±50): same 3 m wall profile.
-// CORNER-SEAM FIX (z-fight scan round): the N/S walls used to run the full
-// 100 m so their end caps sat EXACTLY coplanar with the E/W walls' outer
-// faces (co-facing pair at the map corners). The N/S walls are now 98 m:
-// their end caps bury INSIDE the E/W wall volumes (±49…±50) and no outer
-// faces overlap any more. The player is still sealed by the inner faces ±49.
-addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -49.5), new THREE.Vector3(98, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, 49.5), new THREE.Vector3(98, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
-addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
+const half = TOWN_GROUND_SIZE / 2;
+// CORNER-SEAM FIX (z-fight scan round): the N/S walls run the full ground so
+// their end caps sit EXACTLY coplanar with the E/W walls' outer faces
+// (co-facing pair at the map corners). The N/S walls are 2 m shorter: their
+// end caps bury INSIDE the E/W wall volumes and no outer faces overlap any
+// more. The player is still sealed by the inner faces.
+addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -half + 0.5), new THREE.Vector3(TOWN_GROUND_SIZE - 2, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, half - 0.5), new THREE.Vector3(TOWN_GROUND_SIZE - 2, 3, 1));
+addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-half + 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
+addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(half - 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
 
-
-// --- Rigid building yaw -----------------------------------------------------
-// The enterable buildings build axis-aligned facing +Z (south). The redesigned
-// plan needs the bank/sheriff to FACE the central square (north) and the
-// stable to face the arriving player. Rotating a whole building = rotating
-// every def position around the site origin + adding the yaw to every def.
-// Collision stays EXACT at cardinal yaws: CollisionWorld derives yaw-aware
-// AABBs from rotation.y alone, and the composite offset boxes rotate with the
-// signed yaw — a rigid rotation of the whole collision shape.
-function rotateBuildingDefs<T extends { transform: { position: { x: number; z: number; y: number }; rotation: { y: number; x: number; z: number } } }>(
-  defs: readonly T[], originX: number, originZ: number, yawDeg: number,
-): readonly T[] {
-  const yawRad = (yawDeg * Math.PI) / 180;
-  const cos = Math.cos(yawRad);
-  const sin = Math.sin(yawRad);
-  for (const def of defs) {
-    const px = def.transform.position.x - originX;
-    const pz = def.transform.position.z - originZ;
-    // Same convention as CollisionWorld/three.js: x' = x·cos + z·sin, z' = −x·sin + z·cos.
-    def.transform.position.x = originX + px * cos + pz * sin;
-    def.transform.position.z = originZ - px * sin + pz * cos;
-    def.transform.rotation.y += yawDeg;
-  }
-  return defs;
-}
+// (The old yellow spawn cube + the empty demo "BUILDING" box were removed
+// with the town redesign: the cube sat where the fountain plaza now is and
+// the nameless box stood on the worker-house lot. Both were dev scaffolding,
+// not gameplay — the fountain square + the six town-exterior buildings
+// replace them, and every wall in town still collides through the registry.)
 
 // --- The SALOON (enterable western bar) -------------------------------------
-// A full enterable saloon on the WEST side of the main street, just before
-// the central square: false-front facade + SALOON sign + porch facing south
-// down the street, the doorway gap is the real entrance, and the
-// interior carries bar / poker / piano corners as individually managed
-// objects (own UUIDs, own colliders). All placement data comes from the
-// saloon layout module — the SAME list the saloon tests assert against.
-for (const saloonDef of buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z)) {
-  manager.registerObject(saloonDef);
+// West side of the redesigned main street, facing EAST onto the street (yaw
+// +90° applied to the whole building via SiteTransform — exact quaternion
+// composition, collider-exact at 90°). Door/interact contracts unchanged:
+// door swings live in building-local space inside each def, so the yawed
+// building opens exactly like it always did.
+{
+  const yaw = TOWN_SITES.saloon.yaw;
+  for (const saloonDef of rotateSiteDefs(buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z), SALOON_SITE.x, SALOON_SITE.z, yaw)) {
+    manager.registerObject(saloonDef);
+  }
 }
 
 // --- The BANK (grand western frontier bank) ----------------------------------
-// Classical stone-facade bank anchoring the FAR (south) side of the central
-// square, yaw-rotated 180° so its column facade + steps FACE NORTH across the
-// fountain toward the arriving player: 3-step stone stair → landing → four
-// fluted columns → entablature with gold BANK letters → triangular pediment.
-// The doorway is a real gap (elevated floor continues the landing), and the
-// interior uses the supplied bank interior asset library — teller counter +
-// cage, vault door in the rear wall, safe-deposit wall, floor safe, banker
-// desk/chair, grandfather clock, marble columns, rug, gas lamps, money bags
-// and coins — as individually managed objects. All placement data comes from
-// the bank layout module — the SAME list the bank tests assert against.
-for (const bankDef of rotateBuildingDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, 180)) {
-  manager.registerObject(bankDef);
+// FAR side of the central square (west of the stable-road gap), yawed 180° so
+// the stair/columns/pediment face NORTH onto the square. Same rotation
+// mechanism as the saloon.
+{
+  const yaw = TOWN_SITES.bank.yaw;
+  for (const bankDef of rotateSiteDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, yaw)) {
+    manager.registerObject(bankDef);
+  }
 }
 
 // --- The SHERIFF OFFICE (western law building + two-cell jail) ---------------
-// Side-gable wood-frame office on the square's far side, EAST of the road to
-// the stable, yaw-rotated 180° to face north into the square: porch + SHERIFF
-// sign over the public door, a full office interior (desk facing the door,
-// wanted board + badge behind it, gun rack/cabinet, stove with a real
-// stovepipe, wash stand, coat rack, key rack, ammo crates, kerosene lamp)
-// and a two-cell jail block behind a barred corridor — both cell doors are
-// genuinely openable (E). All placement data comes from the sheriff layout
-// module — the SAME list the sheriff tests assert against.
-for (const sheriffDef of rotateBuildingDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, 180)) {
-  manager.registerObject(sheriffDef);
+// FAR side of the square (east of the stable-road gap), yawed 180° so the
+// porch + SHERIFF sign face north onto the square.
+{
+  const yaw = TOWN_SITES.sheriff.yaw;
+  for (const sheriffDef of rotateSiteDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, yaw)) {
+    manager.registerObject(sheriffDef);
+  }
 }
 
 // --- The LIVERY STABLE (working western horse stable + tack/feed/farrier) ---
-// Side-gable timber stable near the town's SOUTH exit, yaw-rotated 180° so
-// the big double-leaf wagon gate faces the arriving player: a staff door
-// (both genuinely openable, E), SIX stalls along a central aisle (each with
-// its own hinged stall door, trough, hay, nameplate), a tack room + a feed
-// room in the corners (real hinged doors), a farrier bay + water station
-// under a full hay loft (deck, railing, ladder). The horse corral east of
-// the road is fenced with INDIVIDUAL fence sections + troughs + hay. All
-// placement data comes from the stable layout module — the SAME list the
-// stable tests assert against.
-for (const stableDef of rotateBuildingDefs(buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z), STABLE_SITE.x, STABLE_SITE.z, 180)) {
-  manager.registerObject(stableDef);
+// South of town on the stable road, yawed 180° so the big wagon gate + LIVERY
+// STABLE sign face NORTH toward the arriving player (the reference layout:
+// stable near the exit, corral across the road).
+{
+  const yaw = TOWN_SITES.stable.yaw;
+  for (const stableDef of rotateSiteDefs(buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z), STABLE_SITE.x, STABLE_SITE.z, yaw)) {
+    manager.registerObject(stableDef);
+  }
 }
 
 // --- The GUN SHOP (enterable western gunsmith store) -------------------------
-// One-story wood-frame shop on the main street's EAST side — the first
-// important building the player meets after the town entrance, before the
-// central square — facing south: false-front facade + hanging GUNSMITH sign
-// + 4 facade windows + porch, one real openable front door (E), and a full
-// interior — sales counter with glass display case / brass register / scale
-// / ammo boxes, a wall rack of long guns, ammo shelving, holster board, and
-// a Gunsmith workshop at the back (workbench, vise, tool rack) with powder
-// keg + ammo crates in the corner. Every firearm is a VISUAL PROP. All
-// placement data comes from the gun shop layout module — the SAME list the
-// gun shop tests assert against.
-for (const gunshopDef of buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z)) {
-  manager.registerObject(gunshopDef);
+// FIRST important building on the main street's EAST side (the player passes
+// it right after the town entrance, before the square — spec §7), yawed −90°
+// so the false front + porch face WEST onto the street.
+{
+  const yaw = TOWN_SITES.gunshop.yaw;
+  for (const gunshopDef of rotateSiteDefs(buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z), GUNSHOP_SITE.x, GUNSHOP_SITE.z, yaw)) {
+    manager.registerObject(gunshopDef);
+  }
 }
 
-// --- TOWN SHELL BUILDINGS (butcher stall + five house facades) ---------------
-// Every shell building is an individually managed def carrying its exact
-// collider payload from TOWN_EXTERIOR_COLLIDERS (the same table the tests
-// assert against — a bare array would silently fall back to a 1 m³ box).
-// The factory builds every facade facing +Z (south); yaw is the only
-// placement math: yaw 90 → front faces EAST, yaw −90 → front faces WEST.
-// REDESIGNED PLAN (reference-image round):
-//   • meat shop (butcher) — RIGHT/WEST side of the central square
-//   • worker house — LEFT/EAST side of the central square
-//   • family + wealthy houses — residential pockets on the far (south)
-//     side of the square, behind the bank/sheriff pair
-//   • farmstead — BEFORE the town on the NW farm lane (fenced corral +
-//     crop field around it come from the environment layer)
-//   • ruined house — alone on the NE outskirts, far from the square
-// Footprint audit vs the environment roads/vegetation keep-outs: no def
-// overlaps a road corridor or another building; every front faces its path.
+// --- THE TOWN (redesigned settlement — ground, roads, farm, square, houses) --
+// Every def the town module emits: the mottled dusty ground, the road network
+// (farm road → entrance → main street → plaza → stable road → exit), the farm
+// area (house + individually-movable fence sections + livestock pen + crops +
+// pond + windmill), the ruined house on the outskirts, the central square
+// (fountain + benches + lamps + props), the six NEW buildings (farm/worker/
+// family/wealthy/meat-shop/ruined) and all street furniture + vegetation.
+// Placement source: src/assets/town/TownLayout.ts — the SAME list the town
+// tests assert against.
+for (const townDef of buildTownMapObjects()) {
+  manager.registerObject(townDef);
+}
+
+// --- TOWN EXPANSION: butcher stall + five house facades ----------------------
+// The designed-but-unplaced town-exterior assets enter the REAL map here, as
+// individually managed defs so each carries its exact collider payload from
+// TOWN_EXTERIOR_COLLIDERS (the same table the tests assert against — a bare
+// array would silently fall back to a 1 m³ box). The factory builds every
+// facade facing +Z (south), so yaw is the ONLY placement math: yaw 90 turns
+// a west-row front EAST toward the main street, yaw -90 turns an east-row
+// front WEST. Sites were audited against the measured per-building AABBs
+// (saloon z ≤ -7.5 · stable z ≥ -1.5 west, sheriff z ≥ -5.5 · gunshop z ≤
+// 14.1 east, bank north end) — no overlap, market-row gaps 1.2–4.5 m, the
+// ~17 m street corridor continues south into the enlarged map and the
+// farmstead/abandoned house sit alone on the east/west outskirts.
 const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   uuid: string;
   type: keyof typeof TOWN_EXTERIOR_COLLIDERS;
@@ -603,14 +561,10 @@ const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   z: number;
   yaw: number;
   scale?: number;
-}> = [
-  { uuid: 'c0000000-0000-4000-8000-000000000040', type: 'butcher-stall', name: 'دکه قصابی', x: -14, z: 1, yaw: 90 },
-  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: 14, z: 1, yaw: -90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -23, z: 21, yaw: 90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 23, z: 20, yaw: -90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: -21, z: -39, yaw: 90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: 27, z: -37, yaw: -90, scale: 1.3 },
-];
+}> = TOWN_EXTERIOR_SITES;
+// Sites live in TownLayout.TOWN_EXTERIOR_SITES — the SAME table the town
+// tests assert against (six buildings, scale-1.3 model round, composite
+// colliders rotate/scale with the def).
 for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
   const s = placement.scale ?? 1;
   manager.registerObject({
@@ -625,42 +579,6 @@ for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
       name: placement.name,
       editable: true,
       collider: TOWN_EXTERIOR_COLLIDERS[placement.type],
-    },
-  });
-}
-
-// --- TOWN ENVIRONMENT LAYER (roads · square · farm · fences · vegetation) ----
-// The whole redesigned plan's terrain + props register here from the
-// environment layout module — the SAME tables tests/town-plan.test.ts
-// asserts against:
-//   • dirt roads: farm lane → entrance → main street → square → stable
-//     road → exit (irregular edges, staggered lifts, never colliders)
-//   • the square centerpiece (stone well), benches, lamps, hitching posts,
-//     barrels/crates/wagons/troughs/hay placed by function, not spam
-//   • the FARM corral + STABLE corral fences as INDIVIDUAL fence-section
-//     defs (each selectable/movable, gate gaps left open)
-//   • sparse seeded vegetation (trees/bushes/grass/rocks) with keep-outs
-//     around every building, road and yard
-for (const envPlacement of collectEnvironmentPlacements()) {
-  const colliderPayload = ENV_PROP_COLLIDERS[envPlacement.type];
-  manager.registerObject({
-    uuid: envPlacement.uuid,
-    assetType: envPlacement.type,
-    transform: {
-      position: { x: envPlacement.x, y: envPlacement.y ?? 0, z: envPlacement.z },
-      rotation: { x: 0, y: envPlacement.yaw ?? 0, z: 0 },
-      scale: { x: envPlacement.scale ?? 1, y: envPlacement.scale ?? 1, z: envPlacement.scale ?? 1 },
-    },
-    metadata: {
-      name: envPlacement.name,
-      editable: !envPlacement.notEditable,
-      collider: envPlacement.noCollider === true ? false : (colliderPayload ?? true),
-      ...(envPlacement.text !== undefined ? { text: envPlacement.text } : {}),
-      ...(envPlacement.lift !== undefined ? { lift: envPlacement.lift } : {}),
-      ...(envPlacement.length !== undefined ? { length: envPlacement.length } : {}),
-      ...(envPlacement.width !== undefined ? { width: envPlacement.width } : {}),
-      ...(envPlacement.seed !== undefined ? { seed: envPlacement.seed } : {}),
-      ...(envPlacement.wobble !== undefined ? { wobble: envPlacement.wobble } : {}),
     },
   });
 }
@@ -1008,19 +926,6 @@ function updateSaloonDoors(delta: number): void {
   }
 }
 
-// --- Farm windmill wheel (visual animation) ---------------------------------
-// The wheel child is named 'windmill-wheel' by the factory. The def transform
-// (registry-owned) never changes — this only spins the wheel child around its
-// local Z axis, the SAME scene-graph animation pattern the swinging doors
-// use. The lookup caches after the first frame (renderer materialises async).
-let windmillWheel: THREE.Object3D | null | undefined;
-function updateWindmillWheel(delta: number): void {
-  if (windmillWheel === undefined) {
-    windmillWheel = scene.getObjectByName('windmill-wheel') ?? null;
-  }
-  if (windmillWheel) windmillWheel.rotation.z -= delta * 0.55;
-}
-
 // Scratch objects for the harness-only rideCam probe (zero per-frame cost —
 // the probe runs only when a verify harness calls it).
 const headBox = new THREE.Box3();
@@ -1057,12 +962,6 @@ const headCenter = new THREE.Vector3();
   setCamera: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
     camera.position.set(x, y, z);
     camera.lookAt(tx, ty, tz);
-  },
-  // Harness-ONLY creative-rig pose: with Creative mode ACTIVE (F) the fly
-  // camera owns the view — this teleports it to a pose aimed at a target
-  // (aerial shots + verify probes). Inert while creative is off.
-  flyTo: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
-    creativeFlight.flyTo(x, y, z, tx, ty, tz);
   },
   boundsNear: (x: number, z: number) => collisionWorld
     .getCollisionBounds()
@@ -1922,6 +1821,10 @@ function applyModeState(): void {
   editor.setEditMode(editMode);
   input.setEnabled(!editMode); // gameplay + creative controls live outside edit
   debugAxes.visible = editMode;
+  // The editor's graph-paper aid never renders in play mode: over the 120 m
+  // dusty map it reads as a modern grid, not a frontier town (town redesign
+  // biome contract). Edit mode keeps it for placement reference.
+  grid.visible = editMode;
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
   updateEditorHud();
   updateControlHint();
@@ -2298,9 +2201,8 @@ scene.add(horseModel.root);
 const horseAnimator = new HorseAnimator(horseModel);
 const horsePersistence = new HorsePersistence();
 const horse = new HorseController(collisionWorld, {
-  // Boots beside the player on the farm lane (same starting view).
-  position: { x: -13.5, y: 0, z: -44.5 },
-  yaw: Math.PI - 0.6,
+  position: { x: TOWN_HORSE_SPAWN.x, y: 0, z: TOWN_HORSE_SPAWN.z },
+  yaw: TOWN_HORSE_SPAWN.yaw,
 });
 const riderSocket = horseModel.riderSocket;
 
@@ -2826,7 +2728,6 @@ function animate(): void {
   updateGunShopFrontDoor(delta); // gun shop front door swing + collider sync
   updateBankFrontDoor(delta); // bank walnut double door swing + collider sync
   updateSaloonDoors(delta); // saloon double door swing + collider sync
-  updateWindmillWheel(delta); // farm windmill blades (visual only, no collider)
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

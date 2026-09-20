@@ -97,9 +97,10 @@ export const SHERIFF_LAYOUT = Object.freeze({
   stove: Object.freeze({ x: -4.15, z: -2.85 }),
 });
 
-/** World-space anchor of the Sheriff Office (east side of the spawn street,
- *  between the spawn and the simple building, facing south like its neighbors). */
-export const SHERIFF_SITE = Object.freeze({ x: 12, z: 14 });
+/** World-space anchor of the Sheriff Office: FAR (south) side of the central
+ *  town square, flanking the stable road's north gap east of the bank; map
+ *  assembly yaws it 180° so the porch + sign face north onto the square. */
+export const SHERIFF_SITE = Object.freeze({ x: 8.5, z: 14.5 });
 
 /** Canonical hex UUID block for the sheriff block (saloon …a000-, bank …b000-;
  *  v4 canonical group-4 prefixes are 8/9/a/b — the sheriff takes 9). */

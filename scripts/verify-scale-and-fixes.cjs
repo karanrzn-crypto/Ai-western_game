@@ -21,10 +21,10 @@ const ok = (name, pass, detail) => {
 };
 
 const HOUSES = {
-  worker: { uuid: 'c0000000-0000-4000-8000-000000000041', x: -11.5, z: 19, yaw: 90 },
-  family: { uuid: 'c0000000-0000-4000-8000-000000000042', x: -12, z: 28, yaw: 90 },
-  wealthy: { uuid: 'c0000000-0000-4000-8000-000000000043', x: 11.5, z: 26, yaw: -90 },
-  abandoned: { uuid: 'c0000000-0000-4000-8000-000000000045', x: -30, z: -13, yaw: 90 },
+  worker: { uuid: 'c0000000-0000-4000-8000-000000030041', x: 12, z: -2.5, yaw: -90 },
+  family: { uuid: 'c0000000-0000-4000-8000-000000030042', x: -20.5, z: 13, yaw: 180 },
+  wealthy: { uuid: 'c0000000-0000-4000-8000-000000030043', x: 21, z: 13.5, yaw: 180 },
+  abandoned: { uuid: 'c0000000-0000-4000-8000-000000030045', x: 31, z: -50, yaw: 0 },
 };
 // local collider dims (size x/z) per house from TOWN_EXTERIOR_COLLIDERS
 const LOCAL = {
@@ -100,8 +100,10 @@ const S = 1.3;
     const own = bounds.filter((b) => b.uuid === h.uuid);
     const spanX = Math.max(...own.map((b) => b.max.x)) - Math.min(...own.map((b) => b.min.x));
     const spanZ = Math.max(...own.map((b) => b.max.z)) - Math.min(...own.map((b) => b.min.z));
-    // yaw ±90: local x (width sx) maps to world z, local z (depth sz) to world x
-    const expX = L.sz * S; const expZ = L.sx * S;
+    // yaw ±90: local x (width sx) maps to world z, local z to world x;
+    // yaw 180: local axes keep their world directions (mirrored)
+    const flipped = Math.abs(Math.abs(h.yaw) % 180) === 90;
+    const expX = (flipped ? L.sz : L.sx) * S; const expZ = (flipped ? L.sx : L.sz) * S;
     ok(`§2 ${label} collider scaled with the visual (collision==visual)`,
       own.length >= 1 && Math.abs(spanX - expX) < 0.02 && Math.abs(spanZ - expZ) < 0.02,
       `bounds span (${spanX.toFixed(3)} × ${spanZ.toFixed(3)}) expected (${expX.toFixed(3)} × ${expZ.toFixed(3)})`);
@@ -110,21 +112,21 @@ const S = 1.3;
   /* §2 REAL walk probes — the player must stop ON the visual face + radius.
    * Approaching the family/abandoned from the STREET (east, +x side): rest
    * x == face + 0.35 (the radius holds the player OUTSIDE the visual wall). */
-  // family east wall: face x = −12 + 2.0·1.3 = −9.4 → rest at −9.05
-  const famStop = await walk(-4.5, 28, Math.PI / 2, 'into the SCALED family east wall');
+  // family east wall: face x = −20.5 + 2.5·1.3 = −17.25 → rest at −16.9
+  const famStop = await walk(-13.5, 13, Math.PI / 2, 'into the SCALED family east wall');
   ok('§2 family scaled wall blocks at face+0.35 (no pass-through, no gap)',
-    Math.abs(famStop.x - (-9.4 + 0.35)) < 0.06,
-    `rest.x=${famStop.x.toFixed(3)} expected −9.05 (face −9.4 + radius)`);
+    Math.abs(famStop.x - (-17.25 + 0.35)) < 0.06,
+    `rest.x=${famStop.x.toFixed(3)} expected −16.9 (face −17.25 + radius)`);
   // CORNER probe (axial, deterministic): walk EAST at z 22.6 — 0.11 inside
   // the wealthy's z-span — the corner column must stop the player at the
   // west face + radius; then walk NORTH along that face: the player slides
   // around the corner but can NEVER drift west into the box (no penetration).
-  const cornStop = await walk(6.0, 22.6, -Math.PI / 2, 'EAST into the wealthy NW-corner column');
-  const faceX = 11.5 - 2.4 * S; // 8.38 west face
+  const cornStop = await walk(14.5, 12.0, -Math.PI / 2, 'EAST into the wealthy NW-corner column');
+  const faceX = 21 - 2.7 * S; // 17.49 west face
   ok('§2 wealthy corner column blocks at face−0.35 (west approach)',
-    Math.abs(cornStop.x - (faceX - 0.35)) < 0.06 && Math.abs(cornStop.z - 22.6) < 0.02,
+    Math.abs(cornStop.x - (faceX - 0.35)) < 0.06 && Math.abs(cornStop.z - 12.0) < 0.02,
     `rest=(${cornStop.x.toFixed(3)}, ${cornStop.z.toFixed(3)}) expected x ${ (faceX - 0.35).toFixed(3) }`);
-  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [faceX - 0.35, 25.5]);
+  await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [faceX - 0.35, 14.8]);
   await ev(() => window.__westTest.setYaw(0)); // face −z (north) along the west face
   await page.waitForTimeout(300);
   await ev(() => window.__k('keydown', 'KeyW'));
@@ -135,26 +137,28 @@ const S = 1.3;
     const p = await ev(() => window.__westTest.player());
     slideMinX = Math.min(slideMinX, p.x);
     slideEnd = p;
-    if (p.z < 22.0) break; // rounded the corner
+    if (p.z < 12.2) break; // rounded the corner
   }
   await ev(() => window.__k('keyup', 'KeyW'));
   ok('§2 sliding along the face never penetrates the corner (x ≥ face−radius − 1cm)',
-    slideMinX >= faceX - 0.35 - 0.01 && slideEnd.z < 25.4,
+    slideMinX >= faceX - 0.35 - 0.01 && slideEnd.z < 14.4,
     `minX=${slideMinX.toFixed(3)} ≥ ${(faceX - 0.35).toFixed(2)} — slid north to z ${slideEnd.z.toFixed(3)} (zero penetration; corner rounding is cosmetic)`);
-  // abandoned scaled wall: face x = −30 + 1.7·1.3 = −27.79 → rest at −27.44
-  const abStop = await walk(-24, -13, Math.PI / 2, 'into the SCALED abandoned east wall');
+  // abandoned scaled wall: face x = 31 + 2.0·1.3 = 33.6 → rest at 33.95
+  const abStop = await walk(37.5, -50, Math.PI / 2, 'into the SCALED abandoned east wall');
   ok('§2 abandoned scaled wall blocks at face+0.35',
-    Math.abs(abStop.x - (-27.79 + 0.35)) < 0.06, `rest.x=${abStop.x.toFixed(3)} expected −27.44 (face −27.79 + radius)`);
+    Math.abs(abStop.x - (33.6 + 0.35)) < 0.06, `rest.x=${abStop.x.toFixed(3)} expected 33.95 (face 33.6 + radius)`);
 
   /* §5 REAL walk probes — the phantom collision is GONE */
-  // the OLD mirrored shed box sat at world (25.6, −5.3): empty field now.
-  const phantom = await walk(25.6, -2.6, 0, 'S through the OLD phantom-collision spot');
+  // A mirrored shed box would sit at world x [−14, −10.8] × z [−47.2, −45.2]
+  // (mirror of the shed's +x offset through the yaw-90 farmstead). Walking
+  // WEST at z −46.2 crosses that whole zone — it must be empty field.
+  const phantom = await walk(-8.7, -46.2, Math.PI / 2, 'W through the OLD phantom-collision spot');
   ok('§5 old phantom spot (mirrored shed box) is walkable again',
-    phantom.z < -6.6, `walked from z −2.6 to ${phantom.z.toFixed(3)} (old box spanned z −6.3..−4.3)`);
-  // the REAL shed east wall (world x 24.8) DOES block: rest at 24.8−0.35
-  const shedStop = await walk(21.5, 1.3, -Math.PI / 2, 'into the REAL shed east wall');
+    phantom.x < -14.3, `walked from x −8.7 to ${phantom.x.toFixed(3)} (mirrored box would span x −14..−10.8)`);
+  // the REAL shed east wall (world x −10.8) DOES block: rest at −10.8+0.35
+  const shedStop = await walk(-8.0, -52.8, Math.PI / 2, 'into the REAL shed east wall');
   ok('§5 real shed wall blocks at face+0.35 (collider now ON the shed)',
-    Math.abs(shedStop.x - (24.8 - 0.35)) < 0.06, `rest.x=${shedStop.x.toFixed(3)} expected 24.45`);
+    Math.abs(shedStop.x - (-10.8 + 0.35)) < 0.06, `rest.x=${shedStop.x.toFixed(3)} expected −10.45`);
 
   /* ================= §3 + §4 + §5: merged-part evidence ================= */
   const stallParts = await ev((u) => {
@@ -179,7 +183,7 @@ const S = 1.3;
       }
     });
     return out;
-  }, 'c0000000-0000-4000-8000-000000000040');
+  }, 'c0000000-0000-4000-8000-000000030040');
   if (stallParts) {
     ok('§4 butcher hides render DoubleSide in-game (both sides visible)',
       stallParts.doubleSided.length >= 2 && stallParts.hideSources.includes('hide-plane'),
@@ -194,12 +198,12 @@ const S = 1.3;
     const names = [];
     root.traverse((o) => { if (o.isMesh) names.push({ n: o.name, f: (o.userData.mergedFrom || []).length }); });
     return names;
-  }, 'c0000000-0000-4000-8000-000000000044');
+  }, 'c0000000-0000-4000-8000-000000030044');
   fs.writeFileSync(`${OUT}/farm-buckets.json`, JSON.stringify(farmBucketDump, null, 2));
   const statsDump = {};
   for (const [label, h] of Object.entries(HOUSES)) statsDump[label] = await ev((u) => window.__westTest.meshStats(u), h.uuid);
-  statsDump.stall = await ev((u) => window.__westTest.meshStats(u), 'c0000000-0000-4000-8000-000000000040');
-  statsDump.farm = await ev((u) => window.__westTest.meshStats(u), 'c0000000-0000-4000-8000-000000000044');
+  statsDump.stall = await ev((u) => window.__westTest.meshStats(u), 'c0000000-0000-4000-8000-000000030040');
+  statsDump.farm = await ev((u) => window.__westTest.meshStats(u), 'c0000000-0000-4000-8000-000000030044');
   fs.writeFileSync(`${OUT}/mesh-stats.json`, JSON.stringify(statsDump, null, 2));
 
   /* ================= screenshots (evidence) ================= */

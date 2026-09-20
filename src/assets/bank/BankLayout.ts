@@ -171,8 +171,10 @@ export const BANK_LAYOUT = Object.freeze({
   }),
 });
 
-/** World-space anchor of the bank on the playable map (street's north end). */
-export const BANK_SITE = Object.freeze({ x: -12, z: 14 });
+/** World-space anchor of the bank: FAR (south) side of the central town
+ *  square, flanking the stable road's north gap; the map assembly yaws it
+ *  180° so the columned facade faces north onto the square. */
+export const BANK_SITE = Object.freeze({ x: -8, z: 14 });
 
 /** Canonical hex UUID block for the bank (map uses 10000000-…-b000-…). */
 const BANK_UUID_BASE = '10000000-0000-4000-b000-0000000000';

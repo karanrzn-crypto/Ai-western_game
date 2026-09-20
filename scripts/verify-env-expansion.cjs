@@ -101,7 +101,7 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
   /* ---- §2 map enlarged ---------------------------------------------------- */
   const mapState = await ev(() => {
     const defs = window.__westTest.objects();
-    const ground = defs.find((o) => o.assetType === 'ground');
+    const ground = defs.find((o) => o.assetType === 'town-ground' || o.assetType === 'ground');
     const wall = (n) => defs.find((o) => o.metadata && o.metadata.name === n);
     const north = wall('دیوار مرزی شمالی');
     const south = wall('دیوار مرزی جنوبی');
@@ -114,28 +114,29 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
       wallLen: north ? north.transform.scale.x : null,
     };
   });
-  ok('§2 ground plane 100×100', mapState.groundSize === 100, `ground size=${mapState.groundSize}`);
-  ok('§2 boundary walls moved to ±49.5 (length 100)',
-    mapState.wallZ.every((v) => Math.abs(Math.abs(v) - 49.5) < 0.01) &&
-    mapState.wallX.every((v) => Math.abs(Math.abs(v) - 49.5) < 0.01) &&
-    mapState.wallLen === 98, // corner-seam fix: N/S walls shortened 100 → 98 (caps buried in E/W walls)
+  // TOWN REDESIGN: the map is 120×120 (the 100×100 expansion superseded)
+  ok('§2 ground plane 120×120', mapState.groundSize === 120, `ground size=${mapState.groundSize}`);
+  ok('§2 boundary walls moved to ±59.5 (length 120; N/S shortened by the corner-seam fix)',
+    mapState.wallZ.every((v) => Math.abs(Math.abs(v) - 59.5) < 0.01) &&
+    mapState.wallX.every((v) => Math.abs(Math.abs(v) - 59.5) < 0.01) &&
+    mapState.wallLen === 118,
     `z=${JSON.stringify(mapState.wallZ)} x=${JSON.stringify(mapState.wallX)} len=${mapState.wallLen}`);
 
   // §2a the south boundary BLOCKS: walk south from mid-prairie (z=44) →
   // stalls against the wall's inner face (49 − player radius ≈ 48.65).
   const southStall = await walkUntilStall(0, 44, Math.PI);
-  ok('§2 south boundary wall blocks the player', southStall.z > 47.5 && southStall.z < 49.2,
-    `stalled at z=${southStall.z.toFixed(2)} (inner face 49 − radius)`);
+  ok('§2 south boundary wall blocks the player', southStall.z > 57.5 && southStall.z < 59.2,
+    `stalled at z=${southStall.z.toFixed(2)} (inner face 59 − radius)`);
   // §2b the prairie is WALKABLE (no phantom walls in the open south):
   // walk west across open ground from (0, 40) — must travel ≥ 8 m.
-  const openWest = await walkUntilStall(0, 40, Math.PI / 2, 6000);
+  const openWest = await walkUntilStall(0, 43.5, Math.PI / 2, 6000);
   ok('§2 open prairie stays walkable (no phantom blockers)', openWest.x < -7.5,
     `walked west to x=${openWest.x.toFixed(2)} from 0`);
 
   /* ---- §3+§4 the six new structures -------------------------------------- */
   const defState = await ev((list) => list.map((d) => {
     const defs = window.__westTest.objects();
-    const uuid = `c0000000-0000-4000-8000-0000000000${d.id}`;
+    const uuid = `c0000000-0000-4000-8000-0000000300${d.id}`;
     const def = defs.find((o) => o.uuid === uuid);
     const stats = window.__westTest.meshStats(uuid);
     return {
@@ -159,7 +160,7 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
 
   const overlaps = await ev((ids) => {
     const boxes = ids.map((id) => {
-      const s = window.__westTest.meshStats(`c0000000-0000-4000-8000-0000000000${id}`);
+      const s = window.__westTest.meshStats(`c0000000-0000-4000-8000-0000000300${id}`);
       return { id, min: s.bbox.min, max: s.bbox.max };
     });
     const hits = [];
@@ -175,19 +176,19 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
   ok('§5 no AABB interpenetration among the six structures', overlaps.length === 0, overlaps.join(',') || 'clean');
 
   /* ---- REAL player blocking probes --------------------------------------- */
-  // Butcher counter front face: local z 0.93 → world x = −9.9 + 0.93 = −8.97;
-  // approaching from the street (+x) the player stalls at face + radius ≈ −8.62.
-  const stallBlock = await walkUntilStall(-7.2, -4.2, Math.PI / 2);
-  ok('§3 butcher counter BLOCKS the player', stallBlock.x > -9.1 && stallBlock.x < -8.3,
-    `stalled at x=${stallBlock.x.toFixed(3)} (counter face −8.97 + radius ≈ −8.62)`);
-  // Worker house east (street-side) wall: yaw 90, SCALE 1.3 (model-fix round)
-  // → world x = −11.5 + 1.7·1.3 = −9.29; the player approaches from the
-  // STREET (+x) side, so the stall is face + radius ≈ −8.94 (same convention
-  // the town-exterior harness used: bound max + radius). Shell house →
-  // blocks from every side; CollisionWorld scales the box with the def.
-  const workerBlock = await walkUntilStall(-7.8, 19, Math.PI / 2);
-  ok('§4 worker-house wall BLOCKS the player', workerBlock.x > -9.15 && workerBlock.x < -8.7,
-    `stalled at x=${workerBlock.x.toFixed(3)} (scaled wall face −9.29 + radius ≈ −8.94)`);
+  // Butcher counter front face: local z 0.93 → world x = −12 + 0.93 = −11.07
+  // (the redesigned stall site, yaw 90, counter facing the plaza); approaching
+  // from the plaza (+x) the player stalls at face + radius ≈ −10.72.
+  const stallBlock = await walkUntilStall(-9.6, -1.5, Math.PI / 2);
+  ok('§3 butcher counter BLOCKS the player', stallBlock.x > -11.1 && stallBlock.x < -10.3,
+    `stalled at x=${stallBlock.x.toFixed(3)} (counter face −11.07 + radius ≈ −10.72)`);
+  // Worker house east wall: site (12, −2.5) yaw −90, SCALE 1.3 (model-fix
+  // round) → world x = 12 + 1.7·1.3 = 14.21; the player approaches from the
+  // plaza (+x) side walking WEST, so the stall is face + radius ≈ 14.56.
+  // Shell house → blocks from every side; CollisionWorld scales the box.
+  const workerBlock = await walkUntilStall(16.0, -2.5, Math.PI / 2);
+  ok('§4 worker-house wall BLOCKS the player', workerBlock.x > 14.3 && workerBlock.x < 14.9,
+    `stalled at x=${workerBlock.x.toFixed(3)} (scaled wall face 14.21 + radius ≈ 14.56)`);
 
   /* ---- screenshots ------------------------------------------------------- */
   // Deterministic framing needs the gameplay rig PARKED: TAB → edit mode
@@ -214,14 +215,14 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
   };
   await ev(() => window.__westTest.setDayTime(12));
   await shot('01-map-overview', [6, 46, 58, 0, 0, 4]);
-  await shot('02-street-vista-from-spawn', [0, 2.4, 15, 0, 1.6, -8]);
-  await shot('03-butcher-stall-street', [-3.5, 1.9, -3.4, -9.9, 1.3, -4.4]);
-  await shot('04-butcher-stall-closeup', [-6.8, 1.6, -2.2, -9.9, 1.1, -4.6]);
-  await shot('05-residential-row', [0.5, 2.8, 15.5, -11.8, 1.8, 26]);
-  await shot('06-worker-family-west', [-4.6, 2.2, 22.5, -12, 1.6, 24.5]);
-  await shot('07-wealthy-house', [3.6, 2.3, 26.5, 11.5, 2.4, 26]);
-  await shot('08-farmstead-east', [19.5, 2.6, 3.5, 26.4, 1.4, -1.6]);
-  await shot('09-abandoned-west', [-23.5, 2.2, -9.5, -30.4, 1.3, -13]);
+  await shot('02-street-vista-from-spawn', [-1.5, 2.4, -56, 0, 1.6, -46]);
+  await shot('03-butcher-stall-street', [-8.5, 1.9, -0.2, -12, 1.2, -1.5]);
+  await shot('04-butcher-stall-closeup', [-9.6, 1.5, -0.6, -12, 1.0, -1.6]);
+  await shot('05-residential-row', [-2, 3.0, 9.5, -20, 1.6, 13]);
+  await shot('06-worker-house', [7.5, 2.2, -6.0, 12, 1.6, -2.5]);
+  await shot('07-wealthy-house', [21, 2.3, 6.8, 21, 2.2, 13.5]);
+  await shot('08-farmstead-east', [-5.5, 2.6, -46.5, -12, 1.4, -49.5]);
+  await shot('09-abandoned-west', [35.5, 2.2, -45.5, 31, 1.3, -50]);
   // gameplay-framed shots: back to PLAY mode, teleport the Ranger, let the
   // third-person rig frame the street the way a player actually sees it.
   await ev(() => {

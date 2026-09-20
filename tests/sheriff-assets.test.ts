@@ -557,33 +557,35 @@ test('SHERIFF USER FINALS: cell-front transforms applied verbatim (world → sit
     return def;
   };
   const S = SHERIFF_SITE;
-  // The user's Final table — originally authored as world positions against
-  // the OLD site (13, −1.5); the redesign moved the site to (12, 14), so the
-  // finals follow rigidly: new = old + (Δx, Δz) = old + (−1, +15.5).
-  const DX = S.x - 13; const DZ = S.z - -1.5;
+  // The user's Final table — recorded as WORLD positions when the site was
+  // (13, −1.5); the INVARIANT contract is site-relative, so the table below
+  // stores LOCALS (old world − old site) and the layout must reproduce them
+  // EXACTLY after the CURRENT site offset. A site move can never break the
+  // verbatim-geometry contract again.
+  const SITE_OLD = { x: 13, z: -1.5 };
+  const W = (wx: number, wz: number): [number, number] => [wx - SITE_OLD.x, wz - SITE_OLD.z];
   const finals: [string, number, number, number, number, number, number, number, number, number][] = [
-    // uuid, x, y, z, rotX, rotY, rotZ, sx, sy, sz   (world, OLD site)
-    [SHERIFF_OBJECT_IDS.barAHeader, 14.7, 2.85, -3.5, 0, 0, 0, 0.1, 1.2, 1.22],
-    [SHERIFF_OBJECT_IDS.barBSouth, 14.645, 1.8, 1.155, 0, 0, 0, 0.1, 1.0, 1.0],
-    [SHERIFF_OBJECT_IDS.barBHeader, 14.7, 2.94, -0.35, 0, 0, 0, 0.1, 1.3, 1.22],
-    [SHERIFF_OBJECT_IDS.barASouth, 14.7, 1.8, -2.47, 0, 0, 0, 0.1, 1.0, 0.8],
-    [SHERIFF_OBJECT_IDS.barBNorth, 14.7, 1.8, -1.405, 0, 0, 0, 0.1, 1.0, 1.1],
-    [SHERIFF_OBJECT_IDS.cotB, 16.85, 0.15, 1.455, 0, 180, 0, 1.1, 1.1, 1.7],
-    [SHERIFF_OBJECT_IDS.cotA, 17.022, 0.15, -2.645, 0, 180, 0, 1.1, 1.1, 1.7],
-    [SHERIFF_OBJECT_IDS.barANorth, 14.7, 1.8, -4.58, 0, 0, 0, 0.1, 1.0, 0.94],
-    [SHERIFF_OBJECT_IDS.gunCabinet, 12.41, 0.1, -4.87, 0, 0, 0, 1, 1, 1],
-    [SHERIFF_OBJECT_IDS.badgePlaque, 10.525, 2.0, -5.03, 0, 0, 0, 1, 1, 1],
+    // uuid, x, y, z, rotX, rotY, rotZ, sx, sy, sz   (x/z stored as OLD-world, converted below)
+    [SHERIFF_OBJECT_IDS.barAHeader, ...W(14.7, -3.5), 2.85, 0, 0, 0, 0.1, 1.2, 1.22],
+    [SHERIFF_OBJECT_IDS.barBSouth, ...W(14.645, 1.155), 1.8, 0, 0, 0, 0.1, 1.0, 1.0],
+    [SHERIFF_OBJECT_IDS.barBHeader, ...W(14.7, -0.35), 2.94, 0, 0, 0, 0.1, 1.3, 1.22],
+    [SHERIFF_OBJECT_IDS.barASouth, ...W(14.7, -2.47), 1.8, 0, 0, 0, 0.1, 1.0, 0.8],
+    [SHERIFF_OBJECT_IDS.barBNorth, ...W(14.7, -1.405), 1.8, 0, 0, 0, 0.1, 1.0, 1.1],
+    [SHERIFF_OBJECT_IDS.cotB, ...W(16.85, 1.455), 0.15, 0, 180, 0, 1.1, 1.1, 1.7],
+    [SHERIFF_OBJECT_IDS.cotA, ...W(17.022, -2.645), 0.15, 0, 180, 0, 1.1, 1.1, 1.7],
+    [SHERIFF_OBJECT_IDS.barANorth, ...W(14.7, -4.58), 1.8, 0, 0, 0, 0.1, 1.0, 0.94],
+    [SHERIFF_OBJECT_IDS.gunCabinet, ...W(12.41, -4.87), 0.1, 0, 0, 0, 1, 1, 1],
+    [SHERIFF_OBJECT_IDS.badgePlaque, ...W(10.525, -5.03), 2.0, 0, 0, 0, 1, 1, 1],
   ];
-  for (const [uuid, ox, y, oz, rx, ry, rz, sx, sy, sz] of finals) {
+  for (const [uuid, lx, lz, y, rx, ry, rz, sx, sy, sz] of finals) {
     const t = p(uuid).transform;
-    const x = ox + DX; const z = oz + DZ; // rigid site translation
     const close = (a: number, b: number, what: string): void =>
       assert.ok(Math.abs(a - b) < 5e-3, `${what} for ${uuid}: ${a} vs Final ${b}`);
     const isBar = uuid === SHERIFF_OBJECT_IDS.barANorth || uuid === SHERIFF_OBJECT_IDS.barASouth
       || uuid === SHERIFF_OBJECT_IDS.barBNorth || uuid === SHERIFF_OBJECT_IDS.barBSouth;
-    if (!isBar) close(t.position.x, x, 'position.x');
+    if (!isBar) close(t.position.x, S.x + lx, 'position.x');
     close(t.position.y, y, 'position.y');
-    close(t.position.z, z, 'position.z');
+    close(t.position.z, S.z + lz, 'position.z');
     close(t.rotation.x, rx, 'rotation.x');
     close(t.rotation.y, ry, 'rotation.y');
     close(t.rotation.z, rz, 'rotation.z');
@@ -591,8 +593,8 @@ test('SHERIFF USER FINALS: cell-front transforms applied verbatim (world → sit
     // straight bars plane (their Final scale.y / one x-nudge captured the
     // double-scale bug); their CENTERS (z) must match the Final table.
     if (isBar) {
-      close(t.position.z, z, 'bar center z');
-      close(t.position.x, 14.7 + DX, 'bar plane x');
+      close(t.position.z, S.z + lz, 'bar center z');
+      close(t.position.x, S.x + (14.7 - SITE_OLD.x), 'bar plane x');
     } else {
       close(t.scale.x, sx, 'scale.x');
       close(t.scale.y, sy, 'scale.y');
@@ -602,7 +604,6 @@ test('SHERIFF USER FINALS: cell-front transforms applied verbatim (world → sit
 
   // Headers span exactly over the door gaps (frame outer ±0.61) and their
   // bottoms meet the door lintels' tops (2.3) — no slit, no floating strip.
-  // (z checks are SITE-relative: old Final world z −2.0 == local −2.0.)
   const hA = p(SHERIFF_OBJECT_IDS.barAHeader).transform;
   const hB = p(SHERIFF_OBJECT_IDS.barBHeader).transform;
   assert.ok(Math.abs(hA.position.z - (S.z - 2.0)) < 1e-6 && Math.abs(hA.scale.z - 1.22) < 1e-6,

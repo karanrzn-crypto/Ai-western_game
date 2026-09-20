@@ -17,7 +17,7 @@ const ok = (name, pass, detail) => {
   console.log(`${pass ? 'PASS' : 'FAIL'} | ${name} | ${detail}`);
 };
 
-const ROW_Z = 38; // moved south of the REAL residential row (family/wealthy sit at z ≤ 30.5) so the test street never overlaps the live town
+const ROW_Z = 55; // test street on the empty south prairie (past the exit fences, x −17.5..7.5 is clear there) so it never overlaps the live town
 // deterministic test uuid block (distinct from saloon a000 / bank b000 /
 // gunshop-sheriff 9000; variant nibble must be 8/9/a/b per isValidUUID)
 const uid = (s) => `70000000-0000-4000-8000-0000000000${s}`;

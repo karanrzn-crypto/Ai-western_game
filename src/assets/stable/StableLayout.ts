@@ -140,7 +140,7 @@ export const STABLE_LAYOUT = Object.freeze({
 
 /** World-space anchor of the stable (west side of the street, south of the
  *  saloon — the SW quadrant is empty ground). */
-export const STABLE_SITE = Object.freeze({ x: -13, z: 29 });
+export const STABLE_SITE = Object.freeze({ x: 10.5, z: 36 });
 
 /** Canonical hex UUID block for the stable (map uses 10000000-…-8000-…
  *  — variant-valid v4 nibble 8, unused by saloon a000 / bank b000). */

@@ -55,6 +55,7 @@ import {
   buildGunshopWorkbench,
   buildGunsmithSign,
   createGunShopMaterials,
+  TOWN_RESPAWN,
 } from '../src/index.js';
 import type { ObjectDefinition } from '../src/index.js';
 
@@ -278,21 +279,25 @@ test('GUNSHOP LAYOUT: wall segments tile the facade exactly around the doorway',
 
 test('GUNSHOP LAYOUT: the site keeps clear of every other building + spawn', () => {
   const L = GUNSHOP_LAYOUT;
-  const gx0 = GUNSHOP_SITE.x - L.width / 2;
-  const gx1 = GUNSHOP_SITE.x + L.width / 2;
-  const gz0 = GUNSHOP_SITE.z - L.depth / 2;
-  // south edge incl. the porch
-  const gz1 = GUNSHOP_SITE.z + L.depth / 2 + L.porchDepth;
-  // REDESIGNED PLAN: gun shop on the main street's east row (14, −17);
-  // sheriff now anchors the square's far side at (12, 14) — 31 m south,
-  // trivially clear. Nearest neighbours are the square's worker house
-  // (14, 1: z ∈ [−1, 3]) and the saloon across the street.
-  assert.ok(gz1 < -1, `gun shop porch (${gz1}) must stay north of the worker house (z −1)`);
-  assert.ok(gx1 < 29.0, 'gun shop must stay inside the east boundary');
-  assert.ok(gx0 > 3.0 && gz0 > -29.0, 'gun shop must not sit on the spawn street');
-  // The new spawn is the farm lane at (−16, −43) — far NW, trivially clear.
-  const spawnDist = Math.hypot(GUNSHOP_SITE.x - -16, GUNSHOP_SITE.z - -43);
-  assert.ok(spawnDist > 10, 'spawn point stays well clear of the shop center');
+  // Yawed −90° at map assembly: local +Z (entrance) → world −X (west). The
+  // footprint in WORLD space: x ∈ [site−d/2, site+d/2], z ∈ [site−w/2, site+w/2].
+  const gx0 = GUNSHOP_SITE.x - L.depth / 2;                       // 7.0
+  const gx1 = GUNSHOP_SITE.x + L.depth / 2;                       // 14.0
+  const gz0 = GUNSHOP_SITE.z - L.width / 2;                       // −29.5
+  const gz1 = GUNSHOP_SITE.z + L.width / 2;                       // −20.5
+  const porchX0 = gx0 - L.porchDepth;                             // 5.2 (faces the street)
+  // Main street runs x ∈ [−4, 4]: the porch must leave a walkable shoulder.
+  assert.ok(porchX0 > 4.0, `gun shop porch (${porchX0}) must clear the main street edge (4.0)`);
+  // Saloon across the street (west side, yawed +90): x ∈ [−15.5, −7.5] — clear.
+  assert.ok(gx0 > -7.5, 'gun shop must stay east of the street');
+  // Ruined house outskirts: x ∈ [27, 35] — the shop (gx1 = 14) stays clear.
+  assert.ok(gx1 < 27, 'gun shop must clear the ruined-house ground');
+  // Town square plaza (x ∈ [−16, 16], z ∈ [−13, 9]) must stay south-clear.
+  assert.ok(gz1 < -13, 'gun shop must sit before the square, on the main street');
+  // Map boundary (±59.5) + respawn at the farm road (−1.5, −57.5).
+  assert.ok(gx1 < 59.0 && gz0 > -59.0, 'gun shop must stay inside the boundary walls');
+  const spawnDist = Math.hypot(GUNSHOP_SITE.x - TOWN_RESPAWN.x, GUNSHOP_SITE.z - TOWN_RESPAWN.z);
+  assert.ok(spawnDist > 25, 'respawn stays well clear of the shop center');
 });
 
 /* -------------------------------------------------------------------------- */

@@ -626,9 +626,8 @@ test('SALOON COLLISION: the doorway is genuinely walkable, the wall beside it is
   }
 
   // OPEN: walk straight in through the door center (x = SITE.x): from the
-  // porch into the interior, NEVER blocked. All z coordinates are
-  // SITE-relative (the redesign moved the site; the old absolutes −5.5/−12
-  // were OLD_SITE(−12)+6.5 and OLD_SITE+0).
+  // porch approach (6.5 m south of the footprint center) into the interior,
+  // NEVER blocked. SITE-RELATIVE (the map yaws the saloon at assembly).
   let pos: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: SALOON_SITE.z + 6.5 };
   for (let step = 0; step < 14; step += 1) {
     const result = openWorld.movePlayer(pos, { x: 0, y: 0, z: -0.5 });

@@ -21,10 +21,10 @@ const ok = (name, pass, detail) => {
 };
 
 const PLACEMENTS = {
-  worker: { uuid: 'c0000000-0000-4000-8000-000000000041', x: -11.5, z: 19, yaw: 90 },
-  family: { uuid: 'c0000000-0000-4000-8000-000000000042', x: -12, z: 28, yaw: 90 },
-  wealthy: { uuid: 'c0000000-0000-4000-8000-000000000043', x: 11.5, z: 26, yaw: -90 },
-  abandoned: { uuid: 'c0000000-0000-4000-8000-000000000045', x: -30, z: -13, yaw: 90 },
+  worker: { uuid: 'c0000000-0000-4000-8000-000000030041', x: 12, z: -2.5, yaw: -90 },
+  family: { uuid: 'c0000000-0000-4000-8000-000000030042', x: -20.5, z: 13, yaw: 180 },
+  wealthy: { uuid: 'c0000000-0000-4000-8000-000000030043', x: 21, z: 13.5, yaw: 180 },
+  abandoned: { uuid: 'c0000000-0000-4000-8000-000000030045', x: 31, z: -50, yaw: 0 },
 };
 
 (async () => {
@@ -93,16 +93,16 @@ const PLACEMENTS = {
 
   const shots = [
     // [name, cam, target]
-    ['worker-34view', [-4.2, 2.3, 23.2], [-11.5, 1.7, 19]],
-    ['worker-side', [-11.5, 2.2, 26.5], [-11.5, 1.8, 19]],
-    ['family-34view', [-3.5, 2.4, 33.0], [-12, 1.9, 28]],
-    ['family-door-close', [-6.4, 1.55, 28.0], [-8.6, 1.15, 28]],
-    ['family-planters', [-4.8, 1.1, 28.0], [-7.7, 0.5, 28]],
-    ['wealthy-34view', [3.8, 2.6, 30.5], [11.5, 2.1, 26]],
-    ['wealthy-door-close', [6.2, 1.8, 26.0], [8.5, 1.5, 26]],
-    ['abandoned-34view', [-22.5, 2.3, -8.6], [-30, 1.7, -13]],
+    ['worker-34view', [7.5, 2.3, -6.2], [12, 1.7, -2.5]],
+    ['worker-side', [12, 2.2, -7.5], [12, 1.8, -2.5]],
+    ['family-34view', [-20.5, 2.4, 7.0], [-20.5, 1.9, 13]],
+    ['family-door-close', [-18.4, 1.55, 9.8], [-20.2, 1.15, 11.2]],
+    ['family-planters', [-17.8, 1.1, 10.0], [-19.4, 0.5, 11.4]],
+    ['wealthy-34view', [21, 2.6, 6.0], [21, 2.1, 13.5]],
+    ['wealthy-door-close', [21, 1.8, 9.2], [21, 1.5, 11.4]],
+    ['abandoned-34view', [35.5, 2.3, -45.5], [31, 1.7, -50]],
     ['building-site', [7.5, 2.6, -6.5], [14, 1.8, -12]],
-    ['aerial-residential', [0, 42, 50], [0, 0, 16]],
+    ['aerial-residential', [0, 42, 40], [0, 0, 12]],
   ];
   for (const [name, cam, tgt] of shots) {
     await ev((c) => window.__westTest.setCamera(c[0], c[1], c[2], c[3], c[4], c[5]), [...cam, ...tgt]);
@@ -139,16 +139,19 @@ const PLACEMENTS = {
      *   family (−12,28)   depth 4.0·1.3 yaw+90  → face x = −12+2.6 = −9.4
      *   wealthy (11.5,26) depth 4.8·1.3 yaw−90  → face x = 11.5−3.12 = 8.38
      * The leaf may sit ≤10 cm proud (frame + leaf face, scaled) — never metres. */
-    const doorFlush = (boxes, label, wallFace, sign) => {
+    /* TOWN REDESIGN: family/wealthy sit at yaw 180 on the far side of the
+     * square — the door faces NORTH (world −z), so the flush check runs
+     * along z. Front wall face z = site.z − (depth·S)/2. */
+    const doorFlush = (boxes, label, wallFace) => {
       const leaves = boxes.filter((b) => b.name.startsWith('door-leaf'));
       if (!leaves.length) return ok(`§2 ${label} door leaf found`, false, 'no door-leaf* part');
-      const face = sign > 0 ? Math.max(...leaves.map((b) => b.max.x)) : Math.min(...leaves.map((b) => b.min.x));
+      const face = Math.min(...leaves.map((b) => b.min.z)); // proud toward the street (−z)
       const proud = Math.abs(face - wallFace);
       ok(`§2 ${label} door flush on wall face (≤10cm, was 1.42/0.58m)`, proud <= 0.10,
         `leaf-face=${face.toFixed(3)} wall-face=${wallFace.toFixed(3)} proud=${proud.toFixed(3)}m`);
     };
-    doorFlush(mFamily, 'family', -12 + 2.0 * HOUSE_SCALE, +1);
-    doorFlush(mWealthy, 'wealthy', 11.5 - 2.4 * HOUSE_SCALE, -1);
+    doorFlush(mFamily, 'family', PLACEMENTS.family.z - 2.0 * HOUSE_SCALE);
+    doorFlush(mWealthy, 'wealthy', PLACEMENTS.wealthy.z - 2.4 * HOUSE_SCALE);
 
     /* §3 planters seated ON the deck (deck top y = 0.18·1.3 = 0.234; deck
      * world x −9.4..−7.45, z 25.3..30.7 for the scaled family def).
@@ -157,12 +160,17 @@ const PLACEMENTS = {
      * may float above the deck any more. */
     const planter = (boxes, label) => {
       const deckTop = 0.18 * HOUSE_SCALE;
+      // deck world window for the REDESIGN site: family at (−20.5, 13) yaw 180
+      // → deck local x [−2.7, 2.7] z [2.6, 4.55] maps to world x [−23.2, −17.8],
+      // z [8.45, 10.4].
       const pots = boxes.filter((b) => (b.max.y - b.min.y) <= 0.35 && (b.max.y - b.min.y) > 0.12
         && Math.abs(b.min.y - deckTop) < 0.02
-        && b.min.x > -9.6 && b.max.x < -7.2 && b.min.z > 25.0 && b.max.z < 31.0);
-      const floaters = boxes.filter((b) => (b.max.y - b.min.y) <= 0.45 && b.min.y > deckTop + 0.03 && b.min.y < 1.6
-        && (b.max.x - b.min.x) < 0.55 && (b.max.z - b.min.z) > 3.9
-        && b.min.x > -7.35); // clearly EAST of the deck edge (−7.45): the original floating-pot spot. The seated pots' plant balls (x ≈ −7.68) stay inside and must NOT count.
+        && b.min.x > -23.4 && b.max.x < -17.6 && b.min.z > 8.2 && b.max.z < 10.6);
+      // floating POT heights only (deck 0.234 + pot ≤ ~0.5); the door knob
+      // (a legit 8 cm part at 1.3 m) must not count.
+      const floaters = boxes.filter((b) => (b.max.y - b.min.y) <= 0.45 && b.min.y > deckTop + 0.03 && b.min.y < 1.0
+        && (b.max.x - b.min.x) < 0.55
+        && b.min.x > -23.4 && b.max.x < -17.6 && b.min.z > 8.2 && b.max.z < 10.6);
       ok(`§3 ${label} pots seated on deck (bottom == deck top ${deckTop.toFixed(3)})`, pots.length >= 1 && floaters.length === 0,
         `seatedBuckets=${pots.length} bottoms=[${pots.map((p) => p.min.y.toFixed(3)).join(', ')}] floaters=${floaters.length}`);
     };

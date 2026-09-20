@@ -14,12 +14,18 @@ export interface CollisionBounds { uuid: string; min: Vec3; max: Vec3; }
 /**
  * One EXACT collision box for a composite (multi-mesh) asset, in the def's
  * LOCAL space: `size` is the full box size, `offset` its center relative to
- * the def origin (before the def's yaw rotation). Composite assets are built
- * at real-world size while their transform scale stays (1,1,1) — the default
- * transform-derived AABB would then cover only a 1 m cube at the anchor and
- * leave the rest of the visual volume walk-through (the bar/gunshop counters
- * bug). Authored layouts state these boxes from the builder's real dims, so
- * collision == visual without any oversize.
+ * the def origin (before the def's yaw rotation AND scale). Composite assets
+ * are built at real-world size while their transform scale stays (1,1,1) —
+ * the default transform-derived AABB would then cover only a 1 m cube at the
+ * anchor and leave the rest of the visual volume walk-through (the bar/gunshop
+ * counters bug). Authored layouts state these boxes from the builder's real
+ * dims, so collision == visual without any oversize.
+ *
+ * SCALE CONTRACT (do not break): the renderer adapter applies the def's
+ * transform scale to the visual group, so CollisionWorld MUST apply the SAME
+ * scale to these local boxes (size AND offset, per axis) — otherwise any
+ * scaled def keeps scale-1 colliders and the player walks straight through
+ * the visually enlarged walls (the reported scaled-houses bug).
  */
 export interface ColliderLocalBox { size: Vec3; offset?: Vec3 }
 type DefinitionSource = readonly Readonly<ObjectDefinition>[] | (() => readonly Readonly<ObjectDefinition>[]);
@@ -154,24 +160,36 @@ export class CollisionWorld {
   }
   private toCollisionBounds(definition: Readonly<ObjectDefinition>): CollisionBounds[] {
     const { position, rotation, scale } = definition.transform;
-    const yaw = (normalizeDegrees(rotation.y) * Math.PI) / 180; const cos = abs(Math.cos(yaw)); const sin = abs(Math.sin(yaw));
+    const yaw = (normalizeDegrees(rotation.y) * Math.PI) / 180;
+    // SIGNED trig for the center offset — it must match the renderer's
+    // rotation.y exactly (three.js: x' = x·cosθ + z·sinθ, z' = −x·sinθ + z·cosθ).
+    // The OLD code used |sin| here too, which MIRRORED every offset box to the
+    // wrong side for negative yaw (e.g. the farmstead's shed collider landed
+    // in empty field 6 m from the actual shed — an invisible wall the player
+    // could not cross). |sin| stays ONLY for the conservative extents below.
+    const cos = Math.cos(yaw); const sin = Math.sin(yaw);
+    const acos = abs(cos); const asin = abs(sin);
     // Composite assets may carry EXACT local boxes (collider == visual).
     const boxes = localColliderBoxes(definition.metadata);
     if (boxes) {
       // One world AABB per local box: the center is the def position plus the
-      // yaw-rotated offset, the extents are the yaw-conservative size extents
-      // (for yaw = 0/90/180/270 the box is EXACT — no conservative growth).
+      // yaw-rotated, SCALED offset; the extents are the yaw-conservative size
+      // extents (for yaw = 0/90/180/270 the box is EXACT — no growth).
+      // SCALE: local boxes live in the def's local space and the def transform
+      // scales that space — size AND offset scale per-axis first, or a scaled
+      // def keeps scale-1 colliders and the visual walls become walk-through.
       return boxes.map((box) => {
         const off = box.offset ?? { x: 0, y: 0, z: 0 };
+        const ox = off.x * scale.x; const oy = off.y * scale.y; const oz = off.z * scale.z;
         // THREE yaw (right-handed, +y up): x' = x·cos + z·sin, z' = −x·sin + z·cos.
-        const cx = position.x + off.x * cos + off.z * sin;
-        const cz = position.z - off.x * sin + off.z * cos;
-        const halfX = abs(box.size.x) * 0.5; const halfY = abs(box.size.y) * 0.5; const halfZ = abs(box.size.z) * 0.5;
-        const extentX = cos * halfX + sin * halfZ; const extentZ = sin * halfX + cos * halfZ;
-        return { uuid: definition.uuid, min: { x: cx - extentX, y: position.y + off.y - halfY, z: cz - extentZ }, max: { x: cx + extentX, y: position.y + off.y + halfY, z: cz + extentZ } };
+        const cx = position.x + ox * cos + oz * sin;
+        const cz = position.z - ox * sin + oz * cos;
+        const halfX = abs(box.size.x * scale.x) * 0.5; const halfY = abs(box.size.y * scale.y) * 0.5; const halfZ = abs(box.size.z * scale.z) * 0.5;
+        const extentX = acos * halfX + asin * halfZ; const extentZ = asin * halfX + acos * halfZ;
+        return { uuid: definition.uuid, min: { x: cx - extentX, y: position.y + oy - halfY, z: cz - extentZ }, max: { x: cx + extentX, y: position.y + oy + halfY, z: cz + extentZ } };
       });
     }
-    return [this.transformBounds(definition, position, scale, cos, sin)];
+    return [this.transformBounds(definition, position, scale, acos, asin)];
   }
 
   /** The legacy path: one conservative AABB from the transform itself. */

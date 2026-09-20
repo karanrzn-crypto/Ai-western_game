@@ -1,17 +1,18 @@
 /* Gameplay video + Creative-mode verification (user request:
- * «فیلم بازی کردنت را در نهایی برایم بفرست با مود کریتیو هم یه تست بکن»).
+ * «فیلم بازی کردنت را در نهایی برایم بفرست با مود کریتیو هم یه تست بکن»
+ * — re-run for the scale-1.3 + model-fix round).
  * Records a REAL play session (webm): on-foot walk down the residential
- * street past the four houses, then F-toggles the Creative fly camera,
- * flies over the roofs (the angle the roof fix must survive), descends,
- * toggles back. Asserts the creative contract behaviourally:
+ * street past the four scaled houses, then F-toggles the Creative fly
+ * camera, flies over the roofs, descends, toggles back. Asserts the
+ * creative contract behaviourally:
  *   – creative ON  → player position FROZEN, camera climbs with Space
  *   – creative OFF → player walks again
- * Output: shots-house-fixes/video/gameplay-*.webm + console PASS lines.
+ * Output: shots-scale-fixes/video/gameplay-*.webm + console PASS lines.
  * Run: node scripts/record-gameplay.cjs   (dev server on :5176)
  */
 const { chromium } = require('playwright');
 const fs = require('fs');
-const OUT = '/home/z/my-project/Ai-western_game/shots-house-fixes/video';
+const OUT = '/home/z/my-project/Ai-western_game/shots-scale-fixes/video';
 fs.mkdirSync(OUT, { recursive: true });
 const URL = 'http://localhost:5176/';
 const results = [];
@@ -152,12 +153,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ev(() => window.__k('keyup', 'KeyF'));
   await sleep(700);
 
-  // back on foot: walking must work again
+  // back on foot: walking must work again — on CLEAR street ground (the
+  // creative descent parks the player beside the SCALED houses, whose
+  // colliders legitimately block; the on-foot contract is asserted on open
+  // street so the threshold stays strict).
+  await ev(() => window.__westTest.teleport(-2.5, 1.7, 12));
+  await ev(() => window.__westTest.setYaw(Math.PI)); // face +z down the street
+  await sleep(400);
   await ev(() => window.__k('keydown', 'KeyW'));
   await sleep(1600);
   await ev(() => window.__k('keyup', 'KeyW'));
   const backOnFoot = await ev(() => window.__westTest.player());
-  const walkedAgain = Math.abs(backOnFoot.x - duringFly.player.x) + Math.abs(backOnFoot.z - duringFly.player.z);
+  const walkedAgain = Math.abs(backOnFoot.x - (-2.5)) + Math.abs(backOnFoot.z - 12);
   ok('§B creative OFF: back on foot, walking again', walkedAgain > 1.5 && lowCam < duringFly.camY,
     `walked=${walkedAgain.toFixed(2)}m camY descended to ${lowCam.toFixed(1)}`);
 

@@ -13,6 +13,13 @@
  *    2.0–2.2 m tall (the draft's 1.05–1.4 m doors were chest-height
  *    "toy" doors), windows carry real sills, wall heights 2.75–4.4 m,
  *    and the wealthy/family/farm/worker footprints genuinely differ.
+ *  • FIX ROUND (model defects): gable band straddles the wall-top plane
+ *    (no light gap AND no wall corners piercing the shingles); porch +
+ *    awning posts cut to end INSIDE their roof band (no more bars poking
+ *    through the fabric); butcher hides render DoubleSide; the stray
+ *    ground rope-coil deleted; the farmstead lean-to rebuilt to spring
+ *    from the house wall instead of sailing past the shed; trough moved
+ *    clear of the fence line.
  *  • SHARED CACHES — module-level texture + material caches (same
  *    convention as SaloonMaterials): a texture canvas is painted ONCE
  *    per distinct parameter set, and materials are shared across every
@@ -350,7 +357,7 @@ function signTexture(opts: { text: string; sub?: string; bg?: string; fg?: strin
 // directly cut draw-call buckets). Keys pin every visual parameter.
 // ---------------------------------------------------------------------------
 
-type StdParams = { roughness?: number; metalness?: number; opacity?: number; transparent?: boolean };
+type StdParams = { roughness?: number; metalness?: number; opacity?: number; transparent?: boolean; side?: THREE.Side };
 
 const materialCache = new Map<string, THREE.MeshStandardMaterial>();
 
@@ -365,13 +372,14 @@ function cachedMat(key: string, build: () => THREE.MeshStandardMaterial): THREE.
 function stdMat(colorHex: string, tex: THREE.CanvasTexture | null, extra: StdParams = {}): THREE.MeshStandardMaterial {
   const rough = extra.roughness ?? 0.88;
   const metal = extra.metalness ?? 0.02;
-  const key = `std|${colorHex}|${tex ? tex.uuid : 'flat'}|${rough}|${metal}|${extra.opacity ?? 1}`;
+  const key = `std|${colorHex}|${tex ? tex.uuid : 'flat'}|${rough}|${metal}|${extra.opacity ?? 1}|${extra.side ?? 0}`;
   return cachedMat(key, () => new THREE.MeshStandardMaterial({
     color: tex ? 0xffffff : new THREE.Color(colorHex),
     map: tex ?? undefined,
     roughness: rough,
     metalness: metal,
     ...(extra.transparent ? { transparent: true, opacity: extra.opacity ?? 1 } : {}),
+    ...(extra.side !== undefined ? { side: extra.side } : {}),
   }));
 }
 
@@ -400,7 +408,7 @@ const MAT = {
   brass: () => metalMat(BRASS, { roughness: 0.4 }),
   glass: (broken = false) => stdMat(broken ? '#3a3f38' : GLASS_TINT, null, { transparent: true, opacity: 0.35, roughness: 0.1, metalness: 0.1 }),
   fabric: () => stdMat(FABRIC_CREAM, fabricStripeTexture(), { roughness: 0.95 }),
-  hide: (seed = 63) => stdMat(HIDE_CREAM, hideTexture(HIDE_CREAM, HIDE_BROWN, seed), { roughness: 0.9 }),
+  hide: (seed = 63) => stdMat(HIDE_CREAM, hideTexture(HIDE_CREAM, HIDE_BROWN, seed), { roughness: 0.9, side: THREE.DoubleSide }),
   meat: () => stdMat(MEAT_RED, meatTexture(), { roughness: 0.5 }),
   weed: () => stdMat(WEED_GREEN, null, { roughness: 1 }),
   weedDry: () => stdMat(WEED_DRY, null, { roughness: 1 }),
@@ -431,18 +439,22 @@ function box(parent: THREE.Object3D, material: THREE.Material, w: number, h: num
 
 /** Symmetric gable roof: two sloped panels + triangular gable-end infill
  *  + ridge cap. ROOT FIX for the "roof floats above the walls" defect: the
- *  panels are SUNK so the eave line lands BELOW the wall top by exactly the
- *  rise the overhang adds at the wall face (+ 5 cm burial). The panel
- *  undersides therefore CROSS the wall-top plane inside the wall footprint —
- *  a geometric intersection, not a tolerance match — so no light gap can
- *  appear between roof and walls at any scale or rotation (body and roof
- *  scale/rotate together as one def; the group itself carries no transform).
+ *  panel CENTERLINE passes exactly through the wall-top plane at the wall
+ *  face — the band STRADDLES the plane symmetrically. The underside sits
+ *  (thickness/2)/cos ≈ 3 cm BELOW the plane inside the wall footprint (a
+ *  geometric intersection, not a tolerance match — no daylight can open at
+ *  any scale or rotation, since body+roof scale/rotate together as one def
+ *  and the group itself carries no transform), AND the top sits ≈ 3 cm ABOVE
+ *  the plane so the wall's top corners are buried inside the band. The old
+ *  +5 cm oversink shoved the WHOLE band below the plane — the wall's outer
+ *  top corners then poked ~2 cm THROUGH the shingles at every eave corner
+ *  (the "part of the wall sticks out of the roof" defect).
  *  The gable-end infill is a FULL triangle whose base spans the eave width
- *  (±run) at the sunk eave height: its edges sit ~3 mm inside the panel
- *  band for the whole slope, so the old wedge-shaped daylight at the gable
- *  corners is gone too. userData.eaveY / userData.ridgeTop expose the exact
+ *  (±run) at the eave height: its edge crosses the wall-top plane exactly at
+ *  the wall's outer face (run − overhang = width/2), so the gable wall is
+ *  capped edge-to-edge. userData.eaveY / userData.ridgeTop expose the exact
  *  seated heights so callers can anchor chimneys/cupolas to the REAL roof
- *  surface instead of the pre-sink formula. */
+ *  surface instead of a pre-sink formula. */
 function buildGableRoof(opts: { width: number; depth: number; wallHeight: number; ridgeRise: number; overhang?: number; wear?: number }): THREE.Group {
   const { width, depth, wallHeight, ridgeRise, overhang = 0.35, wear = 0.3 } = opts;
   const g = new THREE.Group();
@@ -454,10 +466,10 @@ function buildGableRoof(opts: { width: number; depth: number; wallHeight: number
   const roofMat = MAT.roof(wear);
 
   // Sink: at the wall face (x = width/2) the panel centreline sits
-  // ridgeRise·(overhang/run) above the eave; bury the underside 5 cm below
-  // the wall top there → dip = that rise + 0.05 (+ the 2.8 cm half-thickness
-  // already accounted by using the centreline as the eave reference).
-  const dip = ridgeRise * (overhang / run) + 0.05;
+  // ridgeRise·(overhang/run) above the eave — sink the eave by exactly that
+  // so the centreline LANDS on the wall-top plane at the face (band
+  // straddles it: underside ~3 cm buried, top ~3 cm proud).
+  const dip = ridgeRise * (overhang / run);
   const eaveY = wallHeight - dip;
   const ridgeTop = eaveY + ridgeRise;
   g.userData.eaveY = eaveY;
@@ -473,9 +485,11 @@ function buildGableRoof(opts: { width: number; depth: number; wallHeight: number
   box(g, MAT.trimDark(), 0.08, 0.08, depth + overhang * 2, 0, ridgeTop, 0, 'ridge-cap');
 
   // full gable-end triangles at both ends — base spans the eave width at the
-  // sunk eave height (buried inside the panels and the wall top), apex meets
+  // eave height (buried inside the panels and the wall top), apex meets
   // the ridge. Each infill extrudes OUTWARD from its wall face (2 mm proud,
-  // no coplanar face).
+  // no coplanar face). The triangle edge crosses the wall-top plane exactly
+  // at the wall face (run − overhang = width/2), capping the gable wall
+  // edge-to-edge with no corner wedge left outside.
   [-1, 1].forEach((zSide) => {
     const shape = new THREE.Shape();
     shape.moveTo(-run, 0);
@@ -495,7 +509,10 @@ function buildGableRoof(opts: { width: number; depth: number; wallHeight: number
 
 /** Single-slope shed/lean-to roof: HIGH edge at local z ≈ 0, sloping DOWN
  *  toward +z (the street side). Callers place the group so the high edge
- *  sits against the wall it shelters. */
+ *  sits against the wall it shelters.
+ *  userData.bandAt(zLocal) exposes the panel band at any roof-local z
+ *  ({ underside, centreline, top }) so callers can seat posts/props INTO the
+ *  structure instead of piercing through it (the awning-bars defect). */
 function buildShedRoof(opts: { width: number; depth: number; lowHeight: number; highHeight: number; overhang?: number; wear?: number; mat?: THREE.Material }): THREE.Group {
   const { width, depth, lowHeight, highHeight, overhang = 0.25, wear = 0.3, mat } = opts;
   const g = new THREE.Group();
@@ -510,6 +527,18 @@ function buildShedRoof(opts: { width: number; depth: number; lowHeight: number; 
   const panel = mesh(new THREE.BoxGeometry(width + overhang * 2, 0.04, slopeLen), roofMat, 0, lowHeight + rise / 2, run / 2 - overhang / 2);
   panel.rotation.x = angle;
   g.add(panel);
+
+  // Band query (roof-local z → panel y-interval). The panel tilts about x by
+  // `angle`: moving +z along the slope drops y by tan(angle); the 4 cm slab's
+  // half-thickness grows to halfThick/cos(angle) in world y.
+  const halfThick = 0.02;
+  const centreY = lowHeight + rise / 2;
+  const centreZ = run / 2 - overhang / 2;
+  g.userData.bandAt = (zLocal: number): { underside: number; centreline: number; top: number } => {
+    const centre = centreY - (zLocal - centreZ) * (rise / run);
+    const halfBand = halfThick / Math.cos(angle);
+    return { underside: centre - halfBand, centreline: centre, top: centre + halfBand };
+  };
 
   return g;
 }
@@ -554,8 +583,10 @@ function buildDoorUnit(w = 0.92, h = 2.05, fancy = false): THREE.Group {
   g.add(panel);
 
   if (fancy) {
-    // two raised panel insets for a nicer door
-    [-0.5, 0.5].forEach((oy) => {
+    // two raised panel insets ON the leaf — centred at ±h/4 so each panel sits
+    // fully inside its half of the leaf (the old ±h/2 centres hung the lower
+    // panel half a panel BELOW the frame, dipping under the porch deck).
+    [-0.25, 0.25].forEach((oy) => {
       box(g, MAT.trimDark(), w * 0.62, h * 0.3, 0.012, 0, oy * h, 0.045);
     });
     const glassInsert = mesh(new THREE.CircleGeometry(w * 0.16, 16), MAT.glass(), 0, h * 0.32, 0.046);
@@ -585,7 +616,13 @@ function buildSteps(width: number, count: number, wear = 0.3): THREE.Group {
 }
 
 /** Covered or open porch: platform, posts, optional railing, shed roof that
- *  slopes the RIGHT way (high at the wall, low at the street). */
+ *  slopes the RIGHT way (high at the wall, low at the street).
+ *  AWNING-BAR FIX (user §3): the posts used to run the full `postHeight` and
+ *  PIERCE the porch roof by ~0.24 m — the "bars sticking out of the awning"
+ *  defect. The roof is now built FIRST and each post is CUT to end 1.2 cm
+ *  INSIDE the roof band at the post line (userData.bandAt): the tops are
+ *  buried inside the structure and can never be seen from outside, while the
+ *  roof seat (and therefore the porch silhouette) stays exactly as designed. */
 function buildPorch(opts: { width: number; depth: number; postHeight: number; roofed?: boolean; railed?: boolean; wear?: number; sagging?: boolean }): THREE.Group {
   const { width, depth, postHeight, roofed = true, railed = false, wear = 0.3, sagging = false } = opts;
   const g = new THREE.Group();
@@ -594,10 +631,33 @@ function buildPorch(opts: { width: number; depth: number; postHeight: number; ro
   const deckH = 0.18;
   box(g, woodMat(wear), width, deckH, depth, 0, deckH / 2, depth / 2, 'porch-deck');
 
+  // Roof FIRST so the posts can be seated into its band (see header comment).
+  // High edge against the house wall (local z = 0), low edge over the
+  // street — no mirroring, the shed roof already slopes toward +z.
+  let roof: THREE.Group | null = null;
+  if (roofed) {
+    roof = buildShedRoof({
+      width,
+      depth: depth - 0.05,
+      lowHeight: deckH + postHeight - 0.3,
+      highHeight: deckH + postHeight + 0.18,
+      overhang: 0.22,
+      wear,
+    });
+    roof.position.z = 0.11; // high edge lands on the wall plane
+    g.add(roof);
+  }
+
+  const postZ = depth - 0.12;
+  // Unroofed posts carry nothing and keep the full height; roofed posts stop
+  // 1.2 cm inside the panel band at the post line (buried, never visible).
+  const postTopY = roof ? roof.userData.bandAt(postZ - roof.position.z).underside + 0.012 : deckH + postHeight;
+  const postLen = postTopY - deckH;
+
   const postCount = Math.max(2, Math.round(width / 1.4) + 1);
   for (let i = 0; i < postCount; i++) {
     const x = -width / 2 + 0.18 + (i * (width - 0.36)) / (postCount - 1);
-    const post = mesh(new THREE.CylinderGeometry(0.045, 0.05, postHeight, 10), woodMat(wear), x, deckH + postHeight / 2, depth - 0.12);
+    const post = mesh(new THREE.CylinderGeometry(0.045, 0.05, postLen, 10), woodMat(wear), x, deckH + postLen / 2, postZ);
     if (sagging && i === Math.floor(postCount / 2)) post.rotation.z = 0.12;
     g.add(post);
   }
@@ -610,21 +670,6 @@ function buildPorch(opts: { width: number; depth: number; postHeight: number; ro
       const baluster = mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.86, 6), MAT.trimDark(), x, deckH + 0.5, depth - 0.1);
       g.add(baluster);
     }
-  }
-
-  if (roofed) {
-    // High edge against the house wall (local z = 0), low edge over the
-    // street — no mirroring, the shed roof already slopes toward +z.
-    const roof = buildShedRoof({
-      width,
-      depth: depth - 0.05,
-      lowHeight: deckH + postHeight - 0.3,
-      highHeight: deckH + postHeight + 0.18,
-      overhang: 0.22,
-      wear,
-    });
-    roof.position.z = 0.11; // high edge lands on the wall plane
-    g.add(roof);
   }
 
   return g;
@@ -690,6 +735,7 @@ export function buildAnimalHide(kind: 'cow' | 'deer' = 'cow'): THREE.Group {
   const w = kind === 'cow' ? 0.85 : 0.6;
   const h = kind === 'cow' ? 1.1 : 0.85;
   const hide = mesh(new THREE.PlaneGeometry(w, h, 6, 8), MAT.hide(kind === 'cow' ? 63 : 91), 0, h / 2, 0);
+  hide.name = 'hide-plane';
   // ripple the plane a little so it doesn't read as a perfectly flat card
   const pos = hide.geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -810,17 +856,6 @@ export function buildButcherStall(): THREE.Group {
     box(g, woodMat(wear), 0.07, wallHeight, depth, (side * width) / 2, wallHeight / 2, 0, `stall-side-wall-${side < 0 ? 'w' : 'e'}`);
   });
 
-  // corner posts holding up the awning
-  [
-    [-width / 2, -depth / 2],
-    [width / 2, -depth / 2],
-    [-width / 2, depth / 2],
-    [width / 2, depth / 2],
-  ].forEach(([x, z]) => {
-    const post = mesh(new THREE.CylinderGeometry(0.05, 0.055, 2.45, 10), woodMat(wear), x, 1.225, z);
-    g.add(post);
-  });
-
   // striped fabric awning: HIGH at the back posts, low edge EXACTLY on the
   // scallop line at the front (z = depth/2 + 0.05), so the trim reads as
   // the awning's edge instead of floating behind it.
@@ -836,6 +871,25 @@ export function buildButcherStall(): THREE.Group {
   });
   awning.position.z = -depth / 2; // high edge at the back post line
   g.add(awning);
+
+  // AWNING-BAR FIX (same defect class as the family porch, user §3): the
+  // four corner posts used to run a fixed 2.45 m — the FRONT pair pierced
+  // the fabric by ~0.36 m (the low edge there sits at y ≈ 2.09) and the BACK
+  // pair hung 3 cm short of it. The awning is built FIRST and each post is
+  // cut to end 1.2 cm INSIDE the fabric band at its own corner — the tops
+  // are buried in the awning structure and never visible from outside.
+  [
+    [-width / 2, -depth / 2],
+    [width / 2, -depth / 2],
+    [-width / 2, depth / 2],
+    [width / 2, depth / 2],
+  ].forEach(([x, z]) => {
+    const band = awning.userData.bandAt(z - awning.position.z);
+    const postLen = band.underside + 0.012;
+    const post = mesh(new THREE.CylinderGeometry(0.05, 0.055, postLen, 10), woodMat(wear), x, postLen / 2, z);
+    g.add(post);
+  });
+
   // scalloped trim along the awning's front edge
   for (let i = 0; i < 8; i++) {
     const scallop = mesh(new THREE.ConeGeometry(0.07, 0.12, 6), MAT.fabric(), -width / 2 + 0.19 + i * (width / 7), 2.06, frontLine);
@@ -925,7 +979,9 @@ export function buildButcherStall(): THREE.Group {
   stain2.castShadow = false;
   g.add(stain2);
 
-  // crates, barrel, rope coil around the stall
+  // GROUND-RING FIX (user §4): the rope coil — a flat torus lying on the
+  // ground at the stall's right — read as a stray ring and is DELETED at the
+  // source (the factory is the only spawn path, so it can never come back).
   const crate1 = buildWoodCrate();
   crate1.position.set(width / 2 + 0.35, 0, depth / 2 - 0.25);
   g.add(crate1);
@@ -936,9 +992,6 @@ export function buildButcherStall(): THREE.Group {
   const barrel = buildBarrelProp();
   barrel.position.set(width / 2 + 0.8, 0, depth / 2 - 0.5);
   g.add(barrel);
-  const ropeCoil = mesh(new THREE.TorusGeometry(0.17, 0.035, 8, 20), stdMat('#c9b183', null, { roughness: 0.9 }), width / 2 + 0.35, 0.16, depth / 2 + 0.35);
-  ropeCoil.rotation.x = Math.PI / 2;
-  g.add(ropeCoil);
 
   // hanging sign
   const signTex = signTexture({ text: 'BUTCHER', sub: 'FRESH MEAT DAILY', w: 480, h: 200 });
@@ -1253,13 +1306,35 @@ export function buildFarmhouse(): THREE.Group {
   const shedWidth = 2.0;
   const shedWallH = 2.1;
   box(g, woodMat(wear + 0.1), shedWidth, shedWallH, depth * 0.8, width / 2 + shedWidth / 2, shedWallH / 2, -depth * 0.1, 'shed-body');
-  const shedRoof = buildShedRoof({ width: shedWidth + 0.25, depth: depth * 0.8 + 0.25, lowHeight: shedWallH - 0.35, highHeight: wallHeight * 0.72, overhang: 0.22, wear: wear + 0.1 });
+  // LEAN-TO REBUILD (user §5: the awning beside the house was crooked and
+  // crossed the wall). The old call SWAPPED the roof's width/depth (slope
+  // span = the shed's 3.45 m DEPTH instead of its 2.0 m x-width) and
+  // centered the group on the shed — the panel sailed ~2.5 m past the
+  // shed's east wall into mid-air and pierced its top. A lean-to must
+  // spring FROM THE HOUSE WALL: the high edge is buried 5 cm into the house
+  // wall plane, the panel slopes down over the shed (9.8°) and rests just
+  // ABOVE its east wall top — the whole band stays outside the solid box.
+  const shedRoof = buildShedRoof({
+    width: depth * 0.8 + 0.25,    // long axis runs along the shed depth (z)
+    depth: shedWidth,             // slope span = the shed's x-width
+    lowHeight: shedWallH + 0.06,  // rests just above the shed wall top
+    highHeight: wallHeight - 0.45, // springs from the house wall, under the eave
+    overhang: 0.25,
+    wear: wear + 0.1,
+  });
   shedRoof.rotation.y = Math.PI / 2;
-  shedRoof.position.set(width / 2 + shedWidth / 2, 0, -depth * 0.1);
+  // rotation.y = π/2 maps roof-local +z onto world +x: the panel spans
+  // group.x − overhang/2 … group.x + depth + overhang/2. Park the group so
+  // the high edge lands 5 cm INSIDE the house wall plane (width/2).
+  shedRoof.position.set(width / 2 - 0.05 + 0.125, 0, -depth * 0.1);
   g.add(shedRoof);
+  // SHED DOOR FIX: it was mounted on the HOUSE wall plane (x = width/2+0.02)
+  // facing east — INSIDE the solid shed box, fully invisible. The shed's
+  // entrance belongs on its own east face, flush-mounted like every other
+  // shell door, and fits under the rebuilt lean-to's low edge (y 2.17).
   const shedDoor = buildDoorUnit(0.85, 1.95, false);
   shedDoor.rotation.y = Math.PI / 2;
-  shedDoor.position.set(width / 2 + 0.02, 0.975, -depth * 0.1);
+  shedDoor.position.set(width / 2 + shedWidth + 0.02, 0.975, -depth * 0.1);
   g.add(shedDoor);
 
   // fenced yard section along the front
@@ -1270,8 +1345,13 @@ export function buildFarmhouse(): THREE.Group {
   }
 
   // water trough by the fence (§2 farmyard identity)
+  // TROUGH/FENCE FIX (user §5): at x 1.9 the trough's box (x 1.4..2.4)
+  // intersected the 4th fence section (posts at x 0.63/1.97, z 3.55) — a
+  // fence post stood SUNK inside the water. The trough moves east of the
+  // fence line's end (fence ends x 2.0, trough spans x ≈ 2.37..3.43): no
+  // water/fence overlap, still hard by the fence, clear of house and shed.
   const trough = buildWaterTrough();
-  trough.position.set(1.9, 0, depth / 2 + 1.4);
+  trough.position.set(2.9, 0, depth / 2 + 1.4);
   trough.rotation.y = -0.2;
   g.add(trough);
 

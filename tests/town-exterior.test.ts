@@ -34,6 +34,7 @@ import {
   buildWealthyTownhouse,
   buildFarmhouse,
   buildAbandonedHouse,
+  buildAnimalHide,
 } from '../src/index.js';
 
 function stats(root: THREE.Object3D): { meshes: number; vertices: number; materials: Set<THREE.Material>; ridgeY: number } {
@@ -285,10 +286,11 @@ test('TOWN EXTERIOR: gable roof SITS on the walls — underside crosses the wall
     const run = slopeLen * Math.cos(angle); // full eave half-width from the slope hypotenuse
     const wallHalf = (body.geometry as THREE.BoxGeometry).parameters.width / 2;
 
-    // eave seat: sunk BELOW the wall top by the face rise + 5 cm burial
+    // eave seat: the panel CENTRELINE crosses the wall-top plane exactly at
+    // the wall face (band straddles the plane — underside buried, top proud).
     const eaveY = roof.userData.eaveY;
     const derivedRise = slopeLen * Math.sin(angle);
-    const dip = derivedRise * ((run - wallHalf) / run) + 0.05;
+    const dip = derivedRise * ((run - wallHalf) / run);
     assert.ok(Math.abs(eaveY - (bodyTop - dip)) < 1e-3,
       `${label}: eave sunk exactly dip below wall top`);
     // ridge cap on the sunk ridge
@@ -305,6 +307,15 @@ test('TOWN EXTERIOR: gable roof SITS on the walls — underside crosses the wall
       const undersideAtFace = centreYAtFace - (thickness / 2) / Math.cos(angle);
       assert.ok(undersideAtFace < bodyTop - 0.02,
         `${label}: panel underside at wall face ${undersideAtFace.toFixed(3)} sits ≥2cm below wall top ${bodyTop.toFixed(3)}`);
+      // ANTI-POKE (user §5 "part of the wall sticks out of the roof"): the
+      // band STRADDLES the wall-top plane — the centreline lands ON it, and
+      // the panel TOP stays above it so the wall's outer corners are buried
+      // in the band instead of piercing the shingles at the eave corners.
+      assert.ok(Math.abs(centreYAtFace - bodyTop) < 1e-3,
+        `${label}: panel centreline at wall face ${centreYAtFace.toFixed(3)} == wall top ${bodyTop.toFixed(3)}`);
+      const topAtFace = centreYAtFace + (thickness / 2) / Math.cos(angle);
+      assert.ok(topAtFace > bodyTop + 0.005,
+        `${label}: panel top at wall face ${topAtFace.toFixed(3)} above wall top ${bodyTop.toFixed(3)} (no wall sliver through the roof)`);
     }
 
     // infill: full triangle, base AT the sunk eave (buried deep, never
@@ -362,6 +373,128 @@ test('TOWN EXTERIOR: the family porch roof slopes high-at-wall / low-at-street',
   const highY = panel.position.y + (slopeLen / 2) * Math.sin(angle);
   const lowY = panel.position.y - (slopeLen / 2) * Math.sin(angle);
   assert.ok(highY > lowY + 0.3, 'the HIGH edge is at the house (water runs away from the door)');
+});
+
+test('TOWN EXTERIOR: support posts END inside their roof band (no bars poke through the awning)', () => {
+  // user §3 (family porch) + the same defect class on the butcher awning:
+  // every support post is CUT to end 1.2 cm inside the roof band at its own
+  // line — the top is buried in the structure and can never be seen.
+  const bandOk = (post: THREE.Mesh, band: { underside: number; top: number }, label: string) => {
+    const halfH = (post.geometry as THREE.CylinderGeometry).parameters.height / 2;
+    const top = post.position.y + halfH;
+    const bottom = post.position.y - halfH;
+    assert.ok(top > band.underside - 0.001 && top < band.top - 0.002,
+      `${label}: post top ${top.toFixed(3)} buried inside band [${band.underside.toFixed(3)}, ${band.top.toFixed(3)}]`);
+    return bottom;
+  };
+  const house = buildFamilyHouse();
+  const porch = house.getObjectByName('porch')!;
+  const roofGroup = porch.getObjectByName('shed-roof')!;
+  const bandAt = roofGroup.userData.bandAt as (z: number) => { underside: number; centreline: number; top: number };
+  assert.ok(typeof bandAt === 'function', 'roof exposes the bandAt seat query');
+  const posts = porch.children.filter((o) => {
+    const m = o as THREE.Mesh;
+    return m.isMesh && m.geometry.type === 'CylinderGeometry' && (m.geometry as THREE.CylinderGeometry).parameters.radiusTop > 0.02;
+  }) as THREE.Mesh[];
+  assert.ok(posts.length >= 4, 'family porch posts present');
+  for (const post of posts) {
+    const bottom = bandOk(post, bandAt(post.position.z - roofGroup.position.z), 'family');
+    assert.ok(Math.abs(bottom - 0.18) < 1e-6, 'family post still stands on the deck (0.18)');
+  }
+  const stall = buildButcherStall();
+  const awning = stall.getObjectByName('shed-roof')!;
+  const stallBandAt = awning.userData.bandAt as (z: number) => { underside: number; centreline: number; top: number };
+  const cornerPosts = stall.children.filter((o) => {
+    const m = o as THREE.Mesh;
+    return m.isMesh && m.geometry.type === 'CylinderGeometry' && Math.abs(m.position.x) > 1 && Math.abs(m.position.z) > 0.5;
+  }) as THREE.Mesh[];
+  assert.equal(cornerPosts.length, 4, 'stall: four corner posts');
+  for (const post of cornerPosts) bandOk(post, stallBandAt(post.position.z - awning.position.z), 'stall');
+});
+
+test('TOWN EXTERIOR: butcher hides render DoubleSide and the stray ground ring is gone', () => {
+  // user §4: the left hanging hide was visible from ONE side only (a front-
+  // side plane) — the hide material now renders DoubleSide; and the flat
+  // rope-coil torus lying on the ground at the stall's right is DELETED at
+  // the factory (the only spawn path — it can never come back).
+  const stall = buildButcherStall();
+  const hideGroups = stall.children.filter((o) => o.name.startsWith('stall-hide'));
+  assert.equal(hideGroups.length, 4, 'four hanging hides');
+  for (const group of hideGroups) {
+    const plane = group.children[0] as THREE.Mesh;
+    const mat = (Array.isArray(plane.material) ? plane.material[0] : plane.material) as THREE.MeshStandardMaterial;
+    assert.equal(mat.side, THREE.DoubleSide, `${group.name}: visible from both sides`);
+  }
+  const standalone = buildAnimalHide();
+  const hMat = ((standalone.children[0] as THREE.Mesh).material) as THREE.MeshStandardMaterial;
+  assert.equal(hMat.side, THREE.DoubleSide, 'standalone animal-hide renders both sides');
+  const groundTori = stall.children.filter((o) => {
+    const m = o as THREE.Mesh;
+    return m.isMesh && m.geometry.type === 'TorusGeometry' && m.position.y < 0.4;
+  }) as THREE.Mesh[];
+  assert.equal(groundTori.length, 0, 'no flat ring on the ground anywhere at the stall');
+});
+
+test('TOWN EXTERIOR: farmstead lean-to springs from the house wall and clears the shed', () => {
+  // user §5: the awning beside the farmhouse was crooked, sailed ~2.5 m past
+  // the shed and pierced its east wall. Contract: the panel's high edge is
+  // buried in the house wall plane, the band sits ABOVE the shed box top
+  // across the shed's whole width, and the shed door is visible on the EAST
+  // face (the old one was buried inside the solid box).
+  const farm = buildFarmhouse();
+  const body = farm.getObjectByName('house-body') as THREE.Mesh;
+  const bodyW = (body.geometry as THREE.BoxGeometry).parameters.width;
+  const bodyTop = body.position.y + (body.geometry as THREE.BoxGeometry).parameters.height / 2;
+  const shed = farm.getObjectByName('shed-body') as THREE.Mesh;
+  const shedGeo = shed.geometry as THREE.BoxGeometry;
+  const shedTop = shed.position.y + shedGeo.parameters.height / 2;
+  const shedMaxX = shed.position.x + shedGeo.parameters.width / 2;
+  const roofGroup = farm.getObjectByName('shed-roof')!;
+  const panel = roofGroup.children[0] as THREE.Mesh;
+  const slopeLen = (panel.geometry as THREE.BoxGeometry).parameters.depth;
+  const angle = Math.abs(panel.rotation.x);
+  const halfRun = (slopeLen / 2) * Math.cos(angle);
+  // rotation.y = π/2 maps the slope axis (+z local) onto world +x
+  const highEdgeX = roofGroup.position.x + panel.position.z - halfRun;
+  const lowEdgeX = roofGroup.position.x + panel.position.z + halfRun;
+  const halfDrop = (slopeLen / 2) * Math.sin(angle);
+  const highEdgeY = panel.position.y + halfDrop;
+  const lowEdgeY = panel.position.y - halfDrop;
+  assert.ok(highEdgeX < bodyW / 2 && highEdgeX > bodyW / 2 - 0.12,
+    `high edge ${highEdgeX.toFixed(3)} buried in the house wall plane ${(bodyW / 2).toFixed(2)}`);
+  assert.ok(lowEdgeX > shedMaxX, `low edge ${lowEdgeX.toFixed(3)} overhangs the shed east face ${shedMaxX.toFixed(2)}`);
+  assert.ok(lowEdgeY < bodyTop - 0.3, 'the lean-to sits under the main eave');
+  assert.ok(Math.abs((lowEdgeX - highEdgeX) - 2.25) < 0.01, 'slope span matches the shed width (+overhang), not its depth');
+  for (const x of [2.4, 3.3, 4.25]) {
+    const t = (x - highEdgeX) / (lowEdgeX - highEdgeX);
+    const centreY = highEdgeY - t * (highEdgeY - lowEdgeY);
+    const underside = centreY - 0.02 / Math.cos(angle);
+    assert.ok(underside > shedTop + 0.01,
+      `panel underside ${underside.toFixed(3)} clears the shed top ${shedTop.toFixed(2)} at x=${x}`);
+  }
+  const shedMaxXExact = shedMaxX;
+  const shedDoor = farm.children.find((o) => o.name === 'door-unit' && Math.abs((o as THREE.Object3D).position.x - (shedMaxXExact + 0.02)) < 1e-6);
+  assert.ok(shedDoor, 'shed door flush on the shed east face (was buried inside the box)');
+});
+
+test('TOWN EXTERIOR: the water trough clears the fence line (no post sunk in the water)', () => {
+  // user §5: the trough box (x 1.4..2.4) intersected the 4th fence section
+  // (posts at x 0.63/1.97, z 3.55) — a post stood INSIDE the water. The
+  // trough now sits east of the fence line's end, still on the ground.
+  const farm = buildFarmhouse();
+  const trough = farm.children.find((o) => o.name === 'water-trough') as THREE.Object3D;
+  assert.ok(trough, 'water trough present');
+  const fences = farm.children.filter((o) => o.name === 'fence-section');
+  assert.equal(fences.length, 4, 'four fence sections');
+  const troughBox = new THREE.Box3().setFromObject(trough);
+  assert.ok(Math.abs(troughBox.min.y) < 0.01, 'trough rests on the ground');
+  for (const fence of fences) {
+    const fenceBox = new THREE.Box3().setFromObject(fence);
+    const overlaps = troughBox.min.x < fenceBox.max.x && troughBox.max.x > fenceBox.min.x
+      && troughBox.min.z < fenceBox.max.z && troughBox.max.z > fenceBox.min.z;
+    assert.ok(!overlaps,
+      `trough (x ${troughBox.min.x.toFixed(2)}..${troughBox.max.x.toFixed(2)}) clear of fence at x=${fence.position.x.toFixed(2)}`);
+  }
 });
 
 /* ---------- 6. COLLISION -------------------------------------------------- */

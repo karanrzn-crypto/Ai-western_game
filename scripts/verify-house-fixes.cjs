@@ -97,7 +97,7 @@ const PLACEMENTS = {
     ['worker-side', [-11.5, 2.2, 26.5], [-11.5, 1.8, 19]],
     ['family-34view', [-3.5, 2.4, 33.0], [-12, 1.9, 28]],
     ['family-door-close', [-6.4, 1.55, 28.0], [-8.6, 1.15, 28]],
-    ['family-planters', [-4.8, 1.1, 28.0], [-8.1, 0.45, 28]],
+    ['family-planters', [-4.8, 1.1, 28.0], [-7.7, 0.5, 28]],
     ['wealthy-34view', [3.8, 2.6, 30.5], [11.5, 2.1, 26]],
     ['wealthy-door-close', [6.2, 1.8, 26.0], [8.5, 1.5, 26]],
     ['abandoned-34view', [-22.5, 2.3, -8.6], [-30, 1.7, -13]],
@@ -118,6 +118,10 @@ const PLACEMENTS = {
   fs.writeFileSync(`${OUT}/part-boxes.json`, JSON.stringify({ mWorker, mFamily, mWealthy, mAband }, null, 2));
 
   if (MODE === 'after') {
+    /* The four shell houses now spawn at SCALE 1.3 (user request) — every
+     * world-space expectation below is scaled by HOUSE_SCALE. */
+    const HOUSE_SCALE = 1.3;
+
     /* §4 the building is GONE */
     const buildingState = await ev(() => {
       const defs = window.__westTest.objects();
@@ -130,53 +134,58 @@ const PLACEMENTS = {
 
     /* §2 doors flush on the wall face.
      * The merge pass renames parts ('door-leaf+merged'), so match by prefix.
-     * The known wall faces (def position ± depth/2, front facing the street):
-     *   worker (−11.5,19) depth 3.4 yaw+90 → face x = −11.5+1.7 = −9.8
-     *   family (−12,28)   depth 4.0 yaw+90 → face x = −12+2.0 = −10.0
-     *   wealthy (11.5,26) depth 4.8 yaw−90 → face x = 11.5−2.4 = 9.1
-     * The leaf may sit ≤8 cm proud (frame 4.5 cm + leaf face) — never metres. */
+     * The known wall faces (def position ± depth/2 · 1.3, front facing the
+     * street):
+     *   family (−12,28)   depth 4.0·1.3 yaw+90  → face x = −12+2.6 = −9.4
+     *   wealthy (11.5,26) depth 4.8·1.3 yaw−90  → face x = 11.5−3.12 = 8.38
+     * The leaf may sit ≤10 cm proud (frame + leaf face, scaled) — never metres. */
     const doorFlush = (boxes, label, wallFace, sign) => {
       const leaves = boxes.filter((b) => b.name.startsWith('door-leaf'));
       if (!leaves.length) return ok(`§2 ${label} door leaf found`, false, 'no door-leaf* part');
       const face = sign > 0 ? Math.max(...leaves.map((b) => b.max.x)) : Math.min(...leaves.map((b) => b.min.x));
       const proud = Math.abs(face - wallFace);
-      ok(`§2 ${label} door flush on wall face (≤8cm, was 1.42/0.58m)`, proud <= 0.08,
+      ok(`§2 ${label} door flush on wall face (≤10cm, was 1.42/0.58m)`, proud <= 0.10,
         `leaf-face=${face.toFixed(3)} wall-face=${wallFace.toFixed(3)} proud=${proud.toFixed(3)}m`);
     };
-    doorFlush(mFamily, 'family', -10.0, +1);
-    doorFlush(mWealthy, 'wealthy', 9.1, -1);
+    doorFlush(mFamily, 'family', -12 + 2.0 * HOUSE_SCALE, +1);
+    doorFlush(mWealthy, 'wealthy', 11.5 - 2.4 * HOUSE_SCALE, -1);
 
-    /* §3 planters seated ON the deck (deck top y = 0.18, world x −10..−8.5,
-     * z 25.9..30.1 for the family def). Post-merge the pots live in small
-     * 'part+merged' buckets: bottom must sit AT the deck top, inside the
-     * deck footprint — and nothing pot-sized may float above 0.19 any more. */
+    /* §3 planters seated ON the deck (deck top y = 0.18·1.3 = 0.234; deck
+     * world x −9.4..−7.45, z 25.3..30.7 for the scaled family def).
+     * Post-merge the pots live in small 'part+merged' buckets: bottom must
+     * sit AT the deck top, inside the deck footprint — and nothing pot-sized
+     * may float above the deck any more. */
     const planter = (boxes, label) => {
-      const pots = boxes.filter((b) => (b.max.y - b.min.y) <= 0.25 && (b.max.y - b.min.y) > 0.12
-        && Math.abs(b.min.y - 0.18) < 0.015
-        && b.min.x > -10.2 && b.max.x < -8.3 && b.min.z > 25.5 && b.max.z < 30.5);
-      const floaters = boxes.filter((b) => (b.max.y - b.min.y) <= 0.3 && b.min.y > 0.2 && b.min.y < 1.2
-        && (b.max.x - b.min.x) < 0.4 && (b.max.z - b.min.z) > 3.0);
-      ok(`§3 ${label} pots seated on deck (bottom == deck top 0.18)`, pots.length >= 1 && floaters.length === 0,
+      const deckTop = 0.18 * HOUSE_SCALE;
+      const pots = boxes.filter((b) => (b.max.y - b.min.y) <= 0.35 && (b.max.y - b.min.y) > 0.12
+        && Math.abs(b.min.y - deckTop) < 0.02
+        && b.min.x > -9.6 && b.max.x < -7.2 && b.min.z > 25.0 && b.max.z < 31.0);
+      const floaters = boxes.filter((b) => (b.max.y - b.min.y) <= 0.45 && b.min.y > deckTop + 0.03 && b.min.y < 1.6
+        && (b.max.x - b.min.x) < 0.55 && (b.max.z - b.min.z) > 3.9
+        && b.min.x > -7.35); // clearly EAST of the deck edge (−7.45): the original floating-pot spot. The seated pots' plant balls (x ≈ −7.68) stay inside and must NOT count.
+      ok(`§3 ${label} pots seated on deck (bottom == deck top ${deckTop.toFixed(3)})`, pots.length >= 1 && floaters.length === 0,
         `seatedBuckets=${pots.length} bottoms=[${pots.map((p) => p.min.y.toFixed(3)).join(', ')}] floaters=${floaters.length}`);
     };
     planter(mFamily, 'family');
 
     /* §1 roof seated: post-merge the panels are inside 'part+merged' buckets,
      * but the gable INFILL groups keep the 'gable-roof' name and their base
-     * sits exactly at the sunk eave. Assert base == wallTop − dip (±1cm) and
-     * clearly below the wall top. Dips: ridge·(overhang/run)+0.05. */
+     * sits exactly at the eave. Assert base == SCALE·(wallTop − dip) (±1cm)
+     * and clearly below the scaled wall top. Dip: ridge·(overhang/run) — the
+     * band is CENTRED on the wall-top plane at the face (the anti-poke
+     * contract; the old +5 cm oversink let wall corners pierce the roof). */
     const roofSeat = (boxes, label, wallTop, ridge, overhang, halfW) => {
       const run = halfW + overhang;
-      const dip = ridge * (overhang / run) + 0.05;
+      const dip = ridge * (overhang / run);
       const infills = boxes.filter((b) => b.name === 'gable-roof');
       if (!infills.length) return ok(`§1 ${label} infills found`, false, 'no gable-roof parts');
       const base = Math.min(...infills.map((b) => b.min.y));
       const apex = Math.max(...infills.map((b) => b.max.y));
-      const baseOk = Math.abs(base - (wallTop - dip)) <= 0.01;
-      const sunkOk = base < wallTop - 0.05;
-      const apexOk = Math.abs(apex - (wallTop - dip + ridge)) <= 0.02;
-      ok(`§1 ${label} roof sunk onto walls (base=wallTop−dip)`, baseOk && sunkOk && apexOk,
-        `base=${base.toFixed(3)} expected=${(wallTop - dip).toFixed(3)} wallTop=${wallTop} apex=${apex.toFixed(3)} expected=${(wallTop - dip + ridge).toFixed(3)}`);
+      const baseOk = Math.abs(base - HOUSE_SCALE * (wallTop - dip)) <= 0.015;
+      const sunkOk = base < HOUSE_SCALE * wallTop - 0.05;
+      const apexOk = Math.abs(apex - HOUSE_SCALE * (wallTop - dip + ridge)) <= 0.03;
+      ok(`§1 ${label} roof sunk onto walls (base=SCALE·(wallTop−dip))`, baseOk && sunkOk && apexOk,
+        `base=${base.toFixed(3)} expected=${(HOUSE_SCALE * (wallTop - dip)).toFixed(3)} wallTop×s=${(HOUSE_SCALE * wallTop).toFixed(3)} apex=${apex.toFixed(3)} expected=${(HOUSE_SCALE * (wallTop - dip + ridge)).toFixed(3)}`);
     };
     roofSeat(mWorker, 'worker', 2.75, 1.15, 0.32, 2.0);
     roofSeat(mFamily, 'family', 3.0, 1.5, 0.42, 2.5);

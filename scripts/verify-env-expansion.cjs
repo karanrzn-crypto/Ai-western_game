@@ -180,13 +180,14 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
   const stallBlock = await walkUntilStall(-7.2, -4.2, Math.PI / 2);
   ok('§3 butcher counter BLOCKS the player', stallBlock.x > -9.1 && stallBlock.x < -8.3,
     `stalled at x=${stallBlock.x.toFixed(3)} (counter face −8.97 + radius ≈ −8.62)`);
-  // Worker house east (street-side) wall: yaw 90 → world x = −11.5 + 1.7 =
-  // −9.8; the player approaches from the STREET (+x) side, so the stall is
-  // face + radius ≈ −9.45 (same convention the town-exterior harness used:
-  // bound max + radius). Shell house → blocks from every side.
+  // Worker house east (street-side) wall: yaw 90, SCALE 1.3 (model-fix round)
+  // → world x = −11.5 + 1.7·1.3 = −9.29; the player approaches from the
+  // STREET (+x) side, so the stall is face + radius ≈ −8.94 (same convention
+  // the town-exterior harness used: bound max + radius). Shell house →
+  // blocks from every side; CollisionWorld scales the box with the def.
   const workerBlock = await walkUntilStall(-7.8, 19, Math.PI / 2);
-  ok('§4 worker-house wall BLOCKS the player', workerBlock.x > -9.65 && workerBlock.x < -9.2,
-    `stalled at x=${workerBlock.x.toFixed(3)} (wall face −9.8 + radius ≈ −9.45)`);
+  ok('§4 worker-house wall BLOCKS the player', workerBlock.x > -9.15 && workerBlock.x < -8.7,
+    `stalled at x=${workerBlock.x.toFixed(3)} (scaled wall face −9.29 + radius ≈ −8.94)`);
 
   /* ---- screenshots ------------------------------------------------------- */
   // Deterministic framing needs the gameplay rig PARKED: TAB → edit mode

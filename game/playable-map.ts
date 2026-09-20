@@ -275,7 +275,12 @@ const persistence = new PersistenceManager();
 // authored layout, and a v17 save still carries all 7 defs (saves rebuild
 // the registry wholesale) — the key move drops v17 saves so the cream box
 // can never come back and the cleaned town loads for every player.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v18' });
+// v19 moves for the MODEL-FIX round (user request): the four shell houses
+// spawn at SCALE 1.3 and the factory/collider fixes are baked into the
+// builders — a v18 save would keep the old scale-1 defs with stale collider
+// geometry, so the key moves again and every browser rebuilds the town from
+// the NEW authored layout (bigger houses, seated lean-to, clean butcher).
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v19' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -529,6 +534,7 @@ const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   x: number;
   z: number;
   yaw: number;
+  scale?: number;
 }> = [
   // Market-stall frontage on the west commercial row, beside the street and
   // CLEAR of the saloon's doorway corridor (door leaves span x −12.9..−11.1 —
@@ -537,22 +543,32 @@ const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   { uuid: 'c0000000-0000-4000-8000-000000000040', type: 'butcher-stall', name: 'دکه قصابی', x: -9.9, z: -4.2, yaw: 90 },
   // New residential street south of the spawn point, lining the same
   // corridor: worker → family on the west side, wealthy across the street.
-  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: -11.5, z: 19, yaw: 90 },
-  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -12, z: 28, yaw: 90 },
-  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 11.5, z: 26, yaw: -90 },
+  // SCALE 1.3 (user request) on the four shell houses — every part is a
+  // child of the def group, so body/roof/porch/door/props scale as ONE
+  // object and can never separate; CollisionWorld applies the same scale
+  // to the metadata boxes (SCALE CONTRACT), so colliders track the visual
+  // walls exactly and nothing becomes walk-through. Footprint audit after
+  // scaling: worker z 16.4..21.6 ↔ family z 24.75..31.25 (3.15 m gap),
+  // wealthy x 8.38..14.62 / z 22.49..29.51 across the street, abandoned
+  // x −32.2..−27.8 / z −15.6..−10.4 — no def overlaps, the street corridor
+  // (|x| ≤ 9.4) stays walkable, every front still clears the sidewalk.
+  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: -11.5, z: 19, yaw: 90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -12, z: 28, yaw: 90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 11.5, z: 26, yaw: -90, scale: 1.3 },
   // Outskirts: the farmstead works the east edge (shed + fence + trough
   // yard), the abandoned house decays alone on the west edge.
   { uuid: 'c0000000-0000-4000-8000-000000000044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: 26, z: -2, yaw: -90 },
-  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: -30, z: -13, yaw: 90 },
+  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: -30, z: -13, yaw: 90, scale: 1.3 },
 ];
 for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
+  const s = placement.scale ?? 1;
   manager.registerObject({
     uuid: placement.uuid,
     assetType: placement.type,
     transform: {
       position: { x: placement.x, y: 0, z: placement.z },
       rotation: { x: 0, y: placement.yaw, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
+      scale: { x: s, y: s, z: s },
     },
     metadata: {
       name: placement.name,
@@ -1095,14 +1111,14 @@ const headCenter = new THREE.Vector3();
   // materialises it, CollisionWorld picks up metadata colliders, the editor
   // save hook does NOT fire). Despawn mirrors it. Nothing here persists —
   // only editor mutations trigger storage.saveFromManager.
-  spawnTestDef: (def: { uuid: string; assetType: string; position: { x: number; y: number; z: number }; rotationY?: number; name: string; metadata?: Record<string, unknown> }) => {
+  spawnTestDef: (def: { uuid: string; assetType: string; position: { x: number; y: number; z: number }; rotationY?: number; scale?: number; name: string; metadata?: Record<string, unknown> }) => {
     const created = manager.registerObject({
       uuid: def.uuid,
       assetType: def.assetType,
       transform: {
         position: def.position,
         rotation: { x: 0, y: def.rotationY ?? 0, z: 0 },
-        scale: { x: 1, y: 1, z: 1 },
+        scale: { x: def.scale ?? 1, y: def.scale ?? 1, z: def.scale ?? 1 },
       },
       metadata: { name: def.name, editable: true, ...(def.metadata ?? {}) },
     });

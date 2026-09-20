@@ -282,9 +282,10 @@ test('fix round: stable footprint grew to the 2026 size ratio (12.4 × 14.2, eav
   const defs = buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z);
   const fronts = defs.filter((d) => d.assetType === 'stable-stall-front');
   assert.equal(fronts.length, 18, 'stall front segments intact after the growth');
-  // The grown shell stays inside the 60 × 60 map: half-diagonal of the
-  // footprint must clear the boundary walls at ±29.5.
+  // The grown shell stays inside the 100 × 100 map: half-diagonal of the
+  // footprint must clear the boundary walls at ±49.5 (with a 4.5 m margin —
+  // the redesign parks the stable near the SOUTH exit, yard side east).
   const halfDiag = Math.hypot(STABLE_LAYOUT.width / 2, STABLE_LAYOUT.depth / 2);
-  assert.ok(STABLE_SITE.x - halfDiag > -29.5 && STABLE_SITE.z + halfDiag < 29.5,
-    'the grown stable still fits its SW-quadrant lot');
+  assert.ok(STABLE_SITE.x - halfDiag > -45 && STABLE_SITE.z + halfDiag < 45,
+    'the grown stable still fits its exit lot inside the enlarged map');
 });

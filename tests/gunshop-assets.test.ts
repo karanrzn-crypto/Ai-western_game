@@ -283,14 +283,15 @@ test('GUNSHOP LAYOUT: the site keeps clear of every other building + spawn', () 
   const gz0 = GUNSHOP_SITE.z - L.depth / 2;
   // south edge incl. the porch
   const gz1 = GUNSHOP_SITE.z + L.depth / 2 + L.porchDepth;
-  // sheriff: footprint x ∈ [7.8, 18.2], z ∈ [−5.2, 2.2] (+ porch ≈ 4.0)
-  assert.ok(gz0 > 4.2, `gun shop north edge (${gz0}) must clear the sheriff porch (≈4.0)`);
-  // simple building at (14, −12) spans z ∈ [−15, −9] — far north, trivially clear
-  // map boundary x = 29.5, spawn cube (0,0) 3×3, spawn point (0, 12)
+  // REDESIGNED PLAN: gun shop on the main street's east row (14, −17);
+  // sheriff now anchors the square's far side at (12, 14) — 31 m south,
+  // trivially clear. Nearest neighbours are the square's worker house
+  // (14, 1: z ∈ [−1, 3]) and the saloon across the street.
+  assert.ok(gz1 < -1, `gun shop porch (${gz1}) must stay north of the worker house (z −1)`);
   assert.ok(gx1 < 29.0, 'gun shop must stay inside the east boundary');
-  assert.ok(gx0 > 3.0 && gz1 < 29.0, 'gun shop must not sit on the spawn street');
-  const spawnDist = Math.hypot(GUNSHOP_SITE.x - 0, GUNSHOP_SITE.z - 12);
-  assert.ok(Math.abs(gx0) > 2.5, 'porch must not cover the spawn point');
+  assert.ok(gx0 > 3.0 && gz0 > -29.0, 'gun shop must not sit on the spawn street');
+  // The new spawn is the farm lane at (−16, −43) — far NW, trivially clear.
+  const spawnDist = Math.hypot(GUNSHOP_SITE.x - -16, GUNSHOP_SITE.z - -43);
   assert.ok(spawnDist > 10, 'spawn point stays well clear of the shop center');
 });
 

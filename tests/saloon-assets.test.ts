@@ -625,23 +625,25 @@ test('SALOON COLLISION: the doorway is genuinely walkable, the wall beside it is
     assert.ok(Math.abs(hit.position.z - (leafFace + 0.35)) < 1e-3, `player stops at the leaf face + radius (z=${hit.position.z.toFixed(3)})`);
   }
 
-  // OPEN: walk straight in through the door center (x = −12): from the
-  // porch into the interior, NEVER blocked.
-  let pos: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: -5.5 };
+  // OPEN: walk straight in through the door center (x = SITE.x): from the
+  // porch into the interior, NEVER blocked. All z coordinates are
+  // SITE-relative (the redesign moved the site; the old absolutes −5.5/−12
+  // were OLD_SITE(−12)+6.5 and OLD_SITE+0).
+  let pos: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: SALOON_SITE.z + 6.5 };
   for (let step = 0; step < 14; step += 1) {
     const result = openWorld.movePlayer(pos, { x: 0, y: 0, z: -0.5 });
     assert.equal(result.blockedZ, false, `doorway path blocked at step ${step} (z=${pos.z.toFixed(2)})`);
     pos = result.position;
   }
-  assert.ok(pos.z <= -12, `player must stand inside the saloon (got z=${pos.z.toFixed(2)})`);
+  assert.ok(pos.z <= SALOON_SITE.z, `player must stand inside the saloon (got z=${pos.z.toFixed(2)})`);
 
   // The SAME approach one wall-width to the west hits solid wall (the move
   // target lands WELL inside the wall band, not exactly on its boundary).
-  const wallHit = world.movePlayer({ x: SALOON_SITE.x - 3, y: 1.7, z: -5.5 }, { x: 0, y: 0, z: -2.5 });
+  const wallHit = world.movePlayer({ x: SALOON_SITE.x - 3, y: 1.7, z: SALOON_SITE.z + 6.5 }, { x: 0, y: 0, z: -2.5 });
   assert.equal(wallHit.blockedZ, true, 'front wall beside the doorway must block');
 
   // Interior is roomy: from the door to the bar counter must be walkable.
-  let inside: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: -9 };
+  let inside: { x: number; y: number; z: number } = { x: SALOON_SITE.x, y: 1.7, z: SALOON_SITE.z + 3 };
   for (let step = 0; step < 8; step += 1) {
     const result = openWorld.movePlayer(inside, { x: 0, y: 0, z: -0.5 });
     assert.equal(result.blockedZ, false, `interior path blocked at z=${inside.z.toFixed(2)}`);

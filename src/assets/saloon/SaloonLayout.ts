@@ -53,7 +53,7 @@ export const SALOON_LAYOUT = Object.freeze({
 });
 
 /** World-space anchor of the saloon on the playable map. */
-export const SALOON_SITE = Object.freeze({ x: -12, z: -12 });
+export const SALOON_SITE = Object.freeze({ x: -14, z: -17 });
 
 /** Canonical hex UUID block for the saloon (map uses 10000000-…-a000-…). */
 const SALOON_UUID_BASE = '10000000-0000-4000-a000-0000000000';

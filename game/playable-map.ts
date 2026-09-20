@@ -85,6 +85,10 @@ import {
   GUNSHOP_SITE,
   GUNSHOP_DOOR_SPEC,
   setGunShopFrontDoorOpen,
+  registerEnvPropFactories,
+  registerEnvNatureFactories,
+  collectEnvironmentPlacements,
+  ENV_PROP_COLLIDERS,
 } from '../src/index.js';
 import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform, CameraMode } from '../src/index.js';
 import type { PanelAxis, PanelValueGroup } from '../src/index.js';
@@ -96,12 +100,14 @@ const stage = document.getElementById('stage');
 if (!stage) throw new Error('Missing #stage');
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9a8d72);
+// Biome: warm dusty haze over the yellow western soil (reference image).
+scene.background = new THREE.Color(0xd6c49a);
 // Fog rescaled for the enlarged map: the old 90 m end would visibly dissolve
 // the new boundary walls and outskirt buildings from mid-street. 40→110 keeps
 // the dusty-distance read on the prairie edges while the whole playable
-// envelope stays legible.
-scene.fog = new THREE.Fog(0x9a8d72, 40, 110);
+// envelope stays legible. The DayNightCycle re-drives the color every frame;
+// these boot values only cover the first painted frame.
+scene.fog = new THREE.Fog(0xd6c49a, 40, 110);
 
 const camera = new THREE.PerspectiveCamera(
   70,
@@ -195,6 +201,10 @@ input.attach();
 
 const grid = new THREE.GridHelper(100, 100, 0x514b40, 0x6b6252);
 grid.position.y = 0.01;
+// The editor grid fights the new painted dusty ground (visual noise over the
+// biome texture). Edit Mode still has the gizmo + debug axes; the grid stays
+// available for dev rounds by flipping this flag.
+grid.visible = false;
 scene.add(grid);
 
 // Coordinate reference: world origin (0,0,0) + X/Y/Z direction axes.
@@ -216,6 +226,9 @@ registerAllGunShopFactories(assets);
 // Town exteriors (5 house facades + butcher stall + yard props) — placed
 // per-def with TOWN_EXTERIOR_COLLIDERS when the street expands.
 registerTownExteriorFactories(assets);
+// Environment layer: roads, square/street/farm props, signs, vegetation.
+registerEnvPropFactories(assets);
+registerEnvNatureFactories(assets);
 
 const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
 const manager = new SceneStateManager({ renderer: adapter });
@@ -280,7 +293,14 @@ const persistence = new PersistenceManager();
 // builders — a v18 save would keep the old scale-1 defs with stale collider
 // geometry, so the key moves again and every browser rebuilds the town from
 // the NEW authored layout (bigger houses, seated lean-to, clean butcher).
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v19' });
+// v20 moves for the TOWN REDESIGN (reference-image round): the whole plan is
+// re-authored — farm before town, entrance → main street → square → stable
+// → exit, bank/sheriff/stable rotated to face the square/road, butcher +
+// worker flanking the square, roads/well/lamps/fences/vegetation everywhere.
+// Saves rebuild the registry wholesale — a v19 save would boot the OLD street
+// grid on top of the new plan. The key move drops v19 saves so every player
+// boots the new town.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v20' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -320,10 +340,17 @@ function resetAllToAuthored(): number {
 }
 
 const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
-const RESPAWN_POINT = { x: 0, y: CHARACTER_PROPORTIONS.eyeHeight, z: 12 };
+// Spawn: the player boots on the FARM LANE at the north prairie (the new
+// progression starts BEFORE the town: farm → entrance → main street →
+// square → stable → exit). yaw π faces +Z (south) — straight down the lane
+// past the farmstead toward the town entrance.
+const RESPAWN_POINT = { x: -16, y: CHARACTER_PROPORTIONS.eyeHeight, z: -43 };
+const RESPAWN_YAW = Math.PI;
 const playerController = new PlayerController(collisionWorld, {
   camera,
   initialPosition: { ...RESPAWN_POINT },
+  // Boot facing SOUTH down the farm lane (yaw 0 faces −Z north).
+  yaw: RESPAWN_YAW,
   cameraMode: 'third_person',
   stamina,
   crouchSpeed: 2.6,
@@ -451,10 +478,35 @@ addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غرب�
 addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
 
 
+// --- Rigid building yaw -----------------------------------------------------
+// The enterable buildings build axis-aligned facing +Z (south). The redesigned
+// plan needs the bank/sheriff to FACE the central square (north) and the
+// stable to face the arriving player. Rotating a whole building = rotating
+// every def position around the site origin + adding the yaw to every def.
+// Collision stays EXACT at cardinal yaws: CollisionWorld derives yaw-aware
+// AABBs from rotation.y alone, and the composite offset boxes rotate with the
+// signed yaw — a rigid rotation of the whole collision shape.
+function rotateBuildingDefs<T extends { transform: { position: { x: number; z: number; y: number }; rotation: { y: number; x: number; z: number } } }>(
+  defs: readonly T[], originX: number, originZ: number, yawDeg: number,
+): readonly T[] {
+  const yawRad = (yawDeg * Math.PI) / 180;
+  const cos = Math.cos(yawRad);
+  const sin = Math.sin(yawRad);
+  for (const def of defs) {
+    const px = def.transform.position.x - originX;
+    const pz = def.transform.position.z - originZ;
+    // Same convention as CollisionWorld/three.js: x' = x·cos + z·sin, z' = −x·sin + z·cos.
+    def.transform.position.x = originX + px * cos + pz * sin;
+    def.transform.position.z = originZ - px * sin + pz * cos;
+    def.transform.rotation.y += yawDeg;
+  }
+  return defs;
+}
+
 // --- The SALOON (enterable western bar) -------------------------------------
-// A full enterable saloon on the west side of the spawn street: false-front
-// facade + SALOON sign + porch facing south toward the spawn, the doorway
-// gap is the real entrance, and the
+// A full enterable saloon on the WEST side of the main street, just before
+// the central square: false-front facade + SALOON sign + porch facing south
+// down the street, the doorway gap is the real entrance, and the
 // interior carries bar / poker / piano corners as individually managed
 // objects (own UUIDs, own colliders). All placement data comes from the
 // saloon layout module — the SAME list the saloon tests assert against.
@@ -463,70 +515,78 @@ for (const saloonDef of buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z)) {
 }
 
 // --- The BANK (grand western frontier bank) ----------------------------------
-// Classical stone-facade bank terminating the street's north end, facing
-// south toward the spawn: 3-step stone stair → landing → four fluted columns
-// → entablature with gold BANK letters → triangular pediment. The doorway is
-// a real gap (elevated floor continues the landing), and the interior uses
-// the supplied bank interior asset library — teller counter + cage, vault
-// door in the rear wall, safe-deposit wall, floor safe, banker desk/chair,
-// grandfather clock, marble columns, rug, gas lamps, money bags and coins —
-// as individually managed objects. All placement data comes from the bank
-// layout module — the SAME list the bank tests assert against.
-for (const bankDef of buildBankMapObjects(BANK_SITE.x, BANK_SITE.z)) {
+// Classical stone-facade bank anchoring the FAR (south) side of the central
+// square, yaw-rotated 180° so its column facade + steps FACE NORTH across the
+// fountain toward the arriving player: 3-step stone stair → landing → four
+// fluted columns → entablature with gold BANK letters → triangular pediment.
+// The doorway is a real gap (elevated floor continues the landing), and the
+// interior uses the supplied bank interior asset library — teller counter +
+// cage, vault door in the rear wall, safe-deposit wall, floor safe, banker
+// desk/chair, grandfather clock, marble columns, rug, gas lamps, money bags
+// and coins — as individually managed objects. All placement data comes from
+// the bank layout module — the SAME list the bank tests assert against.
+for (const bankDef of rotateBuildingDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, 180)) {
   manager.registerObject(bankDef);
 }
 
 // --- The SHERIFF OFFICE (western law building + two-cell jail) ---------------
-// Side-gable wood-frame office on the street's east side, facing south: porch
-// + SHERIFF sign over the public door, a full office interior (desk facing
-// the door, wanted board + badge behind it, gun rack/cabinet, stove with a
-// real stovepipe, wash stand, coat rack, key rack, ammo crates, kerosene
-// lamp) and a two-cell jail block behind a barred corridor — both cell doors
-// are genuinely openable (E). All placement data comes from the sheriff
-// layout module — the SAME list the sheriff tests assert against.
-for (const sheriffDef of buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z)) {
+// Side-gable wood-frame office on the square's far side, EAST of the road to
+// the stable, yaw-rotated 180° to face north into the square: porch + SHERIFF
+// sign over the public door, a full office interior (desk facing the door,
+// wanted board + badge behind it, gun rack/cabinet, stove with a real
+// stovepipe, wash stand, coat rack, key rack, ammo crates, kerosene lamp)
+// and a two-cell jail block behind a barred corridor — both cell doors are
+// genuinely openable (E). All placement data comes from the sheriff layout
+// module — the SAME list the sheriff tests assert against.
+for (const sheriffDef of rotateBuildingDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, 180)) {
   manager.registerObject(sheriffDef);
 }
 
 // --- The LIVERY STABLE (working western horse stable + tack/feed/farrier) ---
-// Side-gable timber stable on the street's west side, south of the saloon,
-// facing south: a big double-leaf wagon gate + a staff door (both genuinely
-// openable, E), SIX stalls along a central aisle (each with its own hinged
-// stall door, trough, hay, nameplate), a tack room + a feed room in the
-// south corners (real hinged doors), a farrier bay + water station at the
-// north end under a full hay loft (deck, railing, ladder). All placement
-// data comes from the stable layout module — the SAME list the stable tests
-// assert against.
-for (const stableDef of buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z)) {
+// Side-gable timber stable near the town's SOUTH exit, yaw-rotated 180° so
+// the big double-leaf wagon gate faces the arriving player: a staff door
+// (both genuinely openable, E), SIX stalls along a central aisle (each with
+// its own hinged stall door, trough, hay, nameplate), a tack room + a feed
+// room in the corners (real hinged doors), a farrier bay + water station
+// under a full hay loft (deck, railing, ladder). The horse corral east of
+// the road is fenced with INDIVIDUAL fence sections + troughs + hay. All
+// placement data comes from the stable layout module — the SAME list the
+// stable tests assert against.
+for (const stableDef of rotateBuildingDefs(buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z), STABLE_SITE.x, STABLE_SITE.z, 180)) {
   manager.registerObject(stableDef);
 }
 
 // --- The GUN SHOP (enterable western gunsmith store) -------------------------
-// One-story wood-frame shop on the street's east side, south of the sheriff,
-// facing south: false-front facade + hanging GUNSMITH sign + 4 facade windows
-// + porch, one real openable front door (E), and a full interior — sales
-// counter with glass display case / brass register / scale / ammo boxes, a
-// wall rack of long guns, ammo shelving, holster board, and a Gunsmith
-// workshop at the back (workbench, vise, tool rack) with powder keg + ammo
-// crates in the corner. Every firearm is a VISUAL PROP. All placement data
-// comes from the gun shop layout module — the SAME list the gun shop tests
-// assert against.
+// One-story wood-frame shop on the main street's EAST side — the first
+// important building the player meets after the town entrance, before the
+// central square — facing south: false-front facade + hanging GUNSMITH sign
+// + 4 facade windows + porch, one real openable front door (E), and a full
+// interior — sales counter with glass display case / brass register / scale
+// / ammo boxes, a wall rack of long guns, ammo shelving, holster board, and
+// a Gunsmith workshop at the back (workbench, vise, tool rack) with powder
+// keg + ammo crates in the corner. Every firearm is a VISUAL PROP. All
+// placement data comes from the gun shop layout module — the SAME list the
+// gun shop tests assert against.
 for (const gunshopDef of buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z)) {
   manager.registerObject(gunshopDef);
 }
 
-// --- TOWN EXPANSION: butcher stall + five house facades ----------------------
-// The designed-but-unplaced town-exterior assets enter the REAL map here, as
-// individually managed defs so each carries its exact collider payload from
-// TOWN_EXTERIOR_COLLIDERS (the same table the tests assert against — a bare
-// array would silently fall back to a 1 m³ box). The factory builds every
-// facade facing +Z (south), so yaw is the ONLY placement math: yaw 90 turns
-// a west-row front EAST toward the main street, yaw -90 turns an east-row
-// front WEST. Sites were audited against the measured per-building AABBs
-// (saloon z ≤ -7.5 · stable z ≥ -1.5 west, sheriff z ≥ -5.5 · gunshop z ≤
-// 14.1 east, bank north end) — no overlap, market-row gaps 1.2–4.5 m, the
-// ~17 m street corridor continues south into the enlarged map and the
-// farmstead/abandoned house sit alone on the east/west outskirts.
+// --- TOWN SHELL BUILDINGS (butcher stall + five house facades) ---------------
+// Every shell building is an individually managed def carrying its exact
+// collider payload from TOWN_EXTERIOR_COLLIDERS (the same table the tests
+// assert against — a bare array would silently fall back to a 1 m³ box).
+// The factory builds every facade facing +Z (south); yaw is the only
+// placement math: yaw 90 → front faces EAST, yaw −90 → front faces WEST.
+// REDESIGNED PLAN (reference-image round):
+//   • meat shop (butcher) — RIGHT/WEST side of the central square
+//   • worker house — LEFT/EAST side of the central square
+//   • family + wealthy houses — residential pockets on the far (south)
+//     side of the square, behind the bank/sheriff pair
+//   • farmstead — BEFORE the town on the NW farm lane (fenced corral +
+//     crop field around it come from the environment layer)
+//   • ruined house — alone on the NE outskirts, far from the square
+// Footprint audit vs the environment roads/vegetation keep-outs: no def
+// overlaps a road corridor or another building; every front faces its path.
 const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   uuid: string;
   type: keyof typeof TOWN_EXTERIOR_COLLIDERS;
@@ -536,29 +596,12 @@ const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
   yaw: number;
   scale?: number;
 }> = [
-  // Market-stall frontage on the west commercial row, beside the street and
-  // CLEAR of the saloon's doorway corridor (door leaves span x −12.9..−11.1 —
-  // a stall on that lane would wall off the saloon entrance). Front
-  // (counter) faces east across the street: visible straight from spawn.
-  { uuid: 'c0000000-0000-4000-8000-000000000040', type: 'butcher-stall', name: 'دکه قصابی', x: -9.9, z: -4.2, yaw: 90 },
-  // New residential street south of the spawn point, lining the same
-  // corridor: worker → family on the west side, wealthy across the street.
-  // SCALE 1.3 (user request) on the four shell houses — every part is a
-  // child of the def group, so body/roof/porch/door/props scale as ONE
-  // object and can never separate; CollisionWorld applies the same scale
-  // to the metadata boxes (SCALE CONTRACT), so colliders track the visual
-  // walls exactly and nothing becomes walk-through. Footprint audit after
-  // scaling: worker z 16.4..21.6 ↔ family z 24.75..31.25 (3.15 m gap),
-  // wealthy x 8.38..14.62 / z 22.49..29.51 across the street, abandoned
-  // x −32.2..−27.8 / z −15.6..−10.4 — no def overlaps, the street corridor
-  // (|x| ≤ 9.4) stays walkable, every front still clears the sidewalk.
-  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: -11.5, z: 19, yaw: 90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -12, z: 28, yaw: 90, scale: 1.3 },
-  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 11.5, z: 26, yaw: -90, scale: 1.3 },
-  // Outskirts: the farmstead works the east edge (shed + fence + trough
-  // yard), the abandoned house decays alone on the west edge.
-  { uuid: 'c0000000-0000-4000-8000-000000000044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: 26, z: -2, yaw: -90 },
-  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: -30, z: -13, yaw: 90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000040', type: 'butcher-stall', name: 'دکه قصابی', x: -14, z: 1, yaw: 90 },
+  { uuid: 'c0000000-0000-4000-8000-000000000041', type: 'house-worker', name: 'خانه کارگری', x: 14, z: 1, yaw: -90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000042', type: 'house-family', name: 'خانه خانوادگی', x: -23, z: 21, yaw: 90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000043', type: 'house-wealthy', name: 'خانه ثروتمند', x: 23, z: 20, yaw: -90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: -21, z: -39, yaw: 90, scale: 1.3 },
+  { uuid: 'c0000000-0000-4000-8000-000000000045', type: 'house-abandoned', name: 'خانه متروکه', x: 27, z: -37, yaw: -90, scale: 1.3 },
 ];
 for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
   const s = placement.scale ?? 1;
@@ -574,6 +617,42 @@ for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
       name: placement.name,
       editable: true,
       collider: TOWN_EXTERIOR_COLLIDERS[placement.type],
+    },
+  });
+}
+
+// --- TOWN ENVIRONMENT LAYER (roads · square · farm · fences · vegetation) ----
+// The whole redesigned plan's terrain + props register here from the
+// environment layout module — the SAME tables tests/town-plan.test.ts
+// asserts against:
+//   • dirt roads: farm lane → entrance → main street → square → stable
+//     road → exit (irregular edges, staggered lifts, never colliders)
+//   • the square centerpiece (stone well), benches, lamps, hitching posts,
+//     barrels/crates/wagons/troughs/hay placed by function, not spam
+//   • the FARM corral + STABLE corral fences as INDIVIDUAL fence-section
+//     defs (each selectable/movable, gate gaps left open)
+//   • sparse seeded vegetation (trees/bushes/grass/rocks) with keep-outs
+//     around every building, road and yard
+for (const envPlacement of collectEnvironmentPlacements()) {
+  const colliderPayload = ENV_PROP_COLLIDERS[envPlacement.type];
+  manager.registerObject({
+    uuid: envPlacement.uuid,
+    assetType: envPlacement.type,
+    transform: {
+      position: { x: envPlacement.x, y: 0, z: envPlacement.z },
+      rotation: { x: 0, y: envPlacement.yaw ?? 0, z: 0 },
+      scale: { x: envPlacement.scale ?? 1, y: envPlacement.scale ?? 1, z: envPlacement.scale ?? 1 },
+    },
+    metadata: {
+      name: envPlacement.name,
+      editable: !envPlacement.notEditable,
+      collider: envPlacement.noCollider === true ? false : (colliderPayload ?? true),
+      ...(envPlacement.text !== undefined ? { text: envPlacement.text } : {}),
+      ...(envPlacement.lift !== undefined ? { lift: envPlacement.lift } : {}),
+      ...(envPlacement.length !== undefined ? { length: envPlacement.length } : {}),
+      ...(envPlacement.width !== undefined ? { width: envPlacement.width } : {}),
+      ...(envPlacement.seed !== undefined ? { seed: envPlacement.seed } : {}),
+      ...(envPlacement.wobble !== undefined ? { wobble: envPlacement.wobble } : {}),
     },
   });
 }
@@ -921,6 +1000,19 @@ function updateSaloonDoors(delta: number): void {
   }
 }
 
+// --- Farm windmill wheel (visual animation) ---------------------------------
+// The wheel child is named 'windmill-wheel' by the factory. The def transform
+// (registry-owned) never changes — this only spins the wheel child around its
+// local Z axis, the SAME scene-graph animation pattern the swinging doors
+// use. The lookup caches after the first frame (renderer materialises async).
+let windmillWheel: THREE.Object3D | null | undefined;
+function updateWindmillWheel(delta: number): void {
+  if (windmillWheel === undefined) {
+    windmillWheel = scene.getObjectByName('windmill-wheel') ?? null;
+  }
+  if (windmillWheel) windmillWheel.rotation.z -= delta * 0.55;
+}
+
 // Scratch objects for the harness-only rideCam probe (zero per-frame cost —
 // the probe runs only when a verify harness calls it).
 const headBox = new THREE.Box3();
@@ -957,6 +1049,12 @@ const headCenter = new THREE.Vector3();
   setCamera: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
     camera.position.set(x, y, z);
     camera.lookAt(tx, ty, tz);
+  },
+  // Harness-ONLY creative-rig pose: with Creative mode ACTIVE (F) the fly
+  // camera owns the view — this teleports it to a pose aimed at a target
+  // (aerial shots + verify probes). Inert while creative is off.
+  flyTo: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
+    creativeFlight.flyTo(x, y, z, tx, ty, tz);
   },
   boundsNear: (x: number, z: number) => collisionWorld
     .getCollisionBounds()
@@ -2192,8 +2290,9 @@ scene.add(horseModel.root);
 const horseAnimator = new HorseAnimator(horseModel);
 const horsePersistence = new HorsePersistence();
 const horse = new HorseController(collisionWorld, {
-  position: { x: -5, y: 0, z: 9 },
-  yaw: 0.6,
+  // Boots beside the player on the farm lane (same starting view).
+  position: { x: -13.5, y: 0, z: -44.5 },
+  yaw: Math.PI - 0.6,
 });
 const riderSocket = horseModel.riderSocket;
 
@@ -2719,6 +2818,7 @@ function animate(): void {
   updateGunShopFrontDoor(delta); // gun shop front door swing + collider sync
   updateBankFrontDoor(delta); // bank walnut double door swing + collider sync
   updateSaloonDoors(delta); // saloon double door swing + collider sync
+  updateWindmillWheel(delta); // farm windmill blades (visual only, no collider)
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },

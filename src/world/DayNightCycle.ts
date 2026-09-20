@@ -17,12 +17,15 @@ export interface DayNightSnapshot {
 }
 
 interface Keyframe { time: number; sunIntensity: number; hemisphereIntensity: number; skyColor: number; fogColor: number; sunColor: number; }
+// Daytime fog warmed for the dusty-yellow biome (reference-image round): the
+// midday haze now carries the same dry-dust tint as the ground instead of the
+// old bluish sky-mist. Nights/dawn/dusk unchanged.
 const KEYFRAMES: readonly Keyframe[] = [
   { time: 0, sunIntensity: 0.05, hemisphereIntensity: 0.16, skyColor: 0x0f1622, fogColor: 0x121926, sunColor: 0x8aa0c5 },
   { time: 6, sunIntensity: 0.18, hemisphereIntensity: 0.26, skyColor: 0x6d5e5c, fogColor: 0x655754, sunColor: 0xffb676 },
-  { time: 8, sunIntensity: 1.1, hemisphereIntensity: 0.6, skyColor: 0x9db5ca, fogColor: 0x90a7ba, sunColor: 0xffdeaa },
-  { time: 12, sunIntensity: 2.35, hemisphereIntensity: 1.04, skyColor: 0xbdd8f0, fogColor: 0xb4cfe6, sunColor: 0xffffff },
-  { time: 15, sunIntensity: 1.95, hemisphereIntensity: 0.88, skyColor: 0xaed0ea, fogColor: 0xa4c6df, sunColor: 0xfff5df },
+  { time: 8, sunIntensity: 1.1, hemisphereIntensity: 0.6, skyColor: 0xa8b2b4, fogColor: 0xbcae8c, sunColor: 0xffdeaa },
+  { time: 12, sunIntensity: 2.35, hemisphereIntensity: 1.04, skyColor: 0xc2d3da, fogColor: 0xd6c49a, sunColor: 0xfff4e0 },
+  { time: 15, sunIntensity: 1.95, hemisphereIntensity: 0.88, skyColor: 0xbccfda, fogColor: 0xcfb98d, sunColor: 0xfff5df },
   { time: 18, sunIntensity: 0.62, hemisphereIntensity: 0.42, skyColor: 0xe19a70, fogColor: 0xc88361, sunColor: 0xffb070 },
   { time: 20, sunIntensity: 0.08, hemisphereIntensity: 0.2, skyColor: 0x283247, fogColor: 0x242d3f, sunColor: 0x93a7c7 },
   { time: 24, sunIntensity: 0.05, hemisphereIntensity: 0.16, skyColor: 0x0f1622, fogColor: 0x121926, sunColor: 0x8aa0c5 },

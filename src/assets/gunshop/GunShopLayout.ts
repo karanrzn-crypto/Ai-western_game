@@ -73,7 +73,7 @@ export const GUNSHOP_LAYOUT = Object.freeze({
  *  street, south of the sheriff (its porch ends at z ≈ 4.0 → 1 m clear gap),
  *  facing south like every other building. Spawn (0, 12), horse (−5, 9) and
  *  the map boundary (x = 29.5) all stay clear. */
-export const GUNSHOP_SITE = Object.freeze({ x: 14, z: 8.5 });
+export const GUNSHOP_SITE = Object.freeze({ x: 14, z: -17 });
 
 /** Canonical hex UUID block for the gun shop (variant nibble 9 — unused:
  *  stable 8000, saloon a000, bank b000; the sheriff's 9000 sits under a

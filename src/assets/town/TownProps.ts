@@ -131,34 +131,140 @@ export class TownGroundFactory implements IAssetFactory {
   }
 }
 
-/** Road/plaza/dirt-patch strips: flat tinted planes, factory-baked flat so
- *  the def rotation stays zero (visual only, never a collider, y offset via
- *  def position). */
+/** Road/plaza/patch surfaces — THREE representations from ONE factory
+ *  (continuous-routes round, user §10):
+ *  • `route`  — a list of {x, z, w} centerline points → ONE continuous mitered
+ *    ribbon mesh with consistent width (deliberate widenings interpolate
+ *    smoothly between the per-point widths — never a step). This is what makes
+ *    every street read as a single constructed road instead of snapped tiles.
+ *  • `polygon`— a list of {x, z} outline points → one ShapeGeometry slab
+ *    (the plaza's organic edge).
+ *  • legacy `width`/`depth` — now rendered as an ORGANIC BLOB (radial jitter)
+ *    for the worn-ground patches; plain rectangles read as "placed tiles".
+ *  Route points are world-absolute and the def transform stays at the origin
+ *  (the roads are non-editable scenery, so the panel position is irrelevant —
+ *  and the ribbon math never depends on where the def is parked).
+ *  Visual only, never a collider, y offset via the def position. */
 export class TownRoadFactory implements IAssetFactory {
   create(definition: ObjectDefinition): THREE.Object3D {
     const group = new THREE.Group();
-    const w = Number(definition.metadata.width ?? 8);
-    const d = Number(definition.metadata.depth ?? 8);
+    group.name = 'town-road-root';
     const tint = String(definition.metadata.tint ?? 'road');
     const material = tint === 'plaza' ? M.plaza : tint === 'patch' ? M.dirtPatch : M.road;
-    const map = material.map ?? null;
-    const geo = new THREE.PlaneGeometry(w, d);
-    if (map) {
-      // texture density: ~1 tile per 8 m keeps the ruts human-scale. UVs are
-      // scaled per-geometry (NEVER per-texture) — the road material is shared
-      // by every strip, so mutating map.repeat here would fight other strips.
-      const uv = geo.getAttribute('uv');
-      for (let i = 0; i < uv.count; i += 1) {
-        uv.setXY(i, uv.getX(i) * (w / 8), uv.getY(i) * (d / 8));
-      }
+
+    const route = definition.metadata.route as Array<{ x: number; z: number; w: number }> | undefined;
+    if (Array.isArray(route) && route.length >= 2) {
+      group.add(buildRoadRibbon(route));
+      return group;
     }
+
+    const polygon = definition.metadata.polygon as Array<{ x: number; z: number }> | undefined;
+    if (Array.isArray(polygon) && polygon.length >= 3) {
+      // ShapeGeometry lives in XY; rotateX(−π/2) maps shape-y → world −z, so
+      // the outline is built with (x, −z) to land on the authored XZ points.
+      const shape = new THREE.Shape(polygon.map((p) => new THREE.Vector2(p.x, -p.z)));
+      const geo = new THREE.ShapeGeometry(shape);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.receiveShadow = true;
+      mesh.name = 'town-road-surface';
+      group.add(mesh);
+      return group;
+    }
+
+    // legacy width/depth contract → organic blob (patches)
+    const w = Number(definition.metadata.width ?? 8);
+    const d = Number(definition.metadata.depth ?? 8);
+    const geo = blobGeometry(Math.max(w, d) / 2, 14, (Math.abs(w - d) / Math.max(w, d)) * 0.5);
     const mesh = new THREE.Mesh(geo, material);
     mesh.rotation.x = -Math.PI / 2;
+    mesh.scale.set(w / Math.max(w, d), d / Math.max(w, d), 1);
     mesh.receiveShadow = true;
     mesh.name = 'town-road-surface';
     group.add(mesh);
     return group;
   }
+}
+
+/** ONE continuous road ribbon from a centerline: mitered joins (per-point
+ *  averaged perpendiculars), per-point width (smooth interpolated widenings),
+ *  UVs u ∈ [0, 1] EXACTLY across the width (the texture's edge shading and
+ *  wheel ruts always land on the road, at any width) and v = arcLength/8
+ *  along it. Lightweight: one BufferGeometry per route, built once at boot. */
+function buildRoadRibbon(
+  route: Array<{ x: number; z: number; w: number }>,
+): THREE.Mesh {
+  const pts = route.map((p) => ({ x: Number(p.x), z: Number(p.z), w: Math.max(0.6, Number(p.w) || 2) }));
+  const n = pts.length;
+  // mitered offsets
+  const left: Array<{ x: number; z: number }> = [];
+  const right: Array<{ x: number; z: number }> = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(n - 1, i + 1)];
+    let dx = next.x - prev.x;
+    let dz = next.z - prev.z;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len; dz /= len;
+    // perpendicular of the averaged direction
+    const px = -dz; const pz = dx;
+    const hw = pts[i].w / 2;
+    left.push({ x: pts[i].x + px * hw, z: pts[i].z + pz * hw });
+    right.push({ x: pts[i].x - px * hw, z: pts[i].z - pz * hw });
+  }
+  // cumulative arc length for the v UV axis
+  const vAxis: number[] = [0];
+  for (let i = 1; i < n; i++) {
+    vAxis.push(vAxis[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) / 8);
+  }
+  const position = new Float32Array(n * 2 * 3);
+  const uv = new Float32Array(n * 2 * 2);
+  const index: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const l = left[i]; const r = right[i];
+    position.set([l.x, 0, l.z], i * 6);
+    position.set([r.x, 0, r.z], i * 6 + 3);
+    uv.set([0, vAxis[i]], i * 4);
+    uv.set([1, vAxis[i]], i * 4 + 2);
+    if (i < n - 1) {
+      const a = i * 2;
+      index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, M.road);
+  mesh.rotation.x = 0; // vertices are already planar (y = 0) in world XZ
+  mesh.receiveShadow = true;
+  mesh.name = 'town-road-surface';
+  return mesh;
+}
+
+/** Organic blob: a disc with per-vertex radial jitter (seeded, deterministic)
+ *  — worn dirt patches instead of stamped rectangles. */
+function blobGeometry(radius: number, segments: number, squash: number): THREE.BufferGeometry {
+  const r = Math.max(0.4, radius);
+  const position: number[] = [];
+  const index: number[] = [];
+  position.push(0, 0, 0); // center
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    // deterministic pseudo-random jitter per vertex
+    const jitter = 0.78 + 0.44 * Math.abs(Math.sin(i * 12.9898 + r * 3.13) * 43758.5453 % 1);
+    const rr = r * jitter;
+    position.push(Math.cos(a) * rr, 0, Math.sin(a) * rr * (1 - squash * 0.5));
+  }
+  for (let i = 1; i <= segments; i++) {
+    index.push(0, i, (i % segments) + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -481,16 +587,19 @@ export class TownSignFactory implements IAssetFactory {
     const board = addBox(g, M.plankB, w, h, 0.07, 0, 1.55, 0, 'town-sign-board');
     const texture = text ? townSignTexture(text) : null;
     if (texture) {
+      // SIGN-TEXT SEPARATION (user §6): the painted faces sat 1 cm from the
+      // board faces — shimmering at medium/far distances. Both faces now sit
+      // a deliberate 2.5 cm proud of their board faces (board spans ±0.035).
       const face = new THREE.Mesh(
         new THREE.PlaneGeometry(w * 0.96, h * 0.86),
         new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 }),
       );
-      face.position.set(0, 1.55, 0.045);
+      face.position.set(0, 1.55, 0.06);
       face.name = 'town-sign-face';
       g.add(face);
       const back = face.clone();
       back.rotation.y = Math.PI;
-      back.position.z = -0.045;
+      back.position.z = -0.06;
       back.name = 'town-sign-face-back';
       g.add(back);
     }

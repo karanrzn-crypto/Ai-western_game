@@ -114,10 +114,13 @@ const camera = new THREE.PerspectiveCamera(
   70,
   Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1),
   0.05,
-  // Map expansion (60×60 → 100×100): the far plane must clear the new
-  // ±50 m boundary walls from any vantage point (worst case ~141 m corner to
-  // corner) — 150 keeps the whole enlarged map drawable without clipping.
-  150,
+  // Far plane sized to the CURRENT world (the old 150 was set when the map
+  // was 100×100 — stale “±50 m walls / 141 m diagonal” comment and all).
+  // The 2026-09 town ground is 120×120 (±60): its farthest corner from any
+  // vantage point is the full diagonal 120√2 ≈ 169.7 m, so 180 clears the
+  // whole map with margin — and stays tight (fog ends at 105; nothing but
+  // the sky reads beyond it).
+  180,
 );
 
 // Dev verification hook (read-only): headless check scripts read the live
@@ -291,7 +294,11 @@ const persistence = new PersistenceManager();
 // adult benches, structured hitching rails, coplanar-free crates, farm corral
 // enlarged, plus the town-props prop round — a v20 save would keep the old
 // props, so the key moves and every browser rebuilds from the new layout.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v21' });
+// v22 moves for the FIX-ROUND 3 (user 12-issue report): continuous-route road
+// system (old rectangle strips would resurrect from a v21 save), family house
+// moved beside the butcher, the two decorative farm-pen horses removed,
+// porch/column/railing fixes, sign-face separations — every browser rebuilds.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v22' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -1084,6 +1091,14 @@ const headCenter = new THREE.Vector3();
       horsePos: snap.position,
     };
   },
+  // Harness-ONLY horse teleport (boundary round): parks the horse at a spot
+  // through the REAL restore path (the same clamp the save/load uses), so
+  // the verify script can prove a horse placed near the playable boundary
+  // survives its first update WITHOUT snapping back toward the center.
+  placeHorse: (x: number, z: number) => {
+    horse.restore({ position: { x, y: 0, z }, yaw: 0, health: 100, stamina: 100, alive: true });
+    return horse.getPosition();
+  },
   // FP ride-cam probe (the mounted-eye revision): camera world pose + the
   // head landmark projections that prove the horse's head is IN the frustum
   // at the BOTTOM of the view. All read-only real projection math.
@@ -1386,6 +1401,10 @@ function updateEditorHud(): void {
   const mode = document.getElementById('editor-mode');
   const selected = document.getElementById('editor-selection');
   const cameraLabel = document.getElementById('camera-mode');
+  // The map row reads the SHARED world constant — the old hardcoded
+  // "100 × 100" was a stale assumption from the previous, smaller map.
+  const mapRow = document.getElementById('map-size');
+  if (mapRow) mapRow.textContent = `${TOWN_GROUND_SIZE} × ${TOWN_GROUND_SIZE}`;
   if (mode) mode.textContent = modes.isEdit() ? 'EDIT MODE' : 'PLAY MODE';
   if (selected) {
     const selectedUuid = editor.getSelectedUuid();

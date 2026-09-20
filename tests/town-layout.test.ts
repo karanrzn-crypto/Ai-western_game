@@ -463,13 +463,16 @@ test('TOWN VEGETATION: sparse, varied, collider-free, off the roads and houses',
   }
 });
 
-test('TOWN ANIMALS + CARE: horses in the pen and corral, troughs, hay, crops', () => {
+test('TOWN ANIMALS + CARE: horses in the corral, troughs, hay, crops', () => {
   const horses = byType('town-horse');
-  assert.equal(horses.length, 4, 'two horses in the farm pen + two in the corral');
+  // FARM-HORSE REMOVAL (user §11): the two decorative farm-pen horses are
+  // GONE — only the two corral horses by the stable remain (the rideable
+  // companion horse is a controller entity, never a town-horse def).
+  assert.equal(horses.length, 2, 'only the two corral horses remain');
   for (const h of horses) assert.equal(h.metadata.collider, false, 'decor horses are soft');
   const inPen = horses.filter((h) => h.transform.position.x < -5.8 && h.transform.position.z < -38);
   const inCorral = horses.filter((h) => h.transform.position.x < -5 && h.transform.position.z > 28);
-  assert.equal(inPen.length, 2, 'pen horses');
+  assert.equal(inPen.length, 0, 'the farm pen carries NO decorative horses anymore');
   assert.equal(inCorral.length, 2, 'corral horses');
   assert.ok(byType('town-trough').length >= 3, 'water troughs (pen + corral + road)');
   assert.ok(byType('town-hay').length >= 4, 'hay bales');

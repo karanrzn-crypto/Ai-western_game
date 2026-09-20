@@ -900,7 +900,11 @@ export function buildStableMapObjects(originX: number, originZ: number): ObjectD
       { id: STABLE_OBJECT_IDS.lanternGate, name: 'فانوس دروازه', x: -1.45, y: 2.45, z: L.depth / 2, rx: 0, ry: 0, lit: true },
       { id: STABLE_OBJECT_IDS.lanternAisle, name: 'فانوس گذر', x: -1.55, y: L.loft.joistBottomY, z: L.loft.zMax + 0.11, rx: 90, ry: 0, lit: true },
       { id: STABLE_OBJECT_IDS.lanternFarrier, name: 'فانوس نعلبندی', x: -1.35, y: 2.2, z: -L.innerHalfZ, rx: 0, ry: 0, lit: true },
-      { id: STABLE_OBJECT_IDS.lanternTack, name: 'فانوس اتاق یراق', x: -L.rooms.wallX + L.rooms.thickness / 2, y: 2.2, z: 4.45, rx: 0, ry: 90, lit: true },
+      // tack lantern RAISED (z-fight scan): at y 2.2 its backplate sat right
+      // on the RATES sign board's top edge (sign top 2.39) — same wall plane,
+      // real overlap. At 2.62 it clears the board by 13 cm and keeps lighting
+      // the tack-room door.
+      { id: STABLE_OBJECT_IDS.lanternTack, name: 'فانوس اتاق یراق', x: -L.rooms.wallX + L.rooms.thickness / 2, y: 2.62, z: 4.45, rx: 0, ry: 90, lit: true },
       { id: STABLE_OBJECT_IDS.lanternAisleMidW, name: 'فانوس میانی غربی', x: -(L.stallFrontX - 0.12), y: 2.54, z: 0.6, rx: 90, ry: 0, lit: false },
       { id: STABLE_OBJECT_IDS.lanternAisleMidE, name: 'فانوس میانی شرقی', x: L.stallFrontX - 0.12, y: 2.54, z: 0.6, rx: 90, ry: 0, lit: false },
     ];

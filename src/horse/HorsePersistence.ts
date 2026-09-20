@@ -8,6 +8,7 @@
  * than breaking the boot.
  */
 import type { Vec3 } from '../core/types.js';
+import { WORLD_PLAYABLE_HALF } from '../config/GameConfig.js';
 
 export interface HorseSaveData {
   version: number;
@@ -24,7 +25,11 @@ export interface HorsePersistenceOptions {
 }
 
 export const HORSE_SAVE_KEY = 'ai-western-game.playable-map.horse.v1';
-const MAX_COORD = 28.5;
+// SHARED world bounds (src/config/GameConfig.ts) — the same derived playable
+// half the horse's movement clamp uses. The old hardcoded ±28.5 rejected
+// every save from the whole southern half of the current town (the horse
+// silently snapped back to its spawn on load).
+const MAX_COORD = WORLD_PLAYABLE_HALF;
 
 function browserStorage(): { getItem(key: string): string | null; setItem(key: string, value: string): void } | null {
   try {

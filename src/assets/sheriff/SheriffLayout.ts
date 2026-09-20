@@ -273,9 +273,15 @@ export function buildSheriffMapObjects(originX: number, originZ: number): Object
     };
     let cursor = aMin;
     holes.forEach((hole, i) => {
+      // UNIQUE SEGMENT NAMES (user §9): walls with MULTIPLE windows used to
+      // emit identical "زیر پنجره / بالای پنجره" display names (the sheriff's
+      // north wall has two windows → two indistinguishable editor entries).
+      // Each window's below/above segments now carry its index — the panel
+      // can tell the upper and lower sections apart at a glance.
+      const winTag = holes.length > 1 ? ` ${i + 1}` : '';
       seg(cursor, hole.min, 0, L.wallHeight, `بخش ${i + 1}`);
-      seg(hole.min, hole.max, 0, hole.yMin, 'زیر پنجره');
-      seg(hole.min, hole.max, hole.yMax, L.wallHeight, 'بالای پنجره');
+      seg(hole.min, hole.max, 0, hole.yMin, `زیر پنجره${winTag}`);
+      seg(hole.min, hole.max, hole.yMax, L.wallHeight, `بالای پنجره${winTag}`);
       cursor = hole.max;
     });
     seg(cursor, aMax, 0, L.wallHeight, `بخش ${holes.length + 1}`);

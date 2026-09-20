@@ -106,6 +106,29 @@ export function resetConfig(): void {
   currentConfig = clone(DEFAULT_CONFIG);
 }
 
+/* -------------------------------------------------------------------------- */
+/* WORLD BOUNDS — the ONE shared source of truth                              */
+/* -------------------------------------------------------------------------- */
+/* The town ground is a WORLD_GROUND_SIZE² plane and the four invisible
+ * boundary walls stand WORLD_WALL_INSET inside its edges. Every system that
+ * needs the playable extent derives it from HERE — never from a local
+ * hardcoded number (the horse clamp and the horse-save validator both used
+ * to carry a stale ±28.5 from a smaller map, snapping the horse back from
+ * the whole southern half of the town).
+ *
+ *   ground edge        ±(WORLD_HALF_SIZE)                       = ±60
+ *   wall inner face    ±(WORLD_HALF_SIZE − WORLD_WALL_INSET)    = ±59.5
+ *   movement clamp     ±(WORLD_PLAYABLE_HALF)                   = ±58.5
+ *                                                                      */
+export const WORLD_GROUND_SIZE = 120;
+export const WORLD_HALF_SIZE = WORLD_GROUND_SIZE / 2;
+/** The boundary walls' thickness band inside the ground edge (walls are 1 m
+ *  thick, centered 0.5 m inside the edge → inner face at HALF − 0.5). */
+export const WORLD_WALL_INSET = 0.5;
+/** Playable half-extent: the wall inner face minus a full body margin so a
+ *  clamped horse (or player) never visually touches the boundary wall. */
+export const WORLD_PLAYABLE_HALF = WORLD_HALF_SIZE - WORLD_WALL_INSET - 1;
+
 function clone<T>(value: T): T {
   if (typeof structuredClone === 'function') return structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;

@@ -25,7 +25,7 @@ export const TOWN_PALETTE = Object.freeze({
   dustLight: '#c9a96e',
   dustMid: '#b8955c',
   dustDark: '#a07f4c',
-  road: '#b08c58',
+  road: '#a8844e',
   roadEdge: '#9a7a4a',
   plaza: '#bd9a60',
   water: '#5f7d6e',
@@ -139,7 +139,10 @@ export function dustyGroundTexture(): THREE.CanvasTexture | null {
 }
 
 /** Road strip: packed dirt slightly darker than the ground, wheel ruts,
- *  soft edges. */
+ *  soft edges. UV contract (continuous-routes round): ribbon geometry maps
+ *  u ∈ [0, 1] EXACTLY across the road width, so the darker u-edge bands land
+ *  on the road's borders at ANY width — the strip reads as one worn road with
+ *  soft shoulders instead of a hard-cut rectangle. */
 export function roadTexture(): THREE.CanvasTexture | null {
   return cachedTexture('town-road', (ctx, w, h) => {
     ctx.fillStyle = TOWN_PALETTE.road;
@@ -159,6 +162,18 @@ export function roadTexture(): THREE.CanvasTexture | null {
     for (const rut of [0.3, 0.7]) {
       ctx.fillRect(w * rut - 5, 0, 9, h);
     }
+    // soft shoulders: the u borders darken into the ground tone (worn edge)
+    const edge = ctx.createLinearGradient(0, 0, w * 0.09, 0);
+    edge.addColorStop(0, TOWN_PALETTE.roadEdge);
+    edge.addColorStop(1, 'rgba(154,122,74,0)');
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = edge;
+    ctx.fillRect(0, 0, w * 0.09, h);
+    const edge2 = ctx.createLinearGradient(w, 0, w * 0.91, 0);
+    edge2.addColorStop(0, TOWN_PALETTE.roadEdge);
+    edge2.addColorStop(1, 'rgba(154,122,74,0)');
+    ctx.fillStyle = edge2;
+    ctx.fillRect(w * 0.91, 0, w * 0.09, h);
     ctx.globalAlpha = 1;
   }, 256, 256);
 }

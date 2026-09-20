@@ -153,7 +153,7 @@ export {
 export type { MountTimeline, MountStartState, MountJoints, SeatPose, DismountTimeline } from './horse/MountChoreography.js';
 
 // --- Config & migrations & utils ---------------------------------------
-export { getConfig, configure, resetConfig } from './config/GameConfig.js';
+export { getConfig, configure, resetConfig, WORLD_GROUND_SIZE, WORLD_HALF_SIZE, WORLD_WALL_INSET, WORLD_PLAYABLE_HALF } from './config/GameConfig.js';
 export type { GameConfig, RendererConfig, SceneConfig, LoggingConfig, AssetConfig } from './config/GameConfig.js';
 export { getSceneMigrations, MigrationRegistry, _resetSceneMigrationsForTests } from './migrations/SceneMigrations.js';
 export type { MigrationFn } from './migrations/SceneMigrations.js';

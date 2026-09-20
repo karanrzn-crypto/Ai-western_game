@@ -116,11 +116,18 @@ export function buildStableGate(): THREE.Group {
     // = inside face); the aisle face is what visitors see from the yard? The
     // gate's street face (south, +z world) carries the braces — the def has
     // no rotation, local +z = world +z = south (outward). Braces OUT.
+    // CENTER-GAP FIX (z-scan): the rails/diagonal spanned the FULL leaf and
+    // met their mirror leaf at the center seam on the SAME plane — co-facing
+    // coplanar overlap 12.7 cm × 2.3 m when closed. Each brace now stops
+    // 8 cm short of the seam (flush at the hinge jamb), so the two leaves'
+    // hardware never share a plane or overlap again.
     const braceZ = t / 2 + 0.022;
-    addBox(hinge, M_.trim, leafW, 0.16, 0.04, dir * leafW / 2, leafH - 0.28, braceZ, `${name}-brace-top`);
-    addBox(hinge, M_.trim, leafW, 0.16, 0.04, dir * leafW / 2, 0.26, braceZ, `${name}-brace-bottom`);
-    const diag = addBox(hinge, M_.trim, Math.hypot(leafW, leafH - 0.72), 0.14, 0.04, dir * leafW / 2, leafH / 2, braceZ, `${name}-brace-diag`);
-    diag.rotation.z = dir * Math.atan2(leafH - 0.72, leafW) * (side === -1 ? -1 : 1);
+    const braceLen = leafW - 0.08;
+    const braceCx = dir * (braceLen / 2); // stops 8 cm short of the center seam
+    addBox(hinge, M_.trim, braceLen, 0.16, 0.04, braceCx, leafH - 0.28, braceZ, `${name}-brace-top`);
+    addBox(hinge, M_.trim, braceLen, 0.16, 0.04, braceCx, 0.26, braceZ, `${name}-brace-bottom`);
+    const diag = addBox(hinge, M_.trim, Math.hypot(braceLen, leafH - 0.72), 0.14, 0.04, braceCx, leafH / 2, braceZ, `${name}-brace-diag`);
+    diag.rotation.z = dir * Math.atan2(leafH - 0.72, braceLen) * (side === -1 ? -1 : 1);
     // street-face strap hinges (back-to-back on the leaf) + handle
     strapHinge(hinge, M_, 0.5, 0.4, t / 2, `${name}-strap-low`);
     strapHinge(hinge, M_, 0.5, leafH - 0.5, t / 2, `${name}-strap-high`);

@@ -25,6 +25,7 @@ import { HealthSystem } from '../player/Vitals.js';
 import { HorseBrain } from './HorseBrain.js';
 import type { HorseAiState } from './HorseBrain.js';
 import { HorseStamina } from './HorseVitals.js';
+import { WORLD_PLAYABLE_HALF } from '../config/GameConfig.js';
 import {
   HORSE_BRAKE_DECELERATION,
   HORSE_GAITS,
@@ -101,8 +102,14 @@ export interface HorseSnapshot {
 
 const LADDER: HorseGait[] = ['idle', 'walk', 'trot', 'canter', 'gallop'];
 const PLAYER_RADIUS = 0.35;
-const MAX_MAP_X = 28.5;
-const MAX_MAP_Z = 28.5;
+// WORLD BOUNDARY — derived, not hardcoded: the old ±28.5 constants came from
+// a smaller map and snapped the horse back from the whole southern half of
+// the current town. The clamp now reads the SHARED world bounds
+// (src/config/GameConfig.ts — the same constants the boundary walls, the
+// ground plane and the persistence validator use), so it stays correct if
+// the map dimensions ever change again.
+const MAX_MAP_X = WORLD_PLAYABLE_HALF;
+const MAX_MAP_Z = WORLD_PLAYABLE_HALF;
 
 function wrapAngle(angle: number): number {
   return Math.atan2(Math.sin(angle), Math.cos(angle));

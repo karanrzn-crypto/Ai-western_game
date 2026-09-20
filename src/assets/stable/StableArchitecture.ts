@@ -233,16 +233,20 @@ export function buildStableShell(dims: ShellDims): THREE.Group {
       { x: -x, y: 0.7, w: 0.45, h: 0.35 },
     ];
     // SOUTH gable: hay door hole (world y 3.7–4.35 → local 0.3–0.95) + 2 vents.
+    // GABLE Z-FIGHT FIX (z-scan residual): the gable's outer face used to sit
+    // EXACTLY coplanar with the corner boards' inner face (3 co-facing strip
+    // pairs). It is pulled 2 cm INTO the wall band — invisible (the gable is
+    // behind the frieze), and the shared plane is gone.
     const south = buildGable(M_, [
       { x: 0, y: 0.3, w: 1.15, h: 0.65 },
       ...vents(2.0),
     ]);
-    south.position.set(0, h, d / 2 - t);
+    south.position.set(0, h, d / 2 - t - 0.02);
     south.name = 'gable-south';
     g.add(south);
-    // NORTH gable: 2 vents only.
+    // NORTH gable: 2 vents only (same 2 cm inset for symmetry).
     const north = buildGable(M_, vents(1.6));
-    north.position.set(0, h, -d / 2);
+    north.position.set(0, h, -d / 2 - 0.02);
     north.name = 'gable-north';
     g.add(north);
 
@@ -429,7 +433,8 @@ export function buildLiverySign(): THREE.Group {
   const boardY = 4.735; // board center (board 0.63 tall → 4.42…5.05)
   addBox(g, M_.trim, 2.3, 0.63, 0.06, 0, boardY, facadeZ + 0.12, 'livery-sign-board');
   const face = signFace('LIVERY', 2.2, 0.53, { sub: 'S T A B L E' });
-  face.position.set(0, boardY, facadeZ + 0.155);
+  // sign-face 2.5 cm proud of the board front (board face at facadeZ + 0.15)
+  face.position.set(0, boardY, facadeZ + 0.175);
   face.name = 'livery-sign-face';
   g.add(face);
   // iron straps tie the board back to the gable face (z 6.5 → 6.59)
@@ -458,12 +463,13 @@ export function buildHorsesSign(): THREE.Group {
     addBox(g, M_.iron, 0.014, 0.26, 0.014, -0.85 + sx, L.loft.joistBottomY - 0.13, sz, 'horses-sign-chain');
   }
   addBox(g, M_.trim, 0.9, 0.3, 0.03, -0.85, L.loft.joistBottomY - 0.41, sz, 'horses-sign-board');
+  // sign faces 2.5 cm proud of the 3 cm board (was 2 mm — flicker class)
   const face = signFace('HORSES', 0.8, 0.24);
-  face.position.set(-0.85, L.loft.joistBottomY - 0.41, sz + 0.017);
+  face.position.set(-0.85, L.loft.joistBottomY - 0.41, sz + 0.04);
   face.name = 'horses-sign-face-n';
   g.add(face);
   const face2 = signFace('HORSES', 0.8, 0.24);
-  face2.position.set(-0.85, L.loft.joistBottomY - 0.41, sz - 0.017);
+  face2.position.set(-0.85, L.loft.joistBottomY - 0.41, sz - 0.04);
   face2.rotation.y = Math.PI;
   face2.name = 'horses-sign-face-s';
   g.add(face2);

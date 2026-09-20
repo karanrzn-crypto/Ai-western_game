@@ -639,7 +639,11 @@ export function boardSign(
     addBox(g, M_.trim, w + 0.08, h + 0.08, 0.04, 0, h / 2, 0, 'sign-board');
   }
   const face = signFace(text, w, h, opts);
-  face.position.set(0, h / 2, 0.021); // 2 mm proud of the board front
+  // SIGN-TEXT SEPARATION FIX (user §6): the face plane sat 1 mm proud of the
+  // board front — flickering text at medium/far viewing distances. Every
+  // painted sign face now sits a deliberate 2.5 cm proud of its board
+  // (reads as a mounted plaque, stable at 60 m+ depth precision).
+  face.position.set(0, h / 2, 0.045);
   face.name = `${g.name}-face`;
   g.add(face);
   return g;

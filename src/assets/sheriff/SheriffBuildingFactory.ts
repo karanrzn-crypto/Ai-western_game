@@ -326,6 +326,17 @@ export function buildSheriffShell(dims: ShellDims): THREE.Group {
     const roofLen = pz1 - pz0 + 0.24;
     const shed = addBox(g, M.shingle, pw + 0.5, 0.09, roofLen, pc, (L.porch.roofFrontY + L.porch.roofBackY) / 2 + 0.045, pcz + 0.12, 'porch-roof');
     shed.rotation.x = Math.atan2(L.porch.roofBackY - L.porch.roofFrontY, roofLen);
+    // PORCH SUPPORT FIX (user §3): the deck slab (y 0.06…0.15) used to hang
+    // over a 6 cm void with nothing under its outer edge — visibly
+    // unsupported. Four low stone piers (inset from the deck edges, seated
+    // 5 mm INTO the deck underside) now carry it, western-foundation style.
+    // Visual only — they sit UNDER the deck's own collider box, so player
+    // movement and collision are untouched.
+    for (const px of [px0 + 0.55, px1 - 0.55]) {
+      for (const pz of [pz0 + 0.5, pz1 - 0.35]) {
+        addBox(g, M.stone, 0.3, 0.065, 0.3, px, 0.0325, pz, 'porch-pier');
+      }
+    }
     // Fascia along the porch roof's street edge + two scroll brackets.
     addBox(g, M.trim, pw + 0.5, 0.22, 0.06, pc, L.porch.roofFrontY - 0.07, pz1 + 0.24 + 0.0, 'porch-fascia');
     for (const bx of [px0 + 0.35, px1 - 0.35]) {
@@ -372,7 +383,7 @@ export function buildSheriffShell(dims: ShellDims): THREE.Group {
       map: signBoardTexture('SHERIFF') ?? undefined,
       roughness: 0.8,
     }));
-    board.position.set(pc, 3.98, facadeZ + 0.045);
+    board.position.set(pc, 3.98, facadeZ + 0.07);
     board.name = 'sign-face';
     sign.add(board);
     // Star rosettes at the two ends of the board.
@@ -381,7 +392,7 @@ export function buildSheriffShell(dims: ShellDims): THREE.Group {
         new THREE.CircleGeometry(0.14, 10),
         new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.4, metalness: 0.6 }),
       );
-      star.position.set(pc + sx * 2.06, 3.98, facadeZ + 0.055);
+      star.position.set(pc + sx * 2.06, 3.98, facadeZ + 0.08);
       star.name = 'sign-star';
       sign.add(star);
     }

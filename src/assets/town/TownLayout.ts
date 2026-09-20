@@ -34,6 +34,7 @@
  */
 
 import type { ObjectDefinition, Vec3 } from '../../core/types.js';
+import { WORLD_GROUND_SIZE, WORLD_HALF_SIZE } from '../../config/GameConfig.js';
 import { SALOON_SITE } from '../saloon/SaloonLayout.js';
 import { BANK_SITE } from '../bank/BankLayout.js';
 import { SHERIFF_SITE } from '../sheriff/SheriffLayout.js';
@@ -41,9 +42,11 @@ import { STABLE_SITE } from '../stable/StableLayout.js';
 import { GUNSHOP_SITE } from '../gunshop/GunShopLayout.js';
 import { emitFountain } from './TownBuildings.js';
 
-/** Map half-size (ground is 120×120). */
-export const TOWN_GROUND_SIZE = 120;
-export const TOWN_HALF = TOWN_GROUND_SIZE / 2;
+/** Map half-size (ground is 120×120). DERIVED from the shared world bounds
+ *  (src/config/GameConfig.ts) — the horse clamp and the persistence validator
+ *  read the SAME constants, so nothing can drift apart again. */
+export const TOWN_GROUND_SIZE = WORLD_GROUND_SIZE;
+export const TOWN_HALF = WORLD_HALF_SIZE;
 
 /** World yaw per existing building (degrees — exact multiples of 90). */
 export const TOWN_SITES = Object.freeze({
@@ -70,7 +73,13 @@ export const TOWN_SITES = Object.freeze({
 export const TOWN_EXTERIOR_SITES = Object.freeze([
   Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030040', type: 'butcher-stall', name: 'دکه قصابی', x: -12, z: -1.5, yaw: 90, scale: 1 }),
   Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030041', type: 'house-worker', name: 'خانه کارگری', x: 12, z: -2.5, yaw: -90, scale: 1.3 }),
-  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030042', type: 'house-family', name: 'خانه خانوادگی', x: -20.5, z: 13, yaw: 180, scale: 1.3 }),
+  // FAMILY HOUSE MOVE (user §12): the house now stands on the square's WEST
+  // rim directly beside the butcher stall (same yaw 90 — both fronts face
+  // EAST onto the plaza together, a market-row read). The site sits NORTH of
+  // the stall: the bank's front stairway reaches world z ≈ 6.8, so the south
+  // side had no 1 m-clean slot for the 1.3-scale body. Gaps: ≥1.2 m to the
+  // stall colliders, ≥2.6 m to the saloon, the bank approach untouched.
+  Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030042', type: 'house-family', name: 'خانه خانوادگی', x: -12, z: -6.8, yaw: 90, scale: 1.3 }),
   Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030043', type: 'house-wealthy', name: 'خانه پولداری', x: 21, z: 13.5, yaw: 180, scale: 1.3 }),
   Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030044', type: 'house-farmstead', name: 'خانه مزرعه‌ای', x: -12, z: -49.5, yaw: 90, scale: 1 }),
   Object.freeze({ uuid: 'c0000000-0000-4000-8000-000000030045', type: 'house-abandoned', name: 'خانه متروکه', x: 31, z: -50, yaw: 0, scale: 1.3 }),
@@ -251,36 +260,76 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   /* -- ground + roads (visual, y-offsets ≥ 5 mm apart — no z-fighting) ----- */
   emit('town-ground', 'زمین شهر', { x: 0, y: 0, z: 0 }, { collider: false, editable: false, size: TOWN_GROUND_SIZE });
 
-  const road = (name: string, x: number, z: number, w: number, d: number, y: number, tint: 'road' | 'plaza' | 'patch' = 'road'): void => {
-    emit('town-road', name, { x, y, z }, { collider: false, editable: false, width: w, depth: d, tint });
+  // ROAD SYSTEM (continuous-routes round — user §5 + §10): every road ROUTE
+  // is ONE continuous ribbon mesh generated from a shared centerline by
+  // TownRoadFactory (per-point width for the deliberate entrance widening,
+  // mitered joins, zero seams). The old hand-placed rectangle pile (22 strips
+  // in 6 different widths, double-layered "wheel-rut" overlays, visible butt
+  // joints) is gone. The plaza is ONE irregular polygon; the worn patches are
+  // organic blobs. Junctions are seamless: the street routes tuck 0.3 m UNDER
+  // the plaza slab, which sits 25 mm higher — no gap, no step, no width jump.
+  // WORLD BOUNDARY (user §5): both street ends stop exactly at the boundary
+  // walls' inner face (±59.5) — the farm road used to overhang the world
+  // edge by 1 m (its north end ran to z = −61 on a ±60 ground).
+  const roadRoute = (name: string, pts: Array<[number, number, number]>, y: number): void => {
+    emit('town-road', name, { x: 0, y, z: 0 }, {
+      collider: false,
+      editable: false,
+      route: pts.map(([x, z, w]) => ({ x, z, w })),
+    });
   };
-  // farm road (two overlapped strips — natural, un-straight edges)
-  road('جاده مزرعه — بخش شمالی', -1.7, -47.5, 7, 27, 0.02);
-  road('جاده مزرعه — بخش جنوبی', -1.1, -44.5, 6, 21, 0.045);
-  // entrance widening
-  road('ورودی شهر', 0, -35.2, 9.5, 6, 0.03);
-  // main street
-  road('خیابان اصلی', 0, -23.5, 8, 21, 0.025);
-  road('خیابان اصلی — رد چرخ', -0.4, -23, 6.6, 19, 0.05);
-  // central plaza (two overlapped slabs — organic edge)
-  road('میدان مرکزی', 0, -2, 30, 22, 0.03, 'plaza');
-  road('میدان مرکزی — مرکز', 0, -1, 24, 17.5, 0.055, 'plaza');
-  // stable road + exit (the road passes THROUGH the bank/sheriff gap:
-  // bank east edge −2, sheriff west edge 3.3 → the strip is 5.2 wide there)
-  road('جاده اسطبل', 0.6, 21.5, 5.2, 25, 0.025);
-  road('جاده اسطبل — رد چرخ', 0.6, 22, 4.0, 24, 0.05);
-  road('جاده خروجی', 0, 46.5, 6, 27, 0.02);
-  // short spurs to the far-side houses' doors
-  road('مسیر خانه خانوادگی', -19.8, 9.6, 4.2, 3.6, 0.035);
-  road('مسیر خانه پولداری', 21.6, 9.6, 4.2, 3.6, 0.035);
-  // dirt patches (worn ground variety)
-  road('لکه خاک ۱', -8, -18, 4.5, 3, 0.015, 'patch');
-  road('لکه خاک ۲', 7, -12, 3.6, 2.6, 0.015, 'patch');
-  road('لکه خاک ۳', -15, -30, 3.8, 2.8, 0.015, 'patch');
-  road('لکه خاک ۴', 14, 4.5, 3.2, 2.4, 0.015, 'patch');
-  road('لکه خاک ۵', -6, 16, 4, 3, 0.015, 'patch');
-  road('لکه خاک ۶', 10, 27, 3.4, 2.6, 0.015, 'patch');
-  road('لکه خاک ۷', -13, 35, 3.8, 2.8, 0.015, 'patch');
+  const roadPatch = (name: string, x: number, z: number, w: number, d: number, y: number): void => {
+    emit('town-road', name, { x, y, z }, { collider: false, editable: false, width: w, depth: d, tint: 'patch' });
+  };
+  // farm road → entrance widening → main street: ONE route, north end at the
+  // boundary wall's inner face (−59.5)
+  roadRoute('جاده مزرعه و خیابان اصلی', [
+    [-1.5, -59.5, 6.5],
+    [-1.3, -50, 6.5],
+    [-1.0, -42, 7.0],
+    [-0.6, -36.5, 8.0], // the town-entrance widening (gradual trumpet)
+    [0, -27, 8.0],
+    [0, -12.7, 8.0], // tucked under the plaza slab
+  ], 0.02);
+  // central plaza: ONE irregular polygon (organic edge, no slab overlap)
+  emit('town-road', 'میدان مرکزی', { x: 0, y: 0.045, z: 0 }, {
+    collider: false,
+    editable: false,
+    tint: 'plaza',
+    polygon: [
+      { x: -14.6, z: -8.5 }, { x: -11.8, z: -11.9 }, { x: -6.5, z: -12.9 },
+      { x: -0.5, z: -13.0 }, { x: 6.2, z: -12.7 }, { x: 11.6, z: -11.4 },
+      { x: 14.5, z: -7.8 }, { x: 15.1, z: -2.4 }, { x: 14.3, z: 3.2 },
+      { x: 11.2, z: 7.6 }, { x: 6.4, z: 9.2 }, { x: 0.2, z: 9.3 },
+      { x: -6.3, z: 8.9 }, { x: -11.6, z: 7.2 }, { x: -14.4, z: 3.0 },
+      { x: -15.0, z: -2.6 },
+    ],
+  });
+  // stable road → town exit: ONE route through the bank/sheriff gap, south
+  // end at the boundary wall's inner face (+59.5)
+  roadRoute('جاده اسطبل و خروجی', [
+    [0, 9.3, 5.5], // tucked under the plaza slab
+    [0.55, 18, 5.5],
+    [0.6, 30, 5.5],
+    [0.45, 42, 5.5],
+    [0, 52, 5.5],
+    [0, 59.5, 5.5],
+  ], 0.02);
+  // short spur to the wealthy house's door (the family house now fronts the
+  // square directly beside the butcher — its old spur is gone with the move)
+  roadRoute('مسیر خانه پولداری', [
+    [13.2, 5.2, 3.2],
+    [16.8, 7.8, 3.2],
+    [21.6, 9.6, 3.2],
+  ], 0.02);
+  // dirt patches (worn-ground variety — organic blobs, not rectangles)
+  roadPatch('لکه خاک ۱', -8, -18, 4.5, 3, 0.015);
+  roadPatch('لکه خاک ۲', 7, -12, 3.6, 2.6, 0.015);
+  roadPatch('لکه خاک ۳', -15, -30, 3.8, 2.8, 0.015);
+  roadPatch('لکه خاک ۴', 14, 4.5, 3.2, 2.4, 0.015);
+  roadPatch('لکه خاک ۵', -6, 16, 4, 3, 0.015);
+  roadPatch('لکه خاک ۶', 10, 27, 3.4, 2.6, 0.015);
+  roadPatch('لکه خاک ۷', -13, 35, 3.8, 2.8, 0.015);
 
   /* -- FARM AREA (north, before town — spec §3) ---------------------------- */
   // yard fence: rectangle X [−21, −5.8] × Z [−57, −38.5], gates east + south
@@ -296,12 +345,12 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   fenceRun({ name: 'حصار آغل — غرب', from: [-14.5, -46], to: [-14.5, -39.5], gaps: [[-42.6, -41.2]], style: 'farm' });
   fenceRun({ name: 'حصار آغل — شرق', from: [-6.8, -46], to: [-6.8, -39.5], style: 'farm' });
   // pen furniture re-arranged (visual-defect round): the trough moved to the
-  // north fence line — the old spot put a static horse STANDING IN the water;
-  // trough, hay and both horses now keep clear separation.
+  // north fence line. FARM-HORSE REMOVAL (user §11): the two decorative
+  // static horses that stood in the farm pen are GONE from the environment
+  // (meshes + defs — no orphan nodes; the two corral horses by the stable and
+  // the rideable companion horse are untouched).
   trough(-11.8, -45, 'آبخوری آغل', 1.8);
   hay(-12.5, -40.4, 'علوفه آغل', 1.05, 0.8);
-  horse(-9.5, -41.6, 24, 'اسب آغل ۱');
-  horse(-7.8, -42.3, -38, 'اسب آغل ۲', 'hide');
   // crop field east of the road
   emit('town-crops', 'کشتزار', { x: 7.75, y: 0, z: -51.5 }, { collider: false, rows: 7, rowGap: 1.4, length: 10 });
   // pond south of the yard
@@ -356,12 +405,15 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   bench(-0.6, 1.7, 0, 'نیمکت میدان ۴', 0.9);
   lamp(-13.8, -10.6, 'چراغ میدان ۱');
   lamp(13.9, -10.2, 'چراغ میدان ۲');
-  lamp(-13.2, 6.8, 'چراغ میدان ۳');
+  // FIELD-LAMP RELOCATION: this lamp used to stand at (−13.2, 6.8) — inside
+  // the bank's front-stair zone on the square's west rim. It now lights the
+  // rim from the clear ground south of the family house's new site.
+  lamp(-13.5, 2.2, 'چراغ میدان ۳');
   lamp(13.6, 6.2, 'چراغ میدان ۴');
   hitching(-2.4, -9.6, 0, 'پایه مهار میدان شمال');
   hitching(-7.9, 2.4, 0, 'پایه مهار قصابی');
   hitching(6.9, -7.8, 0, 'پایه مهار میدان شرقی');
-  barrel(-8.1, -3.9, 'بشکه قصابی ۱');
+  barrel(-7.0, -4.5, 'بشکه قصابی ۱');
   barrel(-8.7, -3.0, 'بشکه قصابی ۲', 0.94);
   barrel(-7.55, -3.25, 'بشکه قصابی ۳', 0.88);
   crate(8.9, -4.7, 'جعبه خانه کارگری', 0.8);
@@ -378,7 +430,9 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   tree(28.3, 8.0, 4, 1.05, 'درخت باغ پولداری');
   bush(14.1, 6.2, 6, 'بوته باغ پولداری ۱', 1.1);
   bush(15.6, 18.2, 2, 'بوته باغ پولداری ۲');
-  bush(-28.2, 8.8, 3, 'بوته باغ خانوادگی', 0.95);
+  // the family house's garden bush followed the house to its new site beside
+  // the butcher (the old spot is empty ground now)
+  bush(-16.2, -3.4, 3, 'بوته باغ خانوادگی', 0.95);
 
   /* -- ROAD TO STABLE + CORRAL + EXIT (spec §11/§12) ------------------------ */
   lamp(4.3, 17.8, 'چراغ جاده اسطبل ۱');

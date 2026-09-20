@@ -664,10 +664,16 @@ function buildPorch(opts: { width: number; depth: number; postHeight: number; ro
 
   if (railed) {
     box(g, MAT.trimDark(), width - 0.24, 0.05, 0.05, 0, deckH + 0.95, depth - 0.1);
+    // RAILING-POST SEAT FIX (user §2): the balusters used to start at
+    // deckH + 0.07 — a visible 7 cm float above the deck. Their length now
+    // spans EXACTLY deck-top → rail-underside (rail spans deckH + 0.925 …
+    // deckH + 0.975), so every post stands ON the boards: no gap, no clip.
+    const railBottom = deckH + 0.95 - 0.025;
+    const balusterLen = railBottom - deckH;
     const balusterCount = Math.round(width / 0.22);
     for (let i = 0; i < balusterCount; i++) {
       const x = -width / 2 + 0.18 + (i * (width - 0.36)) / (balusterCount - 1);
-      const baluster = mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.86, 6), MAT.trimDark(), x, deckH + 0.5, depth - 0.1);
+      const baluster = mesh(new THREE.CylinderGeometry(0.011, 0.011, balusterLen, 6), MAT.trimDark(), x, deckH + balusterLen / 2, depth - 0.1);
       g.add(baluster);
     }
   }
@@ -1241,13 +1247,27 @@ export function buildWealthyTownhouse(): THREE.Group {
     box(g, MAT.trimWhite(), 0.07, 0.07, 0.07, x, wallHeight - 0.03, depth / 2 + 0.045);
   }
 
-  // ground-floor columned porch
-  [-1.85, -0.62, 0.62, 1.85].forEach((x) => {
-    const column = mesh(new THREE.CylinderGeometry(0.1, 0.11, floorHeight - 0.55, 14), MAT.trimWhite(), x, 0.55 + (floorHeight - 0.55) / 2, depth / 2 + 0.55);
-    g.add(column);
-    const capital = mesh(new THREE.CylinderGeometry(0.14, 0.1, 0.09, 14), MAT.trimWhite(), x, floorHeight - 0.55, depth / 2 + 0.55);
-    g.add(capital);
-  });
+  // ground-floor columned porch — COLUMN GEOMETRY FIX (user §1): the four
+  // columns used to start at y = 0.55 (floating 0.41 m ABOVE the porch deck,
+  // whose top is y = 0.14) with the capitals stranded at y ≈ 1.65, half a
+  // meter BELOW the shaft tops. Now every column shaft springs EXACTLY from
+  // the deck surface (0.14) and runs to the porch-roof beam; each capital
+  // caps the shaft's real top and lands flush under the beam's underside
+  // (2.155). All four keep the same height and the symmetric x positions,
+  // and the 1.3 def scale is untouched.
+  {
+    const deckTop = 0.14;                     // porch-floor box top (0.07 ± 0.07)
+    const beamY = floorHeight;                // porch-roof-deck center (2.2)
+    const beamUnderside = beamY - 0.045;      // deck slab is 0.09 thick
+    const capitalH = 0.09;
+    const shaftLen = beamUnderside - capitalH - deckTop; // 1.925
+    [-1.85, -0.62, 0.62, 1.85].forEach((x) => {
+      const column = mesh(new THREE.CylinderGeometry(0.1, 0.11, shaftLen, 14), MAT.trimWhite(), x, deckTop + shaftLen / 2, depth / 2 + 0.55);
+      g.add(column);
+      const capital = mesh(new THREE.CylinderGeometry(0.14, 0.1, capitalH, 14), MAT.trimWhite(), x, beamUnderside - capitalH / 2, depth / 2 + 0.55);
+      g.add(capital);
+    });
+  }
   box(g, MAT.trimWhite(), 4.2, 0.09, 1.2, 0, floorHeight, depth / 2 + 0.55, 'porch-roof-deck');
   box(g, woodMat(wear), 4.2, 0.14, 1.2, 0, 0.07, depth / 2 + 0.55, 'porch-floor');
 
@@ -1309,8 +1329,12 @@ export function buildWealthyTownhouse(): THREE.Group {
     g.add(winSideUp);
   });
 
-  const steps = buildSteps(1.6, 2, wear * 0.6);
-  steps.position.set(0, 0, depth / 2 + 1.35);
+  // PORCH STEPS FIX (user §1 — porch reads as one structure): the old
+  // two-step stack rose to 0.36 — 0.22 ABOVE the 0.14 deck (climb up, then
+  // step DOWN onto the porch). ONE 0.18 tread now emerges from the deck edge
+  // — a natural threshold step up onto the boards.
+  const steps = buildSteps(1.6, 1, wear * 0.6);
+  steps.position.set(0, 0, depth / 2 + 0.95);
   g.add(steps);
 
   return g;

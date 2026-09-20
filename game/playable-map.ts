@@ -270,7 +270,12 @@ const persistence = new PersistenceManager();
 // registry wholesale — a v16 save would boot the OLD map with the test cube
 // back and without the new street. The key move drops v16 saves so every
 // player picks the new town up.
-const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v17' });
+// v18 moves for the 'ساختمان' deletion (user request): the plain cream
+// cube-built structure (7 defs, uuid block …030–…036) is gone from the
+// authored layout, and a v17 save still carries all 7 defs (saves rebuild
+// the registry wholesale) — the key move drops v17 saves so the cream box
+// can never come back and the cleaned town loads for every player.
+const storage = new LocalSceneStorage(persistence, { key: 'ai-western-game.playable-map.scene.v18' });
 
 // --- Authored-layout snapshot (the editor's "put it back" source) -----------
 // Captured in loadSavedScene() AFTER every building module registered its
@@ -441,52 +446,10 @@ addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غرب�
 addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(49.5, 1.5, 0), new THREE.Vector3(1, 3, 100));
 
 
-// --- The enterable BUILDING -------------------------------------------------
-// One simple walk-in structure, built entirely from managed cubes (the same
-// primitive every other map object uses): four walls, a roof and a real
-// DOORWAY — a 1.6m gap in the south wall with a header above it — so the
-// player walks through the opening into an EMPTY enterable interior. No
-// decor, no furniture, no props: exactly walls + roof + door + interior.
-// Footprint 8×6m at (14, −12); walls 3m tall, 0.35m thick; roof slab above.
-const BUILDING = { x: 14, z: -12, w: 8, d: 6, h: 3, t: 0.35, doorW: 1.6, doorH: 2.3 };
-function addBuildingPart(
-  uuid: string,
-  name: string,
-  x: number, y: number, z: number,
-  sx: number, sy: number, sz: number,
-): void {
-  manager.registerObject({
-    uuid,
-    assetType: 'cube',
-    transform: {
-      position: { x, y, z },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: sx, y: sy, z: sz },
-    },
-    metadata: { name, editable: true, collider: true },
-  });
-}
-// North wall (back, away from the spawn) + west/east side walls.
-addBuildingPart('10000000-0000-4000-a000-000000000030', 'ساختمان - دیوار شمالی', BUILDING.x, BUILDING.h / 2, BUILDING.z - BUILDING.d / 2, BUILDING.w, BUILDING.h, BUILDING.t);
-addBuildingPart('10000000-0000-4000-a000-000000000031', 'ساختمان - دیوار غربی', BUILDING.x - BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
-addBuildingPart('10000000-0000-4000-a000-000000000032', 'ساختمان - دیوار شرقی', BUILDING.x + BUILDING.w / 2, BUILDING.h / 2, BUILDING.z, BUILDING.t, BUILDING.h, BUILDING.d);
-// South wall (facing the spawn) split around the doorway: two side segments
-// + the header above the door. The gap IS the entrance — nothing blocks it.
-{
-  const segW = (BUILDING.w - BUILDING.doorW) / 2;
-  const segCenter = BUILDING.w / 2 - segW / 2;
-  addBuildingPart('10000000-0000-4000-a000-000000000033', 'ساختمان - دیوار جنوبی (راست در)', BUILDING.x - segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
-  addBuildingPart('10000000-0000-4000-a000-000000000034', 'ساختمان - دیوار جنوبی (چپ در)', BUILDING.x + segCenter, BUILDING.h / 2, BUILDING.z + BUILDING.d / 2, segW, BUILDING.h, BUILDING.t);
-  addBuildingPart('10000000-0000-4000-a000-000000000035', 'ساختمان - بالای در', BUILDING.x, BUILDING.h - (BUILDING.h - BUILDING.doorH) / 2, BUILDING.z + BUILDING.d / 2, BUILDING.doorW, BUILDING.h - BUILDING.doorH, BUILDING.t);
-}
-// Roof — one slab with a slight overhang; its collider also stops re-entry
-// from above.
-addBuildingPart('10000000-0000-4000-a000-000000000036', 'ساختمان - سقف', BUILDING.x, BUILDING.h + 0.15, BUILDING.z, BUILDING.w + 0.7, 0.3, BUILDING.d + 0.7);
-
 // --- The SALOON (enterable western bar) -------------------------------------
-// A full enterable saloon on the west side of the spawn street, mirroring the
-// simple BUILDING across it: false-front facade + SALOON sign + porch face
-// south toward the spawn, the doorway gap is the real entrance, and the
+// A full enterable saloon on the west side of the spawn street: false-front
+// facade + SALOON sign + porch facing south toward the spawn, the doorway
+// gap is the real entrance, and the
 // interior carries bar / poker / piano corners as individually managed
 // objects (own UUIDs, own colliders). All placement data comes from the
 // saloon layout module — the SAME list the saloon tests assert against.

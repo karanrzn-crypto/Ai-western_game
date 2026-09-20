@@ -255,24 +255,71 @@ test('TOWN EXTERIOR: headless builds paint ZERO canvases and stay deterministic'
 
 /* ---------- 5. ROOFS ------------------------------------------------------ */
 
-test('TOWN EXTERIOR: gable eave lands on the wall top; infill buried, not coplanar', () => {
-  const house = buildWorkerHouse();
-  const body = house.getObjectByName('house-body') as THREE.Mesh;
-  assert.ok(body, 'worker body box present');
-  const wallTop = body.position.y + (body.geometry as THREE.BoxGeometry).parameters.height / 2;
-  const roof = house.getObjectByName('gable-roof')!;
-  assert.ok(roof, 'gable roof present');
-  // the ridge cap sits at wallHeight + ridgeRise
-  const cap = roof.getObjectByName('ridge-cap') as THREE.Mesh;
-  assert.ok(Math.abs(cap.position.y - (wallTop + 1.15)) < 1e-6, 'ridge cap at wallHeight + ridgeRise');
-  // the infill base is BURIED below the wall top (overlap, never coplanar)
-  let infillMinY = Infinity;
-  roof.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh && m.geometry.type === 'ExtrudeGeometry') infillMinY = Math.min(infillMinY, m.position.y);
-  });
-  assert.ok(infillMinY < wallTop - 0.008, `infill base buried ${(wallTop - infillMinY).toFixed(3)}m below the wall top`);
-  assert.ok(infillMinY > wallTop - 0.03, 'infill is buried, not sunk (≤3 cm)');
+test('TOWN EXTERIOR: gable roof SITS on the walls — underside crosses the wall top inside the footprint (no daylight)', () => {
+  // The user-reported defect: a visible empty gap between the pitched roofs
+  // and the walls. Contract (root fix, not a patch): the panels are sunk so
+  // their UNDERSIDE passes BELOW the wall-top plane INSIDE the wall face —
+  // a geometric intersection that cannot reopen under scale/rotation (the
+  // def scales/rotates body+roof together; the roof group has no transform).
+  const cases: Array<[string, () => THREE.Group, number]> = [
+    ['worker', buildWorkerHouse, 1.15],
+    ['family', buildFamilyHouse, 1.5],
+    ['wealthy', buildWealthyTownhouse, 1.75],
+    ['farmstead', buildFarmhouse, 2.0],
+    ['abandoned', buildAbandonedHouse, 1.15],
+  ];
+  for (const [label, build] of cases) {
+    const house = build();
+    const body = (house.getObjectByName('house-body') ?? house.getObjectByName('wood-upper')) as THREE.Mesh;
+    assert.ok(body, `${label}: body box present`);
+    const bodyTop = body.position.y + (body.geometry as THREE.BoxGeometry).parameters.height / 2;
+    const roof = house.getObjectByName('gable-roof')!;
+    assert.ok(roof, `${label}: gable roof present`);
+
+    const panels = roof.children.filter((o) => (o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry.type === 'BoxGeometry' && (o as THREE.Mesh).rotation.z !== 0) as THREE.Mesh[];
+    assert.ok(panels.length === 2, `${label}: two sloped panels`);
+    const box0 = panels[0].geometry as THREE.BoxGeometry;
+    const thickness = box0.parameters.height; // 0.05 slab
+    const slopeLen = box0.parameters.width;
+    const angle = Math.abs(panels[0].rotation.z);
+    const run = slopeLen * Math.cos(angle); // full eave half-width from the slope hypotenuse
+    const wallHalf = (body.geometry as THREE.BoxGeometry).parameters.width / 2;
+
+    // eave seat: sunk BELOW the wall top by the face rise + 5 cm burial
+    const eaveY = roof.userData.eaveY;
+    const derivedRise = slopeLen * Math.sin(angle);
+    const dip = derivedRise * ((run - wallHalf) / run) + 0.05;
+    assert.ok(Math.abs(eaveY - (bodyTop - dip)) < 1e-3,
+      `${label}: eave sunk exactly dip below wall top`);
+    // ridge cap on the sunk ridge
+    const cap = roof.getObjectByName('ridge-cap') as THREE.Mesh;
+    assert.ok(Math.abs(cap.position.y - (eaveY + derivedRise)) < 1e-3, `${label}: ridge cap at eaveY + ridgeRise`);
+
+    // THE defect assertion: panel underside at the wall face is BELOW the
+    // wall top (≥2 cm buried) → no light wedge between roof and wall.
+    // (A panel knocked askew on purpose — the abandoned house's collapsed
+    // edge — is decay set-dressing and sits even lower: skip it.)
+    for (const panel of panels) {
+      if (Math.abs(Math.abs(panel.rotation.z) - angle) > 1e-6) continue;
+      const centreYAtFace = eaveY + derivedRise / 2 - (wallHalf - run / 2) * Math.tan(angle);
+      const undersideAtFace = centreYAtFace - (thickness / 2) / Math.cos(angle);
+      assert.ok(undersideAtFace < bodyTop - 0.02,
+        `${label}: panel underside at wall face ${undersideAtFace.toFixed(3)} sits ≥2cm below wall top ${bodyTop.toFixed(3)}`);
+    }
+
+    // infill: full triangle, base AT the sunk eave (buried deep, never
+    // coplanar with the wall top), spanning the eave width (±run)
+    let infill: THREE.Mesh | null = null;
+    roof.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.geometry.type === 'ExtrudeGeometry' && !infill) infill = m;
+    });
+    assert.ok(infill, `${label}: gable infill present`);
+    const infillGeo = (infill as THREE.Mesh).geometry as THREE.ExtrudeGeometry;
+    infillGeo.computeBoundingBox();
+    assert.ok(Math.abs((infill as THREE.Mesh).position.y - eaveY) < 1e-6, `${label}: infill base at the sunk eave`);
+    assert.ok(infillGeo.boundingBox!.max.x >= run - 0.01, `${label}: infill spans the full eave width`);
+  }
 });
 
 test('TOWN EXTERIOR: the butcher awning low edge sits on its scallop line', () => {

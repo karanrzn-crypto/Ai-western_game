@@ -430,8 +430,19 @@ function box(parent: THREE.Object3D, material: THREE.Material, w: number, h: num
 // ---------------------------------------------------------------------------
 
 /** Symmetric gable roof: two sloped panels + triangular gable-end infill
- *  (buried 15 mm below the wall top — overlap, never coplanar) + ridge cap.
- *  The eave line lands exactly on the wall top. */
+ *  + ridge cap. ROOT FIX for the "roof floats above the walls" defect: the
+ *  panels are SUNK so the eave line lands BELOW the wall top by exactly the
+ *  rise the overhang adds at the wall face (+ 5 cm burial). The panel
+ *  undersides therefore CROSS the wall-top plane inside the wall footprint —
+ *  a geometric intersection, not a tolerance match — so no light gap can
+ *  appear between roof and walls at any scale or rotation (body and roof
+ *  scale/rotate together as one def; the group itself carries no transform).
+ *  The gable-end infill is a FULL triangle whose base spans the eave width
+ *  (±run) at the sunk eave height: its edges sit ~3 mm inside the panel
+ *  band for the whole slope, so the old wedge-shaped daylight at the gable
+ *  corners is gone too. userData.eaveY / userData.ridgeTop expose the exact
+ *  seated heights so callers can anchor chimneys/cupolas to the REAL roof
+ *  surface instead of the pre-sink formula. */
 function buildGableRoof(opts: { width: number; depth: number; wallHeight: number; ridgeRise: number; overhang?: number; wear?: number }): THREE.Group {
   const { width, depth, wallHeight, ridgeRise, overhang = 0.35, wear = 0.3 } = opts;
   const g = new THREE.Group();
@@ -442,25 +453,40 @@ function buildGableRoof(opts: { width: number; depth: number; wallHeight: number
   const slopeLen = Math.hypot(run, ridgeRise);
   const roofMat = MAT.roof(wear);
 
+  // Sink: at the wall face (x = width/2) the panel centreline sits
+  // ridgeRise·(overhang/run) above the eave; bury the underside 5 cm below
+  // the wall top there → dip = that rise + 0.05 (+ the 2.8 cm half-thickness
+  // already accounted by using the centreline as the eave reference).
+  const dip = ridgeRise * (overhang / run) + 0.05;
+  const eaveY = wallHeight - dip;
+  const ridgeTop = eaveY + ridgeRise;
+  g.userData.eaveY = eaveY;
+  g.userData.ridgeTop = ridgeTop;
+
   [-1, 1].forEach((side) => {
-    const panel = mesh(new THREE.BoxGeometry(slopeLen, 0.05, depth + overhang * 2), roofMat, (side * run) / 2, wallHeight + ridgeRise / 2, 0);
+    const panel = mesh(new THREE.BoxGeometry(slopeLen, 0.05, depth + overhang * 2), roofMat, (side * run) / 2, eaveY + ridgeRise / 2, 0);
     panel.rotation.z = -side * angle;
     g.add(panel);
   });
 
   // ridge cap beam
-  box(g, MAT.trimDark(), 0.08, 0.08, depth + overhang * 2, 0, wallHeight + ridgeRise, 0, 'ridge-cap');
+  box(g, MAT.trimDark(), 0.08, 0.08, depth + overhang * 2, 0, ridgeTop, 0, 'ridge-cap');
 
-  // triangular gable-end infill at both ends — base buried 15 mm INTO the
-  // wall top so no hairline gap or coplanar face ever appears.
+  // full gable-end triangles at both ends — base spans the eave width at the
+  // sunk eave height (buried inside the panels and the wall top), apex meets
+  // the ridge. Each infill extrudes OUTWARD from its wall face (2 mm proud,
+  // no coplanar face).
   [-1, 1].forEach((zSide) => {
     const shape = new THREE.Shape();
-    shape.moveTo(-width / 2, 0);
-    shape.lineTo(width / 2, 0);
+    shape.moveTo(-run, 0);
+    shape.lineTo(run, 0);
     shape.lineTo(0, ridgeRise);
     shape.closePath();
     const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.04, bevelEnabled: false });
-    const infill = mesh(geo, woodMat(wear), 0, wallHeight - 0.015, (zSide * depth) / 2 + 0.002);
+    // extrude OUTWARD from the wall face: front (+z) spans d/2−0.002 … d/2+0.042,
+    // back (−z) spans −d/2−0.042 … −d/2+0.002 (2 mm overlap into the wall).
+    const zBase = zSide > 0 ? depth / 2 - 0.002 : -depth / 2 - 0.042;
+    const infill = mesh(geo, woodMat(wear), 0, eaveY, zBase);
     g.add(infill);
   });
 
@@ -994,18 +1020,24 @@ export function buildFamilyHouse(): THREE.Group {
   const roof = buildGableRoof({ width, depth, wallHeight, ridgeRise: 1.5, overhang: 0.42, wear });
   g.add(roof);
 
-  // chimney seated INTO the roof slope: the roof surface at x = 1.9 sits at
-  // wallHeight + ridge·(1 − x/run); the shaft base sinks 0.35 below it.
+  // chimney seated INTO the (sunk) roof slope: the panel surface at x = 1.9
+  // is eaveY + ridge·(1 − x/run) — read from the roof's own userData so the
+  // stack can never float above or sink through the shingles.
   const chimney = buildChimney(1.0);
-  chimney.position.set(width / 2 - 0.6, wallHeight + 0.12, -depth / 2 + 0.7);
+  const chimneySurface = roof.userData.eaveY + 1.5 * (1 - 1.9 / (width / 2 + 0.42));
+  chimney.position.set(width / 2 - 0.6, chimneySurface - 0.4, -depth / 2 + 0.7);
   g.add(chimney);
 
   const porch = buildPorch({ width: width * 0.84, depth: 1.5, postHeight: 2.2, roofed: true, railed: true, wear });
   porch.position.set(0, 0, depth / 2);
   g.add(porch);
 
+  // DOOR FIX: the leaf+frame unit mounts FLUSH on the house wall face
+  // (z = depth/2 + 0.02) — it used to hang 1.42 m out on the porch with its
+  // dark frame reading as a black protrusion. The frame's lower 18 cm is
+  // buried in the porch-deck back edge, so the door rises from the deck.
   const door = buildDoorUnit(0.95, 2.1, true);
-  door.position.set(0, 1.05, depth / 2 + 1.42);
+  door.position.set(0, 1.05, depth / 2 + 0.02);
   g.add(door);
   [-1.55, 1.55].forEach((x) => {
     const win = buildWindowUnit(0.72, 1.05, false);
@@ -1023,11 +1055,14 @@ export function buildFamilyHouse(): THREE.Group {
   steps.position.set(0, 0, depth / 2 + 1.5);
   g.add(steps);
 
-  // porch furniture: potted plants + a chair + flower boxes under the wins
+  // porch furniture: potted plants + a chair + flower boxes under the wins.
+  // PLANTER FIX: the pots sit ON the deck — pot bottom (y 0.18) == deck top,
+  // z INSIDE the deck (deck spans depth/2 … depth/2+1.5); they used to stand
+  // at z = depth/2+1.9, 0.4 m past the deck edge, floating in the air.
   [-1.9, 1.9].forEach((x) => {
-    const pot = mesh(new THREE.CylinderGeometry(0.11, 0.085, 0.2, 10), stdMat('#8a6a4a', null, { roughness: 0.9 }), x, 0.28, depth / 2 + 1.9);
+    const pot = mesh(new THREE.CylinderGeometry(0.11, 0.085, 0.2, 10), stdMat('#8a6a4a', null, { roughness: 0.9 }), x, 0.28, depth / 2 + 1.32);
     g.add(pot);
-    const plant = mesh(new THREE.SphereGeometry(0.15, 8, 6), MAT.weed(), x, 0.46, depth / 2 + 1.9);
+    const plant = mesh(new THREE.SphereGeometry(0.15, 8, 6), MAT.weed(), x, 0.46, depth / 2 + 1.32);
     g.add(plant);
   });
   [-1.55, 1.55].forEach((x) => {
@@ -1038,10 +1073,18 @@ export function buildFamilyHouse(): THREE.Group {
     const blooms2 = mesh(new THREE.SphereGeometry(0.06, 6, 4), stdMat('#b8a23a', null, { roughness: 0.9 }), x + 0.18, stoneHeight + 0.3, depth / 2 + 0.07);
     g.add(blooms2);
   });
-  const chairSeat = mesh(new THREE.BoxGeometry(0.42, 0.035, 0.42), woodMat(wear), 1.2, 0.62, depth / 2 + 1.5);
+  // CHAIR FIX: pulled back inside the deck edge (it used to straddle it
+  // half-off) and given four real legs down to the deck — the seat used to
+  // hover 0.44 m above the boards with nothing under it.
+  const chairSeat = mesh(new THREE.BoxGeometry(0.42, 0.035, 0.42), woodMat(wear), 1.2, 0.62, depth / 2 + 1.2);
   g.add(chairSeat);
-  const chairBack = mesh(new THREE.BoxGeometry(0.42, 0.45, 0.035), woodMat(wear), 1.2, 0.85, depth / 2 + 1.3);
+  const chairBack = mesh(new THREE.BoxGeometry(0.42, 0.45, 0.035), woodMat(wear), 1.2, 0.85, depth / 2 + 1.0);
   g.add(chairBack);
+  [-0.17, 0.17].forEach((lx) => {
+    [-0.17, 0.17].forEach((lz) => {
+      g.add(mesh(new THREE.BoxGeometry(0.04, 0.425, 0.04), woodMat(wear), 1.2 + lx, 0.3925, depth / 2 + 1.2 + lz));
+    });
+  });
 
   return g;
 }
@@ -1072,18 +1115,23 @@ export function buildWealthyTownhouse(): THREE.Group {
   crossGable.position.set(0, 0, depth / 2 - 0.25);
   g.add(crossGable);
 
-  // decorative cupola on the ridge
-  box(g, woodMat(wear, TRIM_WHITE), 0.4, 0.4, 0.4, 0, wallHeight + 1.75 + 0.2, 0, 'cupola-base');
-  const cupolaRoof = mesh(new THREE.ConeGeometry(0.32, 0.4, 4), MAT.roof(wear), 0, wallHeight + 1.75 + 0.6, 0);
+  // decorative cupola on the (sunk) ridge — anchored to the roof's REAL
+  // ridge top (userData.ridgeTop) so it can never float after the sink fix
+  const ridgeTop = roof.userData.ridgeTop;
+  box(g, woodMat(wear, TRIM_WHITE), 0.4, 0.4, 0.4, 0, ridgeTop + 0.2, 0, 'cupola-base');
+  const cupolaRoof = mesh(new THREE.ConeGeometry(0.32, 0.4, 4), MAT.roof(wear), 0, ridgeTop + 0.6, 0);
   cupolaRoof.rotation.y = Math.PI / 4;
   g.add(cupolaRoof);
-  const finial = mesh(new THREE.SphereGeometry(0.035, 8, 8), MAT.brass(), 0, wallHeight + 1.75 + 0.83, 0);
+  const finial = mesh(new THREE.SphereGeometry(0.035, 8, 8), MAT.brass(), 0, ridgeTop + 0.83, 0);
   g.add(finial);
 
-  // dentil molding along the front eave
+  // dentil molding along the front eave — kept ON the wall face just under
+  // the wall top: the sunken roof underside now passes ~4 cm above these at
+  // the corners, so the old placement (straddling the wall top) would bite
+  // into the panels.
   for (let i = 0; i < 16; i++) {
     const x = -width / 2 + 0.22 + i * ((width - 0.44) / 15);
-    box(g, MAT.trimWhite(), 0.07, 0.07, 0.07, x, wallHeight + 0.035, depth / 2 + 0.045);
+    box(g, MAT.trimWhite(), 0.07, 0.07, 0.07, x, wallHeight - 0.03, depth / 2 + 0.045);
   }
 
   // ground-floor columned porch
@@ -1108,16 +1156,24 @@ export function buildWealthyTownhouse(): THREE.Group {
   balconyDoor.position.set(0, floorHeight + 0.1 + 1.025, depth / 2 + 0.02);
   g.add(balconyDoor);
 
-  const mainDoor = buildDoorUnit(1.05, 2.2, true);
-  mainDoor.position.set(0, 0.55 + 1.1, depth / 2 + 0.58);
+  // MAIN DOOR FIX: mounts FLUSH on the wall face (z = depth/2 + 0.02 — it
+  // used to float 0.58 m out with its dark frame reading as a black slab)
+  // and the leaf is sized to FIT its opening: base on the porch floor
+  // (0.14), frame top flush under the balcony slab (2.245) — the old 2.2 m
+  // leaf would have poked 0.4 m THROUGH the balcony floor at the wall.
+  const mainDoor = buildDoorUnit(1.05, 2.075, true);
+  mainDoor.position.set(0, 1.1775, depth / 2 + 0.02);
   g.add(mainDoor);
 
-  // lanterns flanking the door (unlit props — no light budget cost)
+  // lanterns flanking the door — remounted ON the wall under the porch roof
+  // (arm anchored 2 cm into the wall face; lamp + cap hang at the arm end).
+  // They used to hover mid-air 0.55 m proud of the wall, crossing the
+  // balcony slab plane.
   [-0.85, 0.85].forEach((x) => {
-    box(g, MAT.iron(), 0.03, 0.03, 0.3, x, 2.45, depth / 2 + 0.42);
-    const lamp = box(g, MAT.glass(), 0.14, 0.22, 0.14, x, 2.3, depth / 2 + 0.55, 'lantern');
+    box(g, MAT.iron(), 0.03, 0.03, 0.3, x, 2.12, depth / 2 + 0.13);
+    const lamp = box(g, MAT.glass(), 0.14, 0.22, 0.14, x, 2.0, depth / 2 + 0.28, 'lantern');
     void lamp;
-    box(g, MAT.iron(), 0.17, 0.03, 0.17, x, 2.42, depth / 2 + 0.55);
+    box(g, MAT.iron(), 0.17, 0.03, 0.17, x, 2.125, depth / 2 + 0.28);
   });
 
   // many large windows, both floors, with simple shutters
@@ -1170,10 +1226,12 @@ export function buildFarmhouse(): THREE.Group {
   const roof = buildGableRoof({ width, depth, wallHeight, ridgeRise: 2.0, overhang: 0.42, wear });
   g.add(roof);
 
-  // chimney SEATED into the slope: at x = −1.9 the roof surface sits at
-  // wallHeight + ridge·(1 − 1.9/run); the base sinks 0.3 below it.
+  // chimney SEATED into the (sunk) slope: the panel surface at x = −1.8 is
+  // eaveY + ridge·(1 − 1.8/run) — read from the roof's own userData; the
+  // base sinks 0.376 below it (same seating depth as before the sink fix).
   const chimney = buildChimney(0.95);
-  chimney.position.set(-width / 2 + 0.5, wallHeight + 0.3, 0);
+  const chimneySurface = roof.userData.eaveY + 2.0 * (1 - 1.8 / (width / 2 + 0.42));
+  chimney.position.set(-width / 2 + 0.5, chimneySurface - 0.376, 0);
   g.add(chimney);
 
   const door = buildDoorUnit(0.95, 2.08, false);

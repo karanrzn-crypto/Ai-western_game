@@ -80,20 +80,23 @@ const DEFS_UUID = (id) => `c0000000-0000-4000-8000-0000000000${id}`;
     const cube = defs.find((o) => o.metadata && o.metadata.name === 'مکعب اسپاون');
     const oldUuid = defs.find((o) => o.uuid === '10000000-0000-4000-a000-000000000020');
     const meshAtOldUuid = window.__westTest.scene().getObjectByProperty('uuid', '10000000-0000-4000-a000-000000000020');
-    const buildingParts = defs.filter((o) => typeof o.metadata.name === 'string' && o.metadata.name.startsWith('ساختمان'));
-    const xs = buildingParts.map((o) => o.transform.position.x);
-    const zs = buildingParts.map((o) => o.transform.position.z);
+    const buildingParts = defs.filter((o) => typeof o.metadata?.name === 'string' && o.metadata.name.startsWith('ساختمان'));
+    // any surviving mesh at the old building uuid block …030–…036
+    const buildingMeshes = ['30', '31', '32', '33', '34', '35', '36']
+      .filter((s) => window.__westTest.scene().getObjectByProperty('uuid', `10000000-0000-4000-a000-0000000000${s}`));
     return {
       cubeGone: !cube && !oldUuid && !meshAtOldUuid,
       buildingPartCount: buildingParts.length,
-      // walls sit at x=14 (N/S) and x=14±3.825 (E/W), z from −15.15 to −8.85
-      buildingAtSite: buildingParts.length >= 7 && xs.every((x) => x > 9.9 && x < 18.1) && zs.every((z) => z > -15.2 && z < -8.8),
+      buildingMeshCount: buildingMeshes.length,
     };
   });
   ok('§1 spawn cube removed (def + uuid + mesh all gone)', cubeState.cubeGone, 'no مکعب اسپاون def, no …020 def, no mesh');
-  ok('§1 BUILDING intact (7 parts at its authored x=14, z=-12)',
-    cubeState.buildingPartCount >= 7 && cubeState.buildingAtSite,
-    `parts=${cubeState.buildingPartCount}`);
+  // UPDATED (user request, round 2): the cream 'ساختمان' cube building is
+  // DELETED — no defs, no meshes at its uuid block, and the player can walk
+  // its old footprint unblocked.
+  ok('§1 ساختمان building removed (0 defs, 0 meshes)',
+    cubeState.buildingPartCount === 0 && cubeState.buildingMeshCount === 0,
+    `parts=${cubeState.buildingPartCount} meshes=${cubeState.buildingMeshCount}`);
 
   /* ---- §2 map enlarged ---------------------------------------------------- */
   const mapState = await ev(() => {

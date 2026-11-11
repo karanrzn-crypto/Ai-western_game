@@ -1,16 +1,8 @@
 import * as THREE from 'three';
 import {
-  SceneStateManager,
-  ThreeRendererAdapter,
-  AssetRegistry,
-  registerPrimitiveFactories,
-  registerTownExteriorFactories,
-  TOWN_EXTERIOR_COLLIDERS,
   PersistenceManager,
   CollisionWorld,
   DayNightCycle,
-  AdaptiveResolution,
-  ShadowScheduler,
   GameModeController,
   LocalSceneStorage,
   PlayerController,
@@ -20,10 +12,6 @@ import {
   ContactIndicator,
   makeSceneAxisClamp,
   createDebugAxes,
-  formatSelectedObjectInfo,
-  formatPanelNumber,
-  parsePanelNumber,
-  buildPanelTransformPatch,
   configure,
   createCharacterModel,
   CharacterAnimator,
@@ -36,158 +24,21 @@ import {
   MouseLookController,
   CreativeFlightController,
   findSafeSpawnPosition,
-  createHorseModel,
-  HorseAnimator,
-  HorseController,
-  mountEnterCameraMode,
-  dismountCameraPlan,
-  HorsePersistence,
-  RIDER_SEATED_EYE_Y,
-  RIDER_SEATED_EYE_Z,
-  buildMountTimeline,
-  mountRootPose,
-  poseMountRider,
-  applyRiderPose,
-  mountSafeRadius,
-  MOUNT_STAND,
-  MOUNT_SEAT_QUATERNION,
-  buildDismountTimeline,
-  dismountRootPose,
-  poseDismountRider,
-  registerSaloonFactories,
-  buildSaloonMapObjects,
-  SALOON_SITE,
-  SALOON_DOOR_SPEC,
-  setSaloonDoorsOpen,
-  registerAllBankFactories,
-  buildBankMapObjects,
-  BANK_SITE,
-  BANK_OBJECT_IDS,
-  BANK_DOOR_SPEC,
-  setBankFrontDoorOpen,
-  setSecureGateOpen,
-  setBankVaultDoorOpen,
-  registerAllSheriffFactories,
-  buildSheriffMapObjects,
-  SHERIFF_SITE,
-  SHERIFF_OBJECT_IDS,
-  setJailCellDoorOpen,
-  setSheriffFrontDoorOpen,
-  registerAllStableFactories,
-  buildStableMapObjects,
-  STABLE_SITE,
-  STABLE_OBJECT_IDS,
-  STABLE_DOOR_SPECS,
-  setStableGateOpen,
-  setStableLeafDoorOpen,
-  registerAllGunShopFactories,
-  buildGunShopMapObjects,
-  GUNSHOP_SITE,
-  GUNSHOP_DOOR_SPEC,
-  setGunShopFrontDoorOpen,
-  registerAllTownFactories,
-  buildTownMapObjects,
-  TOWN_SITES,
   TOWN_GROUND_SIZE,
   TOWN_RESPAWN,
-  TOWN_HORSE_SPAWN,
-  TOWN_EXTERIOR_SITES,
-  rotateSiteDefs,
 } from '../src/index.js';
-import type { MountStartState, MountTimeline, DismountTimeline, PartialTransform, CameraMode } from '../src/index.js';
-import type { PanelAxis, PanelValueGroup } from '../src/index.js';
+import type { PartialTransform } from '../src/index.js';
 import { CHARACTER_PROPORTIONS } from '../src/player/character/CharacterProportions.js';
+import { createWorld } from './world.js';
+import { createDoorSystem } from './doors.js';
+import { createEditorUi } from './editorUi.js';
+import { createHorseRig } from './horseRig.js';
+import { createTestHooks } from './testHooks.js';
 
 configure({ debug: false, logging: { level: 'info' } });
 
-const stage = document.getElementById('stage');
-if (!stage) throw new Error('Missing #stage');
-
-const scene = new THREE.Scene();
-// Warm dusty frontier haze (the reference-image biome; the DayNightCycle
-// owns the live sky/fog and its daytime palette is retuned to these tones).
-const SKY_DUST = 0xd8c7a2;
-scene.background = new THREE.Color(SKY_DUST);
-scene.fog = new THREE.Fog(SKY_DUST, 40, 105);
-
-const camera = new THREE.PerspectiveCamera(
-  70,
-  Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1),
-  0.05,
-  // Far plane sized to the CURRENT world (the old 150 was set when the map
-  // was 100×100 — stale “±50 m walls / 141 m diagonal” comment and all).
-  // The 2026-09 town ground is 120×120 (±60): its farthest corner from any
-  // vantage point is the full diagonal 120√2 ≈ 169.7 m, so 180 clears the
-  // whole map with margin — and stays tight (fog ends at 105; nothing but
-  // the sky reads beyond it).
-  180,
-);
-
-// Dev verification hook (read-only): headless check scripts read the live
-// camera pose to servo the creative-fly camera. Never written by the game.
-(window as unknown as Record<string, unknown>).__westDebug = () => {
-  const dir = camera.getWorldDirection(new THREE.Vector3());
-  return {
-    cam: [camera.position.x, camera.position.y, camera.position.z],
-    view: [dir.x, dir.y, dir.z],
-  };
-};
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-// --- Render governor (weak-laptop revision) --------------------------------
-// Measured bottleneck matrix (1280×800 software harness + the user's laptop):
-// frame time is FILL-BOUND — 1.5 → 166.6ms/6fps, 1.0 → 83.3/12, 0.85 → 66.6/15,
-// 0.75 → 50/20 — and the old ladder BOOTED at 1.5, so weak machines started in
-// a slideshow for seconds. The governor (src/engine/RenderGovernor.ts) now
-// owns every resolution decision: boot at 0.85, ladder TOPS OUT at 1.0, climbs
-// only with SUSTAINED ≥50 fps proof of headroom, walks down fast under 21/12.
-renderer.setSize(Math.max(stage.clientWidth, 1), Math.max(stage.clientHeight, 1));
-renderer.shadowMap.enabled = true;
-// Shadow depth pass, measured: ~12ms per 2048² refresh on the harness. Two
-// cuts, both requested and A/B-verified: mapSize 2048→768 (0.59MP — the pass
-// drops to ~1.4ms; 85m frustum / 768 ≈ 9 texels/m stays readable with
-// PCFSoft + normalBias; 512² documented as the next fallback) and on-demand
-// refresh via ShadowScheduler (idle world ≈ every 150ms instead of every
-// other frame — the orbiting sun moves ~0.02°/frame, so the extra passes
-// rebuilt identical shadows).
-renderer.shadowMap.autoUpdate = false;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-stage.appendChild(renderer.domElement);
-const resolution = new AdaptiveResolution({
-  sink: renderer,
-  getDevicePixelRatio: () => window.devicePixelRatio || 1,
-});
-const shadows = new ShadowScheduler({ idleIntervalSeconds: 0.15, movingIntervalSeconds: 1 / 30 });
-
-const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
-sun.position.set(-25, 35, 15);
-sun.castShadow = true;
-// Shadow frustum sized to the PLAYABLE AREA: the redesigned map is a
-// 120×120 ground plane (town redesign 2026-09), so its farthest point from
-// the light target (the origin) is the half-diagonal 60√2 ≈ 84.9 m. An ortho
-// box of ±85 contains every map point for EVERY sun azimuth (the farm and
-// the ruined house cast too — the ±50 town-only box would drop them).
-// 1024² over ±85 ≈ 6 texels/m; the scheduled depth pass costs ≈2.5 ms per
-// refresh (every 150 ms idle) — the same trade the stable already vetted.
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = -85;
-sun.shadow.camera.right = 85;
-sun.shadow.camera.top = 85;
-sun.shadow.camera.bottom = -85;
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 200;
-sun.shadow.bias = -0.00035;
-// § shadow revision: normalBias 0.03 → 0.06. At the deliberate 9 texels/m,
-// interior surfaces sample the roof's occluders through the same map — the
-// old 3 cm normalBias left self-shadow acne bands on interior walls/floors.
-// 6 cm ≈ 0.55 texel kills the acne inside without visibly detaching the
-// exterior contact shadows (verified against the horse/lamp probes).
-sun.shadow.normalBias = 0.06;
-scene.add(sun);
-
-const hemisphere = new THREE.HemisphereLight(0xf0e0bf, 0x4b493d, 1.2);
-scene.add(hemisphere);
+const world = createWorld();
+const { stage, scene, camera, renderer, resolution, shadows, sun, hemisphere, adapter, manager } = world;
 
 // --- The main character ("The Ranger") ----------------------------------
 // Procedural western gunslinger: hat + vest + gun belt silhouette.
@@ -214,22 +65,6 @@ const debugAxes = createDebugAxes();
 debugAxes.visible = false;
 scene.add(debugAxes);
 
-const assets = new AssetRegistry();
-registerPrimitiveFactories(assets);
-registerSaloonFactories(assets);
-registerAllBankFactories(assets);
-registerAllSheriffFactories(assets);
-registerAllStableFactories(assets);
-registerAllGunShopFactories(assets);
-registerAllTownFactories(assets);
-// Town exteriors (user-approved scale-1.3 buildings: farmstead, worker,
-// family, wealthy, abandoned + butcher stall) — the six REDesigned-town
-// buildings, placed per-def with TOWN_EXTERIOR_COLLIDERS at the town sites.
-registerTownExteriorFactories(assets);
-
-const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
-const manager = new SceneStateManager({ renderer: adapter });
-
 // --- Last-object-change log (TEST panel, bottom-right) ---------------------
 // Every transform mutation in the game flows through ONE funnel —
 // SceneStateManager.updateObjectTransform (gizmo drags, arrow keys, rotation
@@ -246,7 +81,7 @@ manager.updateObjectTransform = (uuid: string, patch: PartialTransform) => {
   const beforeDefinition = manager.getObject(uuid);
   const next = rawUpdateObjectTransform(uuid, patch);
   if (beforeDefinition) {
-    noteObjectChange(uuid, beforeDefinition.metadata.name, beforeDefinition.transform, next);
+    ui.noteObjectChange(uuid, beforeDefinition.metadata.name, beforeDefinition.transform, next);
   }
   return next;
 };
@@ -315,11 +150,11 @@ const authoredLayout = new AuthoredLayout();
 function resetObjectToAuthored(uuid: string): boolean {
   if (!authoredLayout.restore(manager, uuid)) return false;
   storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
-  updateSaveStatus();
+  ui.updateSaveStatus();
   editShadowPulse = 0.25;
-  refreshSelectionHelper();
-  updateSelectionPanel();
-  updateEditorHud();
+  ui.refreshSelectionHelper();
+  ui.updateSelectionPanel();
+  ui.updateEditorHud();
   return true;
 }
 
@@ -328,11 +163,11 @@ function resetAllToAuthored(): number {
   const restored = authoredLayout.restoreAll(manager);
   if (restored > 0) {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
-    updateSaveStatus();
+    ui.updateSaveStatus();
     editShadowPulse = 0.25;
-    refreshSelectionHelper();
-    updateSelectionPanel();
-    updateEditorHud();
+    ui.refreshSelectionHelper();
+    ui.updateSelectionPanel();
+    ui.updateEditorHud();
   }
   return restored;
 }
@@ -387,7 +222,7 @@ let hudTimer = 0;
 const editor = new ObjectEditorController(manager, {
   onObjectModified: () => {
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
-    updateSaveStatus();
+    ui.updateSaveStatus();
     editShadowPulse = 0.25; // edited object → its shadow needs a refresh
   },
 });
@@ -421,7 +256,7 @@ const gizmo = new TransformGizmo({
     // One save per completed drag keeps localStorage write volume sane while
     // the pointer moves continuously.
     storage.saveFromManager(manager, { map: 'playable-map', mode: 'development' });
-    updateSaveStatus();
+    ui.updateSaveStatus();
     editShadowPulse = 0.25; // drag settled → refresh the parked shadows
   },
 });
@@ -437,1272 +272,34 @@ scene.add(gizmo.root);
 const contactIndicator = new ContactIndicator();
 scene.add(contactIndicator.group);
 
-const groundUuid = '10000000-0000-4000-a000-000000000001';
-manager.registerObject({
-  uuid: groundUuid,
-  assetType: 'town-ground',
-  transform: {
-    position: { x: 0, y: 0, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
-  },
-  metadata: { name: 'زمین نقشه اصلی', size: TOWN_GROUND_SIZE, collider: false, editable: false },
-});
+// --- Every E-openable door in town (one system, one contract) ---------------
+// The full door contract (spawn closed / target-flip E / pose re-derived from
+// t / collider released past half-open) lives in game/doors.ts; the
+// composition root owns only the wiring and the per-frame tick.
+const doorSystem = createDoorSystem({ scene, manager, interactions, showStatusMessage });
 
-function addBoundary(uuid: string, name: string, position: THREE.Vector3, scale: THREE.Vector3): void {
-  manager.registerObject({
-    uuid,
-    assetType: 'cube',
-    transform: {
-      position: { x: position.x, y: position.y, z: position.z },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: scale.x, y: scale.y, z: scale.z },
-    },
-    metadata: { name, mapBoundary: true, editable: false, collider: true },
-  });
-}
-
-const half = TOWN_GROUND_SIZE / 2;
-// CORNER-SEAM FIX (z-fight scan round): the N/S walls run the full ground so
-// their end caps sit EXACTLY coplanar with the E/W walls' outer faces
-// (co-facing pair at the map corners). The N/S walls are 2 m shorter: their
-// end caps bury INSIDE the E/W wall volumes and no outer faces overlap any
-// more. The player is still sealed by the inner faces.
-addBoundary('10000000-0000-4000-a000-000000000010', 'دیوار مرزی شمالی', new THREE.Vector3(0, 1.5, -half + 0.5), new THREE.Vector3(TOWN_GROUND_SIZE - 2, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000011', 'دیوار مرزی جنوبی', new THREE.Vector3(0, 1.5, half - 0.5), new THREE.Vector3(TOWN_GROUND_SIZE - 2, 3, 1));
-addBoundary('10000000-0000-4000-a000-000000000012', 'دیوار مرزی غربی', new THREE.Vector3(-half + 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
-addBoundary('10000000-0000-4000-a000-000000000013', 'دیوار مرزی شرقی', new THREE.Vector3(half - 0.5, 1.5, 0), new THREE.Vector3(1, 3, TOWN_GROUND_SIZE));
-
-// (The old yellow spawn cube + the empty demo "BUILDING" box were removed
-// with the town redesign: the cube sat where the fountain plaza now is and
-// the nameless box stood on the worker-house lot. Both were dev scaffolding,
-// not gameplay — the fountain square + the six town-exterior buildings
-// replace them, and every wall in town still collides through the registry.)
-
-// --- The SALOON (enterable western bar) -------------------------------------
-// West side of the redesigned main street, facing EAST onto the street (yaw
-// +90° applied to the whole building via SiteTransform — exact quaternion
-// composition, collider-exact at 90°). Door/interact contracts unchanged:
-// door swings live in building-local space inside each def, so the yawed
-// building opens exactly like it always did.
-{
-  const yaw = TOWN_SITES.saloon.yaw;
-  for (const saloonDef of rotateSiteDefs(buildSaloonMapObjects(SALOON_SITE.x, SALOON_SITE.z), SALOON_SITE.x, SALOON_SITE.z, yaw)) {
-    manager.registerObject(saloonDef);
-  }
-}
-
-// --- The BANK (grand western frontier bank) ----------------------------------
-// FAR side of the central square (west of the stable-road gap), yawed 180° so
-// the stair/columns/pediment face NORTH onto the square. Same rotation
-// mechanism as the saloon.
-{
-  const yaw = TOWN_SITES.bank.yaw;
-  for (const bankDef of rotateSiteDefs(buildBankMapObjects(BANK_SITE.x, BANK_SITE.z), BANK_SITE.x, BANK_SITE.z, yaw)) {
-    manager.registerObject(bankDef);
-  }
-}
-
-// --- The SHERIFF OFFICE (western law building + two-cell jail) ---------------
-// FAR side of the square (east of the stable-road gap), yawed 180° so the
-// porch + SHERIFF sign face north onto the square.
-{
-  const yaw = TOWN_SITES.sheriff.yaw;
-  for (const sheriffDef of rotateSiteDefs(buildSheriffMapObjects(SHERIFF_SITE.x, SHERIFF_SITE.z), SHERIFF_SITE.x, SHERIFF_SITE.z, yaw)) {
-    manager.registerObject(sheriffDef);
-  }
-}
-
-// --- The LIVERY STABLE (working western horse stable + tack/feed/farrier) ---
-// South of town on the stable road, yawed 180° so the big wagon gate + LIVERY
-// STABLE sign face NORTH toward the arriving player (the reference layout:
-// stable near the exit, corral across the road).
-{
-  const yaw = TOWN_SITES.stable.yaw;
-  for (const stableDef of rotateSiteDefs(buildStableMapObjects(STABLE_SITE.x, STABLE_SITE.z), STABLE_SITE.x, STABLE_SITE.z, yaw)) {
-    manager.registerObject(stableDef);
-  }
-}
-
-// --- The GUN SHOP (enterable western gunsmith store) -------------------------
-// FIRST important building on the main street's EAST side (the player passes
-// it right after the town entrance, before the square — spec §7), yawed −90°
-// so the false front + porch face WEST onto the street.
-{
-  const yaw = TOWN_SITES.gunshop.yaw;
-  for (const gunshopDef of rotateSiteDefs(buildGunShopMapObjects(GUNSHOP_SITE.x, GUNSHOP_SITE.z), GUNSHOP_SITE.x, GUNSHOP_SITE.z, yaw)) {
-    manager.registerObject(gunshopDef);
-  }
-}
-
-// --- THE TOWN (redesigned settlement — ground, roads, farm, square, houses) --
-// Every def the town module emits: the mottled dusty ground, the road network
-// (farm road → entrance → main street → plaza → stable road → exit), the farm
-// area (house + individually-movable fence sections + livestock pen + crops +
-// pond + windmill), the ruined house on the outskirts, the central square
-// (fountain + benches + lamps + props), the six NEW buildings (farm/worker/
-// family/wealthy/meat-shop/ruined) and all street furniture + vegetation.
-// Placement source: src/assets/town/TownLayout.ts — the SAME list the town
-// tests assert against.
-for (const townDef of buildTownMapObjects()) {
-  manager.registerObject(townDef);
-}
-
-// --- TOWN EXPANSION: butcher stall + five house facades ----------------------
-// The designed-but-unplaced town-exterior assets enter the REAL map here, as
-// individually managed defs so each carries its exact collider payload from
-// TOWN_EXTERIOR_COLLIDERS (the same table the tests assert against — a bare
-// array would silently fall back to a 1 m³ box). The factory builds every
-// facade facing +Z (south), so yaw is the ONLY placement math: yaw 90 turns
-// a west-row front EAST toward the main street, yaw -90 turns an east-row
-// front WEST. Sites were audited against the measured per-building AABBs
-// (saloon z ≤ -7.5 · stable z ≥ -1.5 west, sheriff z ≥ -5.5 · gunshop z ≤
-// 14.1 east, bank north end) — no overlap, market-row gaps 1.2–4.5 m, the
-// ~17 m street corridor continues south into the enlarged map and the
-// farmstead/abandoned house sit alone on the east/west outskirts.
-const TOWN_EXTERIOR_PLACEMENTS: ReadonlyArray<{
-  uuid: string;
-  type: keyof typeof TOWN_EXTERIOR_COLLIDERS;
-  name: string;
-  x: number;
-  z: number;
-  yaw: number;
-  scale?: number;
-}> = TOWN_EXTERIOR_SITES;
-// Sites live in TownLayout.TOWN_EXTERIOR_SITES — the SAME table the town
-// tests assert against (six buildings, scale-1.3 model round, composite
-// colliders rotate/scale with the def).
-for (const placement of TOWN_EXTERIOR_PLACEMENTS) {
-  const s = placement.scale ?? 1;
-  manager.registerObject({
-    uuid: placement.uuid,
-    assetType: placement.type,
-    transform: {
-      position: { x: placement.x, y: 0, z: placement.z },
-      rotation: { x: 0, y: placement.yaw, z: 0 },
-      scale: { x: s, y: s, z: s },
-    },
-    metadata: {
-      name: placement.name,
-      editable: true,
-      collider: TOWN_EXTERIOR_COLLIDERS[placement.type],
-    },
-  });
-}
-
-// --- The bank's barred iron gate (truly openable manager doorway) ------------
-// The gate spawns CLOSED across the manager doorway. E swings both leaves
-// toward the lobby (~0.9 s). The collider is released the moment the leaves
-// pass half-open and re-arms the moment they pass half-closed, so a CLOSED
-// gate always blocks and an OPEN gate never does — collision can never
-// disagree with what the player sees. Metadata updates invalidate the
-// CollisionWorld cache (object:metadata-updated), which IS the walk switch.
-const gateUuid = BANK_OBJECT_IDS.secureGate;
-const gateSwing = { value: 0, target: 0, speed: 1 / 0.9 };
-interactions.register({
-  uuid: gateUuid,
-  get label() {
-    return gateSwing.target > 0.5 ? 'Close the iron gate' : 'Open the iron gate';
-  },
-  range: 2.2,
-  getPosition: () => manager.getObject(gateUuid)?.transform.position
-    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
-  canInteract: () => Boolean(manager.getObject(gateUuid)),
-  onInteract: () => {
-    gateSwing.target = gateSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(gateSwing.target > 0.5 ? 'The iron gate swings open.' : 'The iron gate clangs shut.');
-  },
-});
-/** Advance the gate swing and sync its collider to the visible leaf pose. */
-function updateSecureGate(delta: number): void {
-  if (gateSwing.value === gateSwing.target) return;
-  const dir = Math.sign(gateSwing.target - gateSwing.value);
-  gateSwing.value = THREE.MathUtils.clamp(
-    gateSwing.value + dir * gateSwing.speed * delta,
-    0,
-    1,
-  );
-  const root = scene.getObjectByProperty('uuid', gateUuid);
-  if (root) setSecureGateOpen(root, gateSwing.value);
-  const opened = gateSwing.value > 0.5;
-  const def = manager.getObject(gateUuid);
-  if (def && Boolean(def.metadata.collider) === opened) {
-    manager.updateObjectMetadata(gateUuid, { collider: !opened });
-  }
-}
-
-// --- The bank's big vault door (truly openable, the vault's ONLY entrance) --
-// The door spawns CLOSED across the divider doorway. E swings the disc
-// outward into the office (~0.9 s, same feel as the iron gate). The collider
-// releases past half-open and re-arms past half-closed, so a CLOSED door
-// always blocks and an OPEN door never does — the masonry doorway behind it
-// is the real walk path into the vault room. Metadata updates invalidate the
-// CollisionWorld cache (object:metadata-updated), which IS the walk switch.
-const vaultDoorUuid = BANK_OBJECT_IDS.vaultDoor;
-const vaultSwing = { value: 0, target: 0, speed: 1 / 0.9 };
-interactions.register({
-  uuid: vaultDoorUuid,
-  get label() {
-    return vaultSwing.target > 0.5 ? 'Close the vault door' : 'Open the vault door';
-  },
-  range: 2.2,
-  getPosition: () => manager.getObject(vaultDoorUuid)?.transform.position
-    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
-  canInteract: () => Boolean(manager.getObject(vaultDoorUuid)),
-  onInteract: () => {
-    vaultSwing.target = vaultSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(vaultSwing.target > 0.5 ? 'The vault door swings open.' : 'The vault door grinds shut.');
-  },
-});
-/** Advance the vault door swing and sync its collider to the visible disc. */
-function updateVaultDoor(delta: number): void {
-  if (vaultSwing.value === vaultSwing.target) return;
-  const dir = Math.sign(vaultSwing.target - vaultSwing.value);
-  vaultSwing.value = THREE.MathUtils.clamp(
-    vaultSwing.value + dir * vaultSwing.speed * delta,
-    0,
-    1,
-  );
-  const root = scene.getObjectByProperty('uuid', vaultDoorUuid);
-  if (root) setBankVaultDoorOpen(root, vaultSwing.value);
-  const opened = vaultSwing.value > 0.5;
-  const def = manager.getObject(vaultDoorUuid);
-  if (def && Boolean(def.metadata.collider) === opened) {
-    manager.updateObjectMetadata(vaultDoorUuid, { collider: !opened });
-  }
-}
-
-// --- The jail's two cell doors (truly openable, E) ---------------------------
-// Both spawn CLOSED in the bars line. E swings the barred leaf INWARD into
-// the cell (~0.8 s — a lighter, clankier feel than the big vault door). The
-// collider releases past half-open and re-arms past half-closed, so a CLOSED
-// cell always blocks the corridor and an OPEN cell never does. The 1.1 m
-// corridor lies west of the bars, so the inward swing never blocks it.
-const cellDoorSpecs = [
-  { uuid: SHERIFF_OBJECT_IDS.cellDoorA, open: 'Open cell one', close: 'Close cell one' },
-  { uuid: SHERIFF_OBJECT_IDS.cellDoorB, open: 'Open cell two', close: 'Close cell two' },
-] as const;
-const cellSwings = new Map<string, { value: number; target: number; speed: number }>();
-for (const spec of cellDoorSpecs) {
-  cellSwings.set(spec.uuid, { value: 0, target: 0, speed: 1 / 0.8 });
-  interactions.register({
-    uuid: spec.uuid,
-    get label() {
-      const swing = cellSwings.get(spec.uuid)!;
-      return swing.target > 0.5 ? spec.close : spec.open;
-    },
-    range: 2.0,
-    getPosition: () => manager.getObject(spec.uuid)?.transform.position
-      ?? { x: SHERIFF_SITE.x, y: 0, z: SHERIFF_SITE.z },
-    canInteract: () => Boolean(manager.getObject(spec.uuid)),
-    onInteract: () => {
-      const swing = cellSwings.get(spec.uuid)!;
-      swing.target = swing.target > 0.5 ? 0 : 1;
-      showStatusMessage(swing.target > 0.5 ? 'The cell door clanks open.' : 'The cell door slams shut.');
-    },
-  });
-}
-/** Advance both cell door swings and sync their colliders to the leaves. */
-function updateCellDoors(delta: number): void {
-  for (const spec of cellDoorSpecs) {
-    const swing = cellSwings.get(spec.uuid)!;
-    if (swing.value === swing.target) continue;
-    const dir = Math.sign(swing.target - swing.value);
-    swing.value = THREE.MathUtils.clamp(swing.value + dir * swing.speed * delta, 0, 1);
-    const root = scene.getObjectByProperty('uuid', spec.uuid);
-    if (root) setJailCellDoorOpen(root, swing.value);
-    const opened = swing.value > 0.5;
-    const def = manager.getObject(spec.uuid);
-    if (def && Boolean(def.metadata.collider) === opened) {
-      manager.updateObjectMetadata(spec.uuid, { collider: !opened });
-    }
-  }
-}
-
-// --- The office FRONT door (truly openable public entrance, E) ---------------
-// Spawns CLOSED across the south doorway. E swings the leaf INWARD into the
-// office around its real hinge pivot (~0.9 s — the vault-door feel; it is a
-// heavier public door than the cell gates). The pose is RE-DERIVED from the
-// swing state every frame (setSheriffFrontDoorOpen(root, value)) so repeated
-// toggles can never accumulate transform error, and pressing E mid-swing
-// merely flips the TARGET — the value keeps interpolating from where it is
-// (deterministic Closed→Opening→Open / Open→Closing→Closed state machine).
-// Collider == the cell-door policy: the def's yaw-conservative 1×1 box is
-// ARMED while the door is (at least half) closed and RELEASED past half-open,
-// synced through the same metadata invalidation the gate/vault use.
-const frontDoorUuid = SHERIFF_OBJECT_IDS.frontDoor;
-const frontSwing = { value: 0, target: 0, speed: 1 / 0.9 };
-interactions.register({
-  uuid: frontDoorUuid,
-  get label() {
-    return frontSwing.target > 0.5 ? 'Close the office door' : 'Open the office door';
-  },
-  range: 2.0,
-  getPosition: () => manager.getObject(frontDoorUuid)?.transform.position
-    ?? { x: SHERIFF_SITE.x, y: 0, z: SHERIFF_SITE.z },
-  canInteract: () => Boolean(manager.getObject(frontDoorUuid)),
-  onInteract: () => {
-    frontSwing.target = frontSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(frontSwing.target > 0.5 ? 'The office door creaks open.' : 'The office door swings shut.');
-  },
-});
-/** Advance the front door swing and sync its collider to the visible leaf. */
-function updateSheriffFrontDoor(delta: number): void {
-  if (frontSwing.value === frontSwing.target) return;
-  const dir = Math.sign(frontSwing.target - frontSwing.value);
-  frontSwing.value = THREE.MathUtils.clamp(frontSwing.value + dir * frontSwing.speed * delta, 0, 1);
-  const root = scene.getObjectByProperty('uuid', frontDoorUuid);
-  if (root) setSheriffFrontDoorOpen(root, frontSwing.value);
-  const opened = frontSwing.value > 0.5;
-  const def = manager.getObject(frontDoorUuid);
-  if (def && Boolean(def.metadata.collider) === opened) {
-    manager.updateObjectMetadata(frontDoorUuid, { collider: !opened });
-  }
-}
-
-// --- The stable's 10 doors (ALL genuinely openable, E) ----------------------
-// The big double gate + 6 stall doors + tack/feed room doors + the staff
-// door all follow the house door contract: spawn CLOSED (collider armed),
-// E toggles the swing target, the pose is RE-DERIVED from t every frame
-// (pure setStableGateOpen / setStableLeafDoorOpen — never accumulated), and
-// the collider releases past half-open / re-arms past half-closed through
-// the same updateObjectMetadata invalidation the gate/vault/cell doors use.
-interface StableSwing { value: number; target: number; speed: number }
-const stableSwings = new Map<string, StableSwing>();
-for (const spec of STABLE_DOOR_SPECS) {
-  const duration = spec.style === 'gate' ? 1.1 : 0.8;
-  stableSwings.set(spec.uuid, { value: 0, target: 0, speed: 1 / duration });
-  interactions.register({
-    uuid: spec.uuid,
-    get label() {
-      const swing = stableSwings.get(spec.uuid);
-      return swing && swing.target > 0.5 ? spec.labelClose : spec.labelOpen;
-    },
-    range: spec.range,
-    getPosition: () => {
-      const def = manager.getObject(spec.uuid);
-      return def
-        ? { x: def.transform.position.x, y: def.transform.position.y, z: def.transform.position.z }
-        : { x: STABLE_SITE.x, y: 0, z: STABLE_SITE.z };
-    },
-    canInteract: () => Boolean(manager.getObject(spec.uuid)),
-    onInteract: () => {
-      const swing = stableSwings.get(spec.uuid);
-      if (!swing) return;
-      swing.target = swing.target > 0.5 ? 0 : 1;
-      showStatusMessage(swing.target > 0.5 ? spec.labelOpen + '.' : spec.labelClose + '.');
-    },
-  });
-}
-/** Advance every stable door swing and sync its collider to the pose. */
-function updateStableDoors(delta: number): void {
-  for (const [uuid, swing] of stableSwings) {
-    if (swing.value === swing.target) continue;
-    const dir = Math.sign(swing.target - swing.value);
-    swing.value = THREE.MathUtils.clamp(swing.value + dir * swing.speed * delta, 0, 1);
-    const root = scene.getObjectByProperty('uuid', uuid);
-    if (root) {
-      if (uuid === STABLE_OBJECT_IDS.gate) setStableGateOpen(root, swing.value);
-      else setStableLeafDoorOpen(root, swing.value);
-    }
-    const opened = swing.value > 0.5;
-    const def = manager.getObject(uuid);
-    if (def && Boolean(def.metadata.collider) === opened) {
-      manager.updateObjectMetadata(uuid, { collider: !opened });
-    }
-  }
-}
-
-// --- The GUN SHOP front door (truly openable, E) -----------------------------
-// Same house door contract as the sheriff front door: spawns CLOSED with the
-// collider armed, E flips the swing target, the pose is RE-DERIVED from t
-// every frame (setGunShopFrontDoorOpen — pure, never accumulated, the
-// Closed→Opening→Open / Open→Closing→Closed feel of every other door), and
-// the collider releases past half-open / re-arms past half-closed through the
-// same updateObjectMetadata invalidation the gate/vault/cell/stable doors use.
-const gunShopDoorUuid = GUNSHOP_DOOR_SPEC.uuid;
-const gunShopDoorSwing = { value: 0, target: 0, speed: 1 / 0.9 };
-interactions.register({
-  uuid: gunShopDoorUuid,
-  get label() {
-    return gunShopDoorSwing.target > 0.5 ? GUNSHOP_DOOR_SPEC.labelClose : GUNSHOP_DOOR_SPEC.labelOpen;
-  },
-  range: GUNSHOP_DOOR_SPEC.range,
-  getPosition: () => manager.getObject(gunShopDoorUuid)?.transform.position
-    ?? { x: GUNSHOP_SITE.x, y: 0, z: GUNSHOP_SITE.z },
-  canInteract: () => Boolean(manager.getObject(gunShopDoorUuid)),
-  onInteract: () => {
-    gunShopDoorSwing.target = gunShopDoorSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(gunShopDoorSwing.target > 0.5
-      ? `${GUNSHOP_DOOR_SPEC.labelOpen}.`
-      : `${GUNSHOP_DOOR_SPEC.labelClose}.`);
-  },
-});
-/** Advance the gun shop door swing and sync its collider to the visible leaf. */
-function updateGunShopFrontDoor(delta: number): void {
-  if (gunShopDoorSwing.value === gunShopDoorSwing.target) return;
-  const dir = Math.sign(gunShopDoorSwing.target - gunShopDoorSwing.value);
-  gunShopDoorSwing.value = THREE.MathUtils.clamp(gunShopDoorSwing.value + dir * gunShopDoorSwing.speed * delta, 0, 1);
-  const root = scene.getObjectByProperty('uuid', gunShopDoorUuid);
-  if (root) setGunShopFrontDoorOpen(root, gunShopDoorSwing.value);
-  const opened = gunShopDoorSwing.value > 0.5;
-  const def = manager.getObject(gunShopDoorUuid);
-  if (def && Boolean(def.metadata.collider) === opened) {
-    manager.updateObjectMetadata(gunShopDoorUuid, { collider: !opened });
-  }
-}
-
-// --- The BANK front door (truly openable, E) ---------------------------------
-// The entrance-door revision: the old walnut leaves were held OPEN flat
-// against the facade and read as wall boards (user report: the bank
-// «در ورودی ندارد»). This is the house door contract exactly as the sheriff
-// / gun shop / stable doors run it: spawns CLOSED with the EXACT closed-leaf
-// collider armed (BANK_DOOR_SPEC.closedCollider — collider == visual), E
-// flips the swing target, setBankFrontDoorOpen re-derives the pose from t
-// every frame, and the collider metadata swaps between the closed boxes and
-// `false` (fully released — the doorway walks) at the half-open threshold.
-const bankDoorUuid = BANK_DOOR_SPEC.uuid;
-const bankDoorSwing = { value: 0, target: 0, speed: 1 / 1.1 };
-interactions.register({
-  uuid: bankDoorUuid,
-  get label() {
-    return bankDoorSwing.target > 0.5 ? BANK_DOOR_SPEC.labelClose : BANK_DOOR_SPEC.labelOpen;
-  },
-  range: BANK_DOOR_SPEC.range,
-  getPosition: () => manager.getObject(bankDoorUuid)?.transform.position
-    ?? { x: BANK_SITE.x, y: 0, z: BANK_SITE.z },
-  canInteract: () => Boolean(manager.getObject(bankDoorUuid)),
-  onInteract: () => {
-    bankDoorSwing.target = bankDoorSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(bankDoorSwing.target > 0.5
-      ? `${BANK_DOOR_SPEC.labelClose}.`
-      : `${BANK_DOOR_SPEC.labelOpen}.`);
-  },
-});
-/** Advance the bank door swing and sync its exact collider to the pose. */
-function updateBankFrontDoor(delta: number): void {
-  if (bankDoorSwing.value === bankDoorSwing.target) return;
-  const dir = Math.sign(bankDoorSwing.target - bankDoorSwing.value);
-  bankDoorSwing.value = THREE.MathUtils.clamp(bankDoorSwing.value + dir * bankDoorSwing.speed * delta, 0, 1);
-  const root = scene.getObjectByProperty('uuid', bankDoorUuid);
-  if (root) setBankFrontDoorOpen(root, bankDoorSwing.value);
-  const opened = bankDoorSwing.value > 0.5;
-  const def = manager.getObject(bankDoorUuid);
-  const closed = JSON.stringify(def?.metadata.collider) !== JSON.stringify(opened ? false : BANK_DOOR_SPEC.closedCollider);
-  if (def && closed) {
-    manager.updateObjectMetadata(bankDoorUuid, { collider: opened ? false : BANK_DOOR_SPEC.closedCollider });
-  }
-}
-
-// --- The SALOON entrance doors (truly openable, E) ---------------------------
-// The swinging half-doors are rebuilt FULL HEIGHT and closed-by-default (the
-// user report: the bar «در ورودی ندارد» — waist-high leaves vanished against
-// the 2.3 m opening). Same house door contract: the EXACT closed-leaf
-// collider arms at spawn, E swings both leaves inward (into the bar), and
-// the collider releases fully while open — the walk-through returns.
-const saloonDoorUuid = SALOON_DOOR_SPEC.uuid;
-const saloonDoorSwing = { value: 0, target: 0, speed: 1 / 0.9 };
-interactions.register({
-  uuid: saloonDoorUuid,
-  get label() {
-    return saloonDoorSwing.target > 0.5 ? SALOON_DOOR_SPEC.labelClose : SALOON_DOOR_SPEC.labelOpen;
-  },
-  range: SALOON_DOOR_SPEC.range,
-  getPosition: () => manager.getObject(saloonDoorUuid)?.transform.position
-    ?? { x: SALOON_SITE.x, y: 0, z: SALOON_SITE.z },
-  canInteract: () => Boolean(manager.getObject(saloonDoorUuid)),
-  onInteract: () => {
-    saloonDoorSwing.target = saloonDoorSwing.target > 0.5 ? 0 : 1;
-    showStatusMessage(saloonDoorSwing.target > 0.5
-      ? `${SALOON_DOOR_SPEC.labelClose}.`
-      : `${SALOON_DOOR_SPEC.labelOpen}.`);
-  },
-});
-/** Advance the saloon door swing and sync its exact collider to the pose. */
-function updateSaloonDoors(delta: number): void {
-  if (saloonDoorSwing.value === saloonDoorSwing.target) return;
-  const dir = Math.sign(saloonDoorSwing.target - saloonDoorSwing.value);
-  saloonDoorSwing.value = THREE.MathUtils.clamp(saloonDoorSwing.value + dir * saloonDoorSwing.speed * delta, 0, 1);
-  const root = scene.getObjectByProperty('uuid', saloonDoorUuid);
-  if (root) setSaloonDoorsOpen(root, saloonDoorSwing.value);
-  const opened = saloonDoorSwing.value > 0.5;
-  const def = manager.getObject(saloonDoorUuid);
-  const closed = JSON.stringify(def?.metadata.collider) !== JSON.stringify(opened ? false : SALOON_DOOR_SPEC.closedCollider);
-  if (def && closed) {
-    manager.updateObjectMetadata(saloonDoorUuid, { collider: opened ? false : SALOON_DOOR_SPEC.closedCollider });
-  }
-}
-
-// Scratch objects for the harness-only rideCam probe (zero per-frame cost —
-// the probe runs only when a verify harness calls it).
-const headBox = new THREE.Box3();
-const headCenter = new THREE.Vector3();
-
-// Dev verification hook (write-capable, harness-only): teleports the on-foot
-// player and reads the iron-gate mechanism so the headless browser script can
-// prove the CLOSED gate blocks, the E-opened gate passes, and the vault slot
-// is genuinely walkable. Read by scripts/verify-bank-gate.cjs only.
-(window as unknown as Record<string, unknown>).__westTest = {
-  teleport: (x: number, y: number, z: number) => {
-    playerController.setPosition({ x, y, z });
-    // setPosition intentionally preserves momentum (editor placement API) —
-    // a harness teleport must NOT: the previous walk's residual velocity
-    // survives the jump and wedges the player circle into door jambs.
-    playerController.freezeMotion();
-    playerController.setBodyYaw(Math.PI); // face +Z (south, the camera default)
-  },
-  setYaw: (yaw: number) => playerController.setBodyYaw(yaw),
-  // Harness-only day/night pin: the 3-minute cycle rolls past noon in ~40 s,
-  // which makes deterministic screenshot lighting impossible without it.
-  setDayTime: (hours: number) => dayNight.setTimeOfDay(hours),
-  player: () => playerController.getPosition(),
-  yaw: () => ({ camera: playerController.getYaw(), body: playerController.getBodyYaw() }),
-  // Read-only scene handle for screenshot harnesses (spectator close-ups:
-  // hide the character root so it never occludes the inspected object).
-  scene: () => scene,
-  // Read-only camera handle for selection/verify harnesses: real projection
-  // math (fov/aspect/ matrices) instead of reconstructed bases. Never mutated.
-  camera: () => camera,
-  // Harness-ONLY camera pose (screenshot/verify servo): parks the camera at a
-  // pose aimed at a target. Effective while the gameplay rig is parked (edit
-  // mode) — gameplay frames never call it, and play mode re-parks the rig.
-  setCamera: (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
-    camera.position.set(x, y, z);
-    camera.lookAt(tx, ty, tz);
-  },
-  boundsNear: (x: number, z: number) => collisionWorld
-    .getCollisionBounds()
-    .filter((b) => b.min.x - 0.6 <= x && x <= b.max.x + 0.6 && b.min.z - 0.6 <= z && z <= b.max.z + 0.6)
-    .map((b) => ({
-      uuid: b.uuid,
-      name: manager.getObject(b.uuid)?.metadata.name ?? '',
-      min: { x: +b.min.x.toFixed(3), y: +b.min.y.toFixed(3), z: +b.min.z.toFixed(3) },
-      max: { x: +b.max.x.toFixed(3), y: +b.max.y.toFixed(3), z: +b.max.z.toFixed(3) },
-    })),
-  gateBounds: () => collisionWorld
-    .getCollisionBounds()
-    .filter((b) => b.uuid === gateUuid)
-    .map((b) => ({ min: b.min, max: b.max })),
-  gate: () => {
-    const root = scene.getObjectByProperty('uuid', gateUuid);
-    const leafW = root?.getObjectByName('secure-gate-leaf-w');
-    const leafE = root?.getObjectByName('secure-gate-leaf-e');
-    return {
-      swing: gateSwing.value,
-      target: gateSwing.target,
-      collider: manager.getObject(gateUuid)?.metadata.collider ?? null,
-      leafWYaw: leafW ? leafW.rotation.y : null,
-      leafEYaw: leafE ? leafE.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  vaultBounds: () => collisionWorld
-    .getCollisionBounds()
-    .filter((b) => b.uuid === vaultDoorUuid)
-    .map((b) => ({ min: b.min, max: b.max })),
-  vault: () => {
-    const root = scene.getObjectByProperty('uuid', vaultDoorUuid);
-    const hinge = root?.getObjectByName('bank-vault-door-hinge');
-    return {
-      swing: vaultSwing.value,
-      target: vaultSwing.target,
-      collider: manager.getObject(vaultDoorUuid)?.metadata.collider ?? null,
-      hingeYaw: hinge ? hinge.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  cell: (which: 'a' | 'b') => {
-    const uuid = which === 'a' ? SHERIFF_OBJECT_IDS.cellDoorA : SHERIFF_OBJECT_IDS.cellDoorB;
-    const root = scene.getObjectByProperty('uuid', uuid);
-    const hinge = root?.getObjectByName('jail-cell-door-hinge');
-    return {
-      swing: cellSwings.get(uuid)?.value ?? null,
-      target: cellSwings.get(uuid)?.target ?? null,
-      collider: manager.getObject(uuid)?.metadata.collider ?? null,
-      hingeYaw: hinge ? hinge.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  // The office front door: swing + explicit 4-state machine readout for the
-  // verify harness (closed → opening → open → closing → closed).
-  door: () => {
-    const root = scene.getObjectByProperty('uuid', frontDoorUuid);
-    const hinge = root?.getObjectByName('front-door-hinge');
-    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
-    return {
-      swing: frontSwing.value,
-      target: frontSwing.target,
-      state: at(frontSwing.value, frontSwing.target),
-      collider: manager.getObject(frontDoorUuid)?.metadata.collider ?? null,
-      hingeYaw: hinge ? hinge.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  // The stable doors: 'gate' | 's1'…'s6' | 'tack' | 'feed' | 'staff' — swing
-  // + 4-state readout + collider + hinge/leaf yaw for the verify harness.
-  stableDoor: (which: string) => {
-    const uuid = which === 'gate'
-      ? STABLE_OBJECT_IDS.gate
-      : which.startsWith('s') && which.length === 2
-        ? [STABLE_OBJECT_IDS.stallDoor1, STABLE_OBJECT_IDS.stallDoor2, STABLE_OBJECT_IDS.stallDoor3,
-           STABLE_OBJECT_IDS.stallDoor4, STABLE_OBJECT_IDS.stallDoor5, STABLE_OBJECT_IDS.stallDoor6][Number(which[1]) - 1]
-        : which === 'tack'
-          ? STABLE_OBJECT_IDS.tackDoor
-          : which === 'feed'
-            ? STABLE_OBJECT_IDS.feedDoor
-            : which === 'staff' ? STABLE_OBJECT_IDS.staffDoor : null;
-    if (!uuid) return null;
-    const swing = stableSwings.get(uuid);
-    const root = scene.getObjectByProperty('uuid', uuid);
-    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
-    const leafW = root?.getObjectByName('gate-leaf-w-hinge');
-    const hinge = root?.getObjectByName('door-hinge');
-    return {
-      swing: swing ? swing.value : null,
-      target: swing ? swing.target : null,
-      state: swing ? at(swing.value, swing.target) : null,
-      collider: manager.getObject(uuid)?.metadata.collider ?? null,
-      leafYawW: leafW ? leafW.rotation.y : null,
-      hingeYaw: hinge ? hinge.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  has: (uuid: string) => Boolean(scene.getObjectByProperty('uuid', uuid)),
-  // --- Fix-round harness hooks (read-only state probes) ---------------------
-  // Camera mode + a mode toggle the verify harness can drive (mirrors V).
-  cameraMode: () => playerController.getCameraMode(),
-  toggleCameraMode: () => playerController.toggleCameraMode(),
-  // Horse + riding camera state: yaw/speed/turnRate snapshot, the ride-cam
-  // yaw, the dismount camera plan flag and the mount/dismount anim clocks.
-  horse: () => {
-    const snap = horse.getSnapshot();
-    return {
-      yaw: snap.yaw,
-      speed: snap.speed,
-      turnRate: snap.turnRate,
-      mounted: snap.mounted,
-      rideYaw,
-      riding: isRiding(),
-      mountAnim: mountAnim !== null,
-      dismountAnim: dismountAnim !== null,
-      dismountRestoreMode,
-      playerMode: playerController.getCameraMode(),
-      bodyYaw: playerController.getBodyYaw(),
-      horsePos: snap.position,
-    };
-  },
-  // Harness-ONLY horse teleport (boundary round): parks the horse at a spot
-  // through the REAL restore path (the same clamp the save/load uses), so
-  // the verify script can prove a horse placed near the playable boundary
-  // survives its first update WITHOUT snapping back toward the center.
-  placeHorse: (x: number, z: number) => {
-    horse.restore({ position: { x, y: 0, z }, yaw: 0, health: 100, stamina: 100, alive: true });
-    return horse.getPosition();
-  },
-  // FP ride-cam probe (the mounted-eye revision): camera world pose + the
-  // head landmark projections that prove the horse's head is IN the frustum
-  // at the BOTTOM of the view. All read-only real projection math.
-  rideCam: () => {
-    const snap = horse.getSnapshot();
-    headBox.setFromObject(horseModel.joints.head);
-    headBox.getCenter(headCenter);
-    // Muzzle region: front-bottom-center of the head subtree box (the head
-    // faces −Z at neutral pose). Ears: top corners of the same box.
-    const muzzle = new THREE.Vector3(headCenter.x, headBox.min.y + 0.10, headBox.min.z).project(camera);
-    const earL = new THREE.Vector3(headBox.min.x + 0.04, headBox.max.y, headCenter.z).project(camera);
-    const earR = new THREE.Vector3(headBox.max.x - 0.04, headBox.max.y, headCenter.z).project(camera);
-    return {
-      mounted: snap.mounted,
-      mode: playerController.getCameraMode(),
-      camY: camera.position.y,
-      camX: camera.position.x,
-      camZ: camera.position.z,
-      horseGroundY: snap.position.y,
-      expectedEyeY: snap.position.y + RIDER_SEATED_EYE_Y,
-      camPitch: camera.rotation.x,
-      camYaw: camera.rotation.y,
-      muzzleNdc: { x: muzzle.x, y: muzzle.y, z: muzzle.z },
-      earLNdc: { x: earL.x, y: earL.y, z: earL.z },
-      earRNdc: { x: earR.x, y: earR.y, z: earR.z },
-    };
-  },
-  // Harness-ONLY object spawn/despawn (verify-town-exterior): registers a
-  // full definition through the REAL registerObject path (adapter
-  // materialises it, CollisionWorld picks up metadata colliders, the editor
-  // save hook does NOT fire). Despawn mirrors it. Nothing here persists —
-  // only editor mutations trigger storage.saveFromManager.
-  spawnTestDef: (def: { uuid: string; assetType: string; position: { x: number; y: number; z: number }; rotationY?: number; scale?: number; name: string; metadata?: Record<string, unknown> }) => {
-    const created = manager.registerObject({
-      uuid: def.uuid,
-      assetType: def.assetType,
-      transform: {
-        position: def.position,
-        rotation: { x: 0, y: def.rotationY ?? 0, z: 0 },
-        scale: { x: def.scale ?? 1, y: def.scale ?? 1, z: def.scale ?? 1 },
-      },
-      metadata: { name: def.name, editable: true, ...(def.metadata ?? {}) },
-    });
-    return { uuid: created.uuid, count: manager.getObjectCount() };
-  },
-  despawnTestDef: (uuid: string) => manager.unregisterObject(uuid),
-  // The town-exterior collider table (single source of truth) so harnesses
-  // can attach the exact metadata colliders when spawning test defs.
-  townExteriorColliders: TOWN_EXTERIOR_COLLIDERS,
-  meshStats: (uuid: string) => {
-    const root = scene.getObjectByProperty('uuid', uuid);
-    if (!root) return null;
-    let meshes = 0;
-    let vertices = 0;
-    const materials = new Set<string>();
-    const geometries = new Set<string>();
-    root.updateMatrixWorld(true);
-    root.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      meshes += 1;
-      if (m.geometry.attributes.position) vertices += m.geometry.attributes.position.count;
-      materials.add((Array.isArray(m.material) ? m.material[0] : m.material).uuid);
-      geometries.add(m.geometry.uuid);
-    });
-    const box = new THREE.Box3().setFromObject(root);
-    return {
-      meshes, vertices,
-      materials: materials.size,
-      geometries: geometries.size,
-      bbox: {
-        min: { x: +box.min.x.toFixed(3), y: +box.min.y.toFixed(3), z: +box.min.z.toFixed(3) },
-        max: { x: +box.max.x.toFixed(3), y: +box.max.y.toFixed(3), z: +box.max.z.toFixed(3) },
-      },
-    };
-  },
-  // The gun shop front door: swing + 4-state readout + collider + hinge yaw
-  // for the verify harness (same contract as the office `door` hook).
-  gunshopDoor: () => {
-    const root = scene.getObjectByProperty('uuid', gunShopDoorUuid);
-    const hinge = root?.getObjectByName('front-door-hinge');
-    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
-    return {
-      swing: gunShopDoorSwing.value,
-      target: gunShopDoorSwing.target,
-      state: at(gunShopDoorSwing.value, gunShopDoorSwing.target),
-      collider: manager.getObject(gunShopDoorUuid)?.metadata.collider ?? null,
-      hingeYaw: hinge ? hinge.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  // The bank + saloon entrance doors: swing + 4-state readout + collider +
-  // BOTH leaf hinge yaws (the entrance-door revision harness contract).
-  bankDoor: () => {
-    const root = scene.getObjectByProperty('uuid', bankDoorUuid);
-    const hw = root?.getObjectByName('bank-front-door-hinge-w');
-    const he = root?.getObjectByName('bank-front-door-hinge-e');
-    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
-    return {
-      swing: bankDoorSwing.value,
-      target: bankDoorSwing.target,
-      state: at(bankDoorSwing.value, bankDoorSwing.target),
-      collider: manager.getObject(bankDoorUuid)?.metadata.collider ?? null,
-      hingeYawW: hw ? hw.rotation.y : null,
-      hingeYawE: he ? he.rotation.y : null,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  saloonDoor: () => {
-    const root = scene.getObjectByProperty('uuid', saloonDoorUuid);
-    const hl = root?.getObjectByName('swinging-door-left-hinge');
-    const hr = root?.getObjectByName('swinging-door-right-hinge');
-    const at = (v: number, t: number) => (v === t ? (t > 0.5 ? 'open' : 'closed') : t > 0.5 ? 'opening' : 'closing');
-    // Leaf VISIBILITY probes (the frozen-door regression): a hinge whose leaf
-    // meshes were merge-baked into a static bucket still rotates EMPTY — yaw
-    // checks alone cannot catch it. Count the meshes living under each hinge
-    // and measure the leaf face's world Z so the harness can assert the leaf
-    // physically moves when the door opens.
-    const leafProbe = (hinge: THREE.Object3D | null | undefined) => {
-      if (!hinge) return { meshes: 0, faceZ: null as number | null };
-      let meshes = 0;
-      let faceZ: number | null = null;
-      hinge.updateMatrixWorld(true);
-      hinge.traverse((o) => {
-        if (!(o as THREE.Mesh).isMesh) return;
-        meshes += 1;
-        const g = (o as THREE.Mesh).geometry;
-        if (!faceZ) {
-          if (!g.boundingBox) g.computeBoundingBox();
-          const p = new THREE.Vector3(
-            (g.boundingBox!.min.x + g.boundingBox!.max.x) / 2,
-            (g.boundingBox!.min.y + g.boundingBox!.max.y) / 2,
-            (g.boundingBox!.min.z + g.boundingBox!.max.z) / 2,
-          ).applyMatrix4(o.matrixWorld);
-          faceZ = p.z;
-        }
-      });
-      return { meshes, faceZ };
-    };
-    const pl = leafProbe(hl);
-    const pr = leafProbe(hr);
-    return {
-      swing: saloonDoorSwing.value,
-      target: saloonDoorSwing.target,
-      state: at(saloonDoorSwing.value, saloonDoorSwing.target),
-      collider: manager.getObject(saloonDoorUuid)?.metadata.collider ?? null,
-      hingeYawL: hl ? hl.rotation.y : null,
-      hingeYawR: hr ? hr.rotation.y : null,
-      leafMeshesL: pl.meshes,
-      leafMeshesR: pr.meshes,
-      leafFaceZL: pl.faceZ,
-      leafFaceZR: pr.faceZ,
-      prompt: document.getElementById('interact-prompt')?.textContent ?? '',
-    };
-  },
-  // Read-only registry dump for the harness probes: every managed definition
-  // (uuid/assetType/transform/metadata) exactly as the editor sees it.
-  objects: () => manager.getAllObjects(),
-  // Read-only renderer.info snapshot for the perf harness (§9 baseline):
-  // last-frame draw calls / points / triangles exactly as the driver saw them.
-  stats: () => ({
-    calls: renderer.info.render.calls,
-    tris: renderer.info.render.triangles,
-    lines: renderer.info.render.lines,
-    geometries: renderer.info.memory.geometries,
-    textures: renderer.info.memory.textures,
-    programs: renderer.info.programs?.length ?? 0,
-  }),
-  // --- Authored-layout reset (the editor's "put it back" action) ------------
-  // Same code path as the selection panel's reset buttons: restore through
-  // updateObjectTransform, then persist. Harness-only mirror for the probes.
-  authoredCount: () => authoredLayout.size,
-  isModifiedVsAuthored: (uuid: string) => {
-    const def = manager.getObject(uuid);
-    return def ? authoredLayout.isModified(def) : null;
-  },
-  // Read-only authored transform clone (restore-verify harness compares the
-  // restored position against it).
-  authoredTransform: (uuid: string) => authoredLayout.getTransform(uuid),
-  resetObject: (uuid: string) => resetObjectToAuthored(uuid),
-  resetAll: () => resetAllToAuthored(),
-  // --- geometry-verify probes (read-only, harness-only) ---------------------
-  // World AABB of one managed object + the y-span of every mesh part — used
-  // to prove the cell-door frames carry NO floating strip (the old header at
-  // y≈2.25 and the floor sill read as two stray "stains" once open).
-  probe: (uuid: string) => {
-    const root = scene.getObjectByProperty('uuid', uuid);
-    if (!root) return null;
-    root.updateWorldMatrix(true, true);
-    const box = new THREE.Box3().setFromObject(root);
-    const parts: { name: string; y: [number, number] }[] = [];
-    root.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      const b = new THREE.Box3().setFromObject(m);
-      parts.push({ name: m.name || m.parent?.name || '<part>', y: [+b.min.y.toFixed(3), +b.max.y.toFixed(3)] });
-    });
-    return {
-      min: { x: +box.min.x.toFixed(3), y: +box.min.y.toFixed(3), z: +box.min.z.toFixed(3) },
-      max: { x: +box.max.x.toFixed(3), y: +box.max.y.toFixed(3), z: +box.max.z.toFixed(3) },
-      parts,
-    };
-  },
-  // Census of every MESH whose world position falls inside a box, attributed
-  // to its managed object — proves nothing foreign floats in a door gap.
-  strays: (min: [number, number, number], max: [number, number, number]) => {
-    const out: Record<string, number> = {};
-    for (const uuid of adapter.getActiveUUIDs()) {
-      const root = scene.getObjectByProperty('uuid', uuid);
-      if (!root) continue;
-      root.updateWorldMatrix(true, true);
-      root.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        const p = m.getWorldPosition(new THREE.Vector3());
-        if (p.x < min[0] || p.x > max[0] || p.y < min[1] || p.y > max[1] || p.z < min[2] || p.z > max[2]) return;
-        const key = `${manager.getObject(uuid)?.metadata.name ?? uuid} / ${m.name || '<part>'}`;
-        out[key] = (out[key] ?? 0) + 1;
-      });
-    }
-    return out;
-  },
-  // World centers of every window-glass mesh in the sheriff shell — proves
-  // the panes sit INSIDE their wall bands (east/west used to float mid-room).
-  windowGlass: () => {
-    const shell = scene.getObjectByProperty('uuid', SHERIFF_OBJECT_IDS.building);
-    if (!shell) return null;
-    shell.updateWorldMatrix(true, true);
-    const out: { name: string; x: number; y: number; z: number }[] = [];
-    shell.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh || m.name !== 'window-glass') return;
-      const p = m.getWorldPosition(new THREE.Vector3());
-      out.push({ name: m.parent?.name ?? '', x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3) });
-    });
-    return out;
-  },
-};
-
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffd166);
-selectionBox.visible = false;
-scene.add(selectionBox);
-
-function refreshSelectionHelper(): void {
-  const selectedUuid = editor.getSelectedUuid();
-  if (!selectedUuid) { selectionBox.visible = false; return; }
-  const mesh = scene.getObjectByProperty('uuid', selectedUuid);
-  if (!mesh) { selectionBox.visible = false; return; }
-  selectionBox.box.setFromObject(mesh);
-  selectionBox.visible = true;
-}
-
-function findManagedUuid(object: THREE.Object3D): string | null {
-  let current: THREE.Object3D | null = object;
-  while (current) {
-    if (manager.has(current.uuid)) return current.uuid;
-    current = current.parent;
-  }
-  return null;
-}
-
-function updatePointerFromEvent(event: MouseEvent): void {
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-}
-
-/**
- * THE one object-picking path (the editor's raycast → registry funnel):
- * candidates = every ACTIVE managed object (the renderer adapter's mirror of
- * the registry — nothing is filtered out here), raycast recursive so child
- * meshes resolve, then walk UP the parent chain to the managed root.
- * Returns the closest hit with its distance so the gizmo arbitration can
- * compare it against transparent handle proxies.
- */
-function firstManagedHit(): { uuid: string; distance: number } | null {
-  const candidates = adapter.getActiveUUIDs()
-    .map((uuid) => scene.getObjectByProperty('uuid', uuid))
-    .filter((obj): obj is THREE.Object3D => Boolean(obj));
-  const hit = raycaster.intersectObjects(candidates, true)[0];
-  if (!hit) return null;
-  const uuid = findManagedUuid(hit.object);
-  if (!uuid) return null;
-  return { uuid, distance: hit.distance };
-}
-
-function selectObjectFromPointer(event: MouseEvent): void {
-  if (!modes.isEdit()) return;
-  updatePointerFromEvent(event);
-  raycaster.setFromCamera(pointer, camera);
-  const managed = firstManagedHit();
-  editor.select(managed ? managed.uuid : null);
-  refreshSelectionHelper();
-  updateEditorHud();
-}
-
-function updateEditorHud(): void {
-  const mode = document.getElementById('editor-mode');
-  const selected = document.getElementById('editor-selection');
-  const cameraLabel = document.getElementById('camera-mode');
-  // The map row reads the SHARED world constant — the old hardcoded
-  // "100 × 100" was a stale assumption from the previous, smaller map.
-  const mapRow = document.getElementById('map-size');
-  if (mapRow) mapRow.textContent = `${TOWN_GROUND_SIZE} × ${TOWN_GROUND_SIZE}`;
-  if (mode) mode.textContent = modes.isEdit() ? 'EDIT MODE' : 'PLAY MODE';
-  if (selected) {
-    const selectedUuid = editor.getSelectedUuid();
-    selected.textContent = selectedUuid ? manager.getObject(selectedUuid)?.metadata.name ?? selectedUuid : 'None';
-  }
-  if (cameraLabel) {
-    // Edit owns the camera whenever it is open (it may sit anywhere a
-    // Creative session left it) — reflect ownership, not the player's mode.
-    cameraLabel.textContent = modes.isEdit()
-      ? 'EDIT CAMERA'
-      : modes.isCreative()
-        ? 'CREATIVE FLIGHT'
-        : isRiding()
-          ? (playerController.getCameraMode() === 'third_person' ? 'RIDE · THIRD PERSON' : 'RIDE · FIRST PERSON')
-          : playerController.getCameraMode() === 'third_person' ? 'THIRD PERSON' : 'FIRST PERSON';
-  }
-}
-
-function updateControlHint(): void {
-  const hint = document.getElementById('control-hint');
-  if (!hint) return;
-  if (modes.isEdit()) {
-    hint.textContent = 'TAB play · drag gizmo axes/rings · type values in panel · arrows move · PageUp/Down height · Q/E R/F T/G rotate 15° (Shift 45°)';
-    return;
-  }
-  if (isRiding()) {
-    hint.textContent = 'W walk · W+Shift gallop · hold S brake · S at stop = reverse · A/D steer · RMB look · V camera · E dismount';
-    return;
-  }
-  hint.textContent = 'WASD move · Hold RIGHT mouse = look · Shift sprint · Space jump · C/Ctrl crouch · E interact/mount · B come · N stay · V camera · F creative fly · H/J player debug · [ ] horse debug · R respawn · TAB edit';
-}
-
-function updateSelectionPanel(): void {
-  const selectedUuid = editor.getSelectedUuid();
-  const definition = selectedUuid ? manager.getObject(selectedUuid) : undefined;
-  const info = formatSelectedObjectInfo(definition);
-  const panel = document.getElementById('selection-panel');
-  const name = document.getElementById('sel-name');
-  const uuid = document.getElementById('sel-uuid');
-  if (panel) panel.classList.toggle('no-selection', !definition);
-  if (name) name.textContent = info.name;
-  if (uuid) {
-    // The UUID stays a debug-only annotation next to the human-readable name.
-    uuid.textContent = definition ? `debug: ${info.uuid}` : 'No selection';
-    uuid.title = definition ? `debug uuid: ${info.uuid}` : '';
-  }
-  for (const binding of PANEL_INPUTS) {
-    const input = document.getElementById(binding.id) as HTMLInputElement | null;
-    if (!input) continue;
-    if (!definition) {
-      input.value = '';
-      input.disabled = true;
-      continue;
-    }
-    input.disabled = false;
-    // Never clobber the field the user is currently typing in; every other
-    // field refreshes live from manager state (gizmo/keyboard/numeric edits
-    // all land in the same place).
-    if (document.activeElement === input) continue;
-    input.value = formatPanelNumber(definition.transform[binding.group][binding.axis]);
-  }
-  // Reset actions: «بازنشانی شیء» applies only when the selection deviates
-  // from its authored transform (and edit mode owns the mouse); «بازگردانی
-  // همه» is armed whenever edit mode is active. Both refresh at HUD rate.
-  if (selResetButton) {
-    selResetButton.disabled = !modes.isEdit() || !definition
-      || !authoredLayout.has(definition.uuid)
-      || !authoredLayout.isModified(definition);
-  }
-  if (selResetAllButton) selResetAllButton.disabled = !modes.isEdit() || authoredLayout.size === 0;
-}
-
-// Editable numeric fields of the selection panel (Position/Rotation/Scale).
-const PANEL_INPUTS: Array<{ id: string; group: PanelValueGroup; axis: PanelAxis }> = [
-  { id: 'sel-pos-x', group: 'position', axis: 'x' },
-  { id: 'sel-pos-y', group: 'position', axis: 'y' },
-  { id: 'sel-pos-z', group: 'position', axis: 'z' },
-  { id: 'sel-rot-x', group: 'rotation', axis: 'x' },
-  { id: 'sel-rot-y', group: 'rotation', axis: 'y' },
-  { id: 'sel-rot-z', group: 'rotation', axis: 'z' },
-  { id: 'sel-scl-x', group: 'scale', axis: 'x' },
-  { id: 'sel-scl-y', group: 'scale', axis: 'y' },
-  { id: 'sel-scl-z', group: 'scale', axis: 'z' },
-];
-
-function applyPanelInput(binding: { group: PanelValueGroup; axis: PanelAxis }, input: HTMLInputElement): void {
-  const value = parsePanelNumber(input.value);
-  if (value === null) return; // empty / partial draft — ignore, keep current value
-  if (editor.setSelectedTransform(buildPanelTransformPatch(binding.group, binding.axis, value))) {
-    refreshSelectionHelper();
-    updateEditorHud();
-  }
-}
-
-for (const binding of PANEL_INPUTS) {
-  const input = document.getElementById(binding.id) as HTMLInputElement | null;
-  if (!input) continue;
-  // 'input' fires on typing AND on the spinner arrows, so edits apply
-  // immediately through ObjectEditorController -> updateObjectTransform.
-  input.addEventListener('input', () => applyPanelInput(binding, input));
-}
-
-// --- Authored-layout reset buttons (selection panel actions row) ------------
-// «بازنشانی شیء» puts the SELECTED object back to the transform its layout
-// table authored; «بازگردانی همه» puts EVERY deviating object back. Both run
-// through resetObjectToAuthored / resetAllToAuthored — the official
-// updateObjectTransform funnel — so renderer sync, the change log and the
-// autosave behave exactly like a hand edit. Reset keeps user renames: only
-// transforms are restored, metadata never.
-const selResetButton = document.getElementById('sel-reset') as HTMLButtonElement | null;
-const selResetAllButton = document.getElementById('sel-reset-all') as HTMLButtonElement | null;
-let selResetFlashTimer = 0;
-function flashResetFeedback(button: HTMLButtonElement | null, label: string): void {
-  if (!button) return;
-  const original = button.dataset.originalLabel ?? button.textContent ?? label;
-  button.dataset.originalLabel = original;
-  button.textContent = 'انجام شد ✓';
-  button.classList.add('done');
-  window.clearTimeout(selResetFlashTimer);
-  selResetFlashTimer = window.setTimeout(() => {
-    button.textContent = original;
-    button.classList.remove('done');
-  }, 1400);
-}
-selResetButton?.addEventListener('click', () => {
-  const uuid = editor.getSelectedUuid();
-  if (!uuid || !modes.isEdit()) return;
-  if (resetObjectToAuthored(uuid)) flashResetFeedback(selResetButton, 'بازنشانی شیء');
-});
-selResetAllButton?.addEventListener('click', () => {
-  if (!modes.isEdit()) return;
-  const restored = resetAllToAuthored();
-  if (restored > 0) flashResetFeedback(selResetAllButton, 'بازگردانی همه');
-  showStatusMessage(restored > 0
-    ? `${restored} شیء به چیدمان اصلی بازگشت.`
-    : 'همهٔ اشیاء از قبل سر جای اصلی خود هستند.');
-});
-
-function updateSaveStatus(): void {
-  const saved = document.getElementById('save-status');
-  if (!saved) return;
-  saved.textContent = storage.hasSavedScene() ? `Saved ${new Date().toLocaleTimeString()}` : 'No saved scene';
-}
-
-// --- Last-object-change panel (TEST panel, bottom-right) --------------------
-// Populated by the updateObjectTransform wrapper above. The panel shows ONLY
-// what is needed to reconstruct the object's exact state across the last
-// mutation: Name, UUID, the full Initial transform (before the mutation) and
-// the full Final transform (after it) — position, rotation and scale in full,
-// even when the patch touched just one group. No change/action line, no
-// timestamp. The COPY button places the panel's entire visible content in the
-// clipboard (same strings, same fixed 3-decimal precision), so the text can
-// be handed to another AI to reproduce the change 1:1.
-interface Vec3Like {
-  x: number;
-  y: number;
-  z: number;
-}
-interface ObjectChangeRecord {
-  name: string;
-  uuid: string;
-  before: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like };
-  after: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like };
-}
-let lastObjectChange: ObjectChangeRecord | null = null;
-
-/** Fixed 3-decimal formatting — stable for display AND clipboard round-trips. */
-const vecText = (v: Vec3Like): string => `x=${v.x.toFixed(3)} y=${v.y.toFixed(3)} z=${v.z.toFixed(3)}`;
-const rotText = (v: Vec3Like): string => `x=${v.x.toFixed(3)}° y=${v.y.toFixed(3)}° z=${v.z.toFixed(3)}°`;
-
-const sameVec3 = (a: Vec3Like, b: Vec3Like): boolean =>
-  a.x === b.x && a.y === b.y && a.z === b.z;
-const sameTransform = (
-  a: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like },
-  b: { position: Vec3Like; rotation: Vec3Like; scale: Vec3Like },
-): boolean =>
-  sameVec3(a.position, b.position) && sameVec3(a.rotation, b.rotation) && sameVec3(a.scale, b.scale);
-
-function noteObjectChange(
-  uuid: string,
-  name: string,
-  before: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>,
-  after: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>,
-): void {
-  // The wrapper hands us the manager's own snapshots, so `before` is the
-  // transform BEFORE the mutation and `after` the one AFTER it. A deduped
-  // no-op call (before === after) is not a mutation — keep the panel as-is.
-  if (sameTransform(before, after)) return;
-  // The record must survive the call — re-clone so later mutations of the
-  // registry can never rewrite the panel's history.
-  const cloneVec = (v: Vec3Like): Vec3Like => ({ x: v.x, y: v.y, z: v.z });
-  const cloneState = (t: Readonly<{ position: Vec3Like; rotation: Vec3Like; scale: Vec3Like }>) => ({
-    position: cloneVec(t.position),
-    rotation: cloneVec(t.rotation),
-    scale: cloneVec(t.scale),
-  });
-  lastObjectChange = {
-    name,
-    uuid,
-    before: cloneState(before),
-    after: cloneState(after),
-  };
-  updateObjectLogPanel();
-}
-
-/**
- * The panel's visible content, as plain text. This ONE formatter feeds both
- * the DOM rows and the clipboard, so what the user sees is byte-for-byte
- * what gets copied — nothing invisible is ever added, nothing visible is
- * ever left out.
- */
-function formatObjectLogText(record: ObjectChangeRecord): string {
-  const block = (label: string, t: ObjectChangeRecord['before']): string[] => [
-    `${label}:`,
-    `Position: ${vecText(t.position)}`,
-    `Rotation: ${rotText(t.rotation)}`,
-    `Scale: ${vecText(t.scale)}`,
-  ];
-  return [
-    `Name: ${record.name}`,
-    `UUID: ${record.uuid}`,
-    '',
-    ...block('Initial', record.before),
-    '',
-    ...block('Final', record.after),
-  ].join('\n');
-}
-
-function updateObjectLogPanel(): void {
-  const record = lastObjectChange;
-  const empty = document.getElementById('object-log-empty');
-  const body = document.getElementById('object-log');
-  if (!body || !record) return;
-  if (empty) empty.hidden = true;
-  body.hidden = false;
-  const set = (id: string, text: string): void => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  };
-  set('objlog-name', record.name);
-  set('objlog-uuid', record.uuid);
-  set('objlog-ipos', vecText(record.before.position));
-  set('objlog-irot', rotText(record.before.rotation));
-  set('objlog-iscl', vecText(record.before.scale));
-  set('objlog-fpos', vecText(record.after.position));
-  set('objlog-frot', rotText(record.after.rotation));
-  set('objlog-fscl', vecText(record.after.scale));
-}
-
-// COPY button: places the panel's ENTIRE visible content (Name, UUID, Initial
-// block, Final block) on the clipboard via the async Clipboard API, with a
-// textarea/execCommand fallback for non-secure contexts. Button text flashes
-// "COPIED ✓" so the click is confirmed without a console.
-const objLogCopyButton = document.getElementById('objlog-copy') as HTMLButtonElement | null;
-let objLogCopyResetTimer = 0;
-function flashCopyFeedback(): void {
-  if (!objLogCopyButton) return;
-  objLogCopyButton.textContent = 'COPIED ✓';
-  objLogCopyButton.classList.add('copied');
-  window.clearTimeout(objLogCopyResetTimer);
-  objLogCopyResetTimer = window.setTimeout(() => {
-    objLogCopyButton.textContent = 'COPY';
-    objLogCopyButton.classList.remove('copied');
-  }, 1400);
-}
-function copyObjectLogFallback(text: string): boolean {
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  area.select();
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch {
-    ok = false;
-  }
-  area.remove();
-  return ok;
-}
-objLogCopyButton?.addEventListener('click', () => {
-  const record = lastObjectChange;
-  if (!record || !objLogCopyButton) return;
-  const text = formatObjectLogText(record);
-  const done = (ok: boolean): void => {
-    if (ok) flashCopyFeedback();
-    else objLogCopyButton.textContent = 'COPY FAILED';
-  };
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => done(true))
-      .catch(() => done(copyObjectLogFallback(text)));
-  } else {
-    done(copyObjectLogFallback(text));
-  }
+// Dev verification hook (write-capable, harness-only): teleports, day-pinning,
+// camera parking, door/ride/geometry probes. The full probe contract lives in
+// game/testHooks.ts — the composition root only wires the context together.
+// The horse rig is declared later in this module, so its two providers stay
+// lazy (evaluated at probe time, never at installation time).
+(window as unknown as Record<string, unknown>).__westTest = createTestHooks({
+  scene,
+  camera,
+  renderer,
+  manager,
+  adapter,
+  collisionWorld,
+  playerController,
+  dayNight,
+  horse: () => rig.horse,
+  horseModelHead: () => rig.horseModel.joints.head,
+  authoredLayout,
+  resetObjectToAuthored,
+  resetAllToAuthored,
+  isRiding,
+  doors: doorSystem.harness,
+  rideState: () => rig.getRideState(),
 });
 
 function loadSavedScene(): void {
@@ -1717,35 +314,10 @@ function loadSavedScene(): void {
     // LocalSceneStorage keeps the raw payload, so a newer build can recover it.
     console.warn('[playable-map] failed to load saved scene — starting with the default map', err);
   }
-  // The gate and vault door VISUALS are rebuilt closed by the factories every
-  // boot; force the saved metadata to match (a save taken mid-open would
-  // otherwise leave the bars/disc walkable while looking shut).
-  const gateDef = manager.getObject(gateUuid);
-  if (gateDef && gateDef.metadata.collider !== true) {
-    manager.updateObjectMetadata(gateUuid, { collider: true });
-  }
-  const vaultDef = manager.getObject(vaultDoorUuid);
-  if (vaultDef && vaultDef.metadata.collider !== true) {
-    manager.updateObjectMetadata(vaultDoorUuid, { collider: true });
-  }
-  // Cell doors likewise rebuild closed every boot.
-  for (const spec of cellDoorSpecs) {
-    const def = manager.getObject(spec.uuid);
-    if (def && def.metadata.collider !== true) {
-      manager.updateObjectMetadata(spec.uuid, { collider: true });
-    }
-  }
-  // The bank + saloon entrance doors likewise rebuild CLOSED every boot (the
-  // factories build the t=0 pose); force the saved metadata back onto the
-  // exact closed-leaf collider so a save taken mid-open can never leave a
-  // closed-looking door walkable.
-  for (const doorSpec of [BANK_DOOR_SPEC, SALOON_DOOR_SPEC]) {
-    const def = manager.getObject(doorSpec.uuid);
-    if (def && JSON.stringify(def.metadata.collider) !== JSON.stringify(doorSpec.closedCollider)) {
-      manager.updateObjectMetadata(doorSpec.uuid, { collider: doorSpec.closedCollider });
-    }
-  }
-  updateSaveStatus();
+  // Doors rebuild closed every boot; force saved metadata to match so a
+  // save taken mid-open can never leave a closed-looking door walkable.
+  doorSystem.rearmClosedAfterLoad();
+  ui.updateSaveStatus();
 }
 
 /**
@@ -1818,6 +390,58 @@ const modes = new GameModeController({
   },
 });
 
+// --- Editor UI (selection, panels, hints, object log, gizmo mouse) ----------
+// One module owns every editor-facing DOM surface + the gizmo pointer
+// interaction; see game/editorUi.ts. `isRiding` is late-bound — the horse
+// rig exists further down this module and the closures only run post-boot.
+const ui = createEditorUi({
+  scene,
+  camera,
+  rendererDomElement: renderer.domElement,
+  manager,
+  adapter,
+  editor,
+  gizmo,
+  modes,
+  playerController,
+  isRiding: () => isRiding(),
+  authoredLayout,
+  storage,
+  showStatusMessage,
+  resetObjectToAuthored,
+  resetAllToAuthored,
+});
+
+const mouseLook = new MouseLookController();
+
+// --- Horse system (Part 3) ---------------------------------------------------
+// The full companion-horse rig (model/animator/AI/persistence, riding camera,
+// staged mount/dismount choreography, rider + horse sync, periodic save) lives
+// in game/horseRig.ts. `isRiding` stays a hoisted module function so the
+// editor-UI closure above and every gameplay path below read the live state.
+const rig = createHorseRig({
+  scene,
+  camera,
+  collisionWorld,
+  playerController,
+  input,
+  interactions,
+  mouseLook,
+  character,
+  characterAnimator,
+  characterStates,
+  thirdPersonCamera,
+  showStatusMessage,
+  notifyEditorHud: () => ui.updateEditorHud(),
+  notifyControlHint: () => ui.updateControlHint(),
+});
+
+/** The rider is mounted exactly when the character root is parented to the
+ *  saddle socket — delegated to the rig (single source of truth). */
+function isRiding(): boolean {
+  return rig.isRiding();
+}
+
 /**
  * Mode wiring — the ONE place that mirrors the game mode into the input
  * systems and HUD. Every transition funnels through GameModeController's
@@ -1845,8 +469,8 @@ function applyModeState(): void {
   // biome contract). Edit mode keeps it for placement reference.
   grid.visible = editMode;
   if (editMode) mouseLook.cancel(); // a held right-drag must not survive the mode switch
-  updateEditorHud();
-  updateControlHint();
+  ui.updateEditorHud();
+  ui.updateControlHint();
 }
 
 window.addEventListener('keydown', (event) => {
@@ -1863,7 +487,7 @@ window.addEventListener('keydown', (event) => {
       // Entering Edit Mode (from Play OR Creative). The rider dismounts
       // first — the editor owns the world, nobody rides during editing —
       // and INSTANTLY: the editor must not wait for the choreography.
-      if (isRiding()) dismountHorse({ instant: true });
+      if (isRiding()) rig.dismountHorse({ instant: true });
       modes.enterEdit(); // parks the camera EXACTLY where it is — no snap
     } else {
       // Leaving Edit Mode hands the camera back to the session's ORIGIN
@@ -1873,7 +497,7 @@ window.addEventListener('keydown', (event) => {
       modes.exitEdit();
     }
 
-    refreshSelectionHelper();
+    ui.refreshSelectionHelper();
     return;
   }
 
@@ -1895,20 +519,20 @@ window.addEventListener('keydown', (event) => {
   //   meaning anywhere in the game (a Shift-modified B/N would collide with
   //   sprint+command and leave one key carrying two meanings).
   if (modes.isPlay()) {
-    if (event.code === 'KeyB' && !horse.isMounted()) {
-      if (horse.summon()) showStatusMessage('COME — your horse makes its way to you.');
-      else showStatusMessage(`COME ready in ${horse.summonCooldown.toFixed(1)}s`);
+    if (event.code === 'KeyB' && !rig.horse.isMounted()) {
+      if (rig.horse.summon()) showStatusMessage('COME — your horse makes its way to you.');
+      else showStatusMessage(`COME ready in ${rig.horse.summonCooldown.toFixed(1)}s`);
     }
-    if (event.code === 'KeyN' && !horse.isMounted()) {
-      if (horse.stay()) showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Stay released.');
-      else showStatusMessage(horse.isStaying() ? 'STAY — your horse waits here.' : 'Your horse cannot stay right now.');
+    if (event.code === 'KeyN' && !rig.horse.isMounted()) {
+      if (rig.horse.stay()) showStatusMessage(rig.horse.isStaying() ? 'STAY — your horse waits here.' : 'Stay released.');
+      else showStatusMessage(rig.horse.isStaying() ? 'STAY — your horse waits here.' : 'Your horse cannot stay right now.');
     }
     if (event.code === 'BracketLeft') {
       // DEBUG ONLY: exercise horse damage/flee/death without combat.
       const p = playerController.getPosition();
-      horse.damage(25, p.x, p.z);
+      rig.horse.damage(25, p.x, p.z);
     }
-    if (event.code === 'BracketRight') horse.heal(35); // DEBUG ONLY
+    if (event.code === 'BracketRight') rig.horse.heal(35); // DEBUG ONLY
   }
 
   if (!modes.isEdit()) return;
@@ -1928,14 +552,15 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyF') handled = editor.rotateSelected('x', -1, fast);
   if (event.code === 'KeyT') handled = editor.rotateSelected('z', 1, fast);
   if (event.code === 'KeyG') handled = editor.rotateSelected('z', -1, fast);
-  if (handled) { event.preventDefault(); refreshSelectionHelper(); updateEditorHud(); editShadowPulse = 0.25; }
+  if (handled) { event.preventDefault(); ui.refreshSelectionHelper(); ui.updateEditorHud(); editShadowPulse = 0.25; }
 });
 
 // --- Mouse look: RIGHT-button drag only ----------------------------------
 // The camera rotates ONLY while the right mouse button is held. Left click
 // never rotates, and there is no pointer-lock look path at all — a locked
 // pointer without the right button held must stay inert.
-const mouseLook = new MouseLookController();
+// (The controller itself is constructed next to the horse rig above, which
+// reads `mouseLook.isDragging` for the ride-cam chase behaviour.)
 
 renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
   if (modes.isEdit()) return; // the editor owns the mouse in edit mode
@@ -1953,6 +578,14 @@ renderer.domElement.addEventListener('contextmenu', (event) => {
   if (!modes.isEdit()) event.preventDefault();
 });
 
+window.addEventListener('pointermove', (event: PointerEvent) => {
+  // Right-drag look accumulates pixel deltas; consumed once per frame so a
+  // burst of mouse events applies smoothly and nothing is processed twice.
+  // (The gizmo drag has its own pointermove listener in game/editorUi.ts —
+  // the two are mode-exclusive: look is play/creative, gizmo is edit.)
+  if (mouseLook.isDragging) mouseLook.updateMove(event.clientX, event.clientY);
+});
+
 window.addEventListener('pointerup', (event: PointerEvent) => {
   if (mouseLook.isDragging && mouseLook.endDrag(event.button)) {
     renderer.domElement.releasePointerCapture?.(event.pointerId);
@@ -1961,60 +594,6 @@ window.addEventListener('pointerup', (event: PointerEvent) => {
 
 window.addEventListener('blur', () => {
   mouseLook.cancel();
-});
-
-// --- Gizmo mouse interaction -------------------------------------------
-// Selection moved to pointerdown: gizmo handles are checked FIRST; if one is
-// hit the drag starts and object selection is skipped for this press, so the
-// gizmo can never select/move anything but its own target.
-//
-// DISTANCE ARBITRATION (user report: "clicking many objects does nothing"):
-// the handle hit proxies are transparent but still raycastable, so a click
-// whose ray passed through a proxy silently started a zero-effect drag
-// instead of selecting the object the user aimed at. Now a proxy only wins
-// when no managed object sits strictly IN FRONT of it — if the closest
-// managed hit is another (or the same) object closer than the proxy minus a
-// 2 cm epsilon, the press falls through to selection. Clicking the visible
-// arm itself (proxy at/above the nearest surface) still drags as before.
-renderer.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
-  if (!modes.isEdit() || event.button !== 0) return;
-  updatePointerFromEvent(event);
-  raycaster.setFromCamera(pointer, camera);
-  const handleHit = gizmo.pickHandleHit(raycaster.ray);
-  if (handleHit) {
-    const objHit = firstManagedHit();
-    const attached = gizmo.getAttachedUuid();
-    const blockedByObject = Boolean(
-      objHit &&
-      objHit.uuid !== attached && // clicks on the attached object's own surface keep dragging
-      objHit.distance < handleHit.distance - 0.02,
-    );
-    if (!blockedByObject) {
-      // preventDefault() suppresses the browser's focus-change default, so a
-      // field left focused after typing would freeze mid-drag — blur it
-      // explicitly so the panel keeps refreshing live while dragging.
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      gizmo.beginDrag(handleHit.handle, raycaster.ray);
-      event.preventDefault();
-      return;
-    }
-  }
-  selectObjectFromPointer(event);
-});
-
-window.addEventListener('pointermove', (event: PointerEvent) => {
-  // Right-drag look accumulates pixel deltas; consumed once per frame so a
-  // burst of mouse events applies smoothly and nothing is processed twice.
-  if (mouseLook.isDragging) mouseLook.updateMove(event.clientX, event.clientY);
-  if (!gizmo.isDragging()) return;
-  updatePointerFromEvent(event);
-  raycaster.setFromCamera(pointer, camera);
-  gizmo.updateDrag(raycaster.ray);
-  refreshSelectionHelper();
-});
-
-window.addEventListener('pointerup', () => {
-  if (gizmo.isDragging()) gizmo.endDrag();
 });
 
 function updatePlayer(delta: number): void {
@@ -2039,7 +618,7 @@ function respawn(): void {
 }
 health.on((event) => {
   if (event !== 'died') return;
-  if (isRiding()) dismountHorse({ instant: true }); // never die in the saddle
+  if (isRiding()) rig.dismountHorse({ instant: true }); // never die in the saddle
   playerController.setDead(true);
   characterStates.force('dead');
   respawnCountdown = 2.6;
@@ -2109,12 +688,12 @@ function setHud(): void {
   const managed = document.getElementById('stat-count');
   const rendered = document.getElementById('stat-render');
   const time = document.getElementById('time-of-day');
-  const riding = isRiding() || horse.isMounted();
+  const riding = isRiding() || rig.horse.isMounted();
   if (position) {
     // While riding the HUD tracks the horse — the rider has no independent
     // position until dismounting.
     position.textContent = riding
-      ? `${horse.getPosition().x.toFixed(1)}, ${horse.getPosition().y.toFixed(1)}, ${horse.getPosition().z.toFixed(1)} · riding`
+      ? `${rig.horse.getPosition().x.toFixed(1)}, ${rig.horse.getPosition().y.toFixed(1)}, ${rig.horse.getPosition().z.toFixed(1)} · riding`
       : `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
   }
   if (managed) managed.textContent = String(manager.getObjectCount());
@@ -2140,8 +719,8 @@ function setHud(): void {
   if (staminaNum) staminaNum.textContent = String(Math.ceil(stamina.current));
   if (stateLabel) stateLabel.textContent = riding ? 'RIDING' : characterStates.current.toUpperCase();
   // Horse panel (Part 3): the player↔horse relationship at a glance.
-  const snap = horse.getSnapshot();
-  const rel = horse.getRelationship();
+  const snap = rig.horse.getSnapshot();
+  const rel = rig.horse.getRelationship();
   const horseHealthFill = document.getElementById('horse-health-fill') as HTMLDivElement | null;
   const horseStaminaFill = document.getElementById('horse-stamina-fill') as HTMLDivElement | null;
   const horseHealthNum = document.getElementById('horse-health-num');
@@ -2205,409 +784,6 @@ function updatePerfCounter(): void {
   resolution.update(now, frameEma);
 }
 
-/** Shortest signed angular distance of `angle` into (-π, π]. */
-function wrapAngle(angle: number): number {
-  return Math.atan2(Math.sin(angle), Math.cos(angle));
-}
-
-// --- Horse system (Part 3) ------------------------------------------------
-// The player's owned horse: independent movement/AI/vitals, mount & ride,
-// whistle summon, follow behavior, world collision and persistence. The
-// horse is NOT a managed scene object (never selectable/editable/saved by
-// the editor) — it lives beside the scene with its own save slot.
-const horseModel = createHorseModel();
-scene.add(horseModel.root);
-const horseAnimator = new HorseAnimator(horseModel);
-const horsePersistence = new HorsePersistence();
-const horse = new HorseController(collisionWorld, {
-  position: { x: TOWN_HORSE_SPAWN.x, y: 0, z: TOWN_HORSE_SPAWN.z },
-  yaw: TOWN_HORSE_SPAWN.yaw,
-});
-const riderSocket = horseModel.riderSocket;
-
-// Restore the persisted horse (position/vitals/alive) — before the first
-// sync so a dead horse boots straight into its death pose.
-const savedHorse = horsePersistence.load();
-if (savedHorse) horse.restore(savedHorse);
-
-// Riding camera: the same collision-aware orbit rig, tuned for the higher
-// rider vantage. Only ONE rig drives the camera per frame — the on-foot rig
-// while on foot, this one while mounted.
-const ridingCamera = new ThirdPersonCamera(camera, () => collisionWorld.getCollisionBounds(), {
-  targetHeight: 2.1,
-  crouchTargetHeight: 2.1,
-  defaultDistance: 6.2,
-  minDistance: 1.4,
-  shoulderOffset: 0.55,
-});
-let rideYaw = horse.getYaw();
-let ridePitch = 0;
-// The horse's yaw at the previous riding frame. The FIRST-PERSON ride-cam
-// fix: the FP view used to read `rideYaw`, which only the mouse ever
-// updated — the horse turned under a frozen view and riding felt like
-// fighting a broken control. Every frame the horse's OWN yaw delta is
-// inherited by the view (below), so steering the horse steers the gaze
-// with it; the horse yaw is integrated from a bounded turn rate, so the
-// inherited motion is smooth by construction (no snap is possible).
-let lastRideHorseYaw = horse.getYaw();
-// Mount animation: a SHORT, simple 5-beat sequence — approach walk (polar
-// arc) → the left hand grips the seat edge → the body rises and turns while
-// both legs fold up-and-back OUTBOARD of the flank → the rider slides
-// inboard above the saddle and folds down onto the seat → settle onto the
-// riding pose. The whole thing lives in src/horse/MountChoreography.ts as
-// plain hand-authored keyframes — NO runtime IK, NO solver, NO tables — and
-// scripts/mount-solver.mjs re-verifies the swept clearance (0 violations)
-// against the real meshes on every change. Every mount constant derives from
-// HORSE_PROPORTIONS, so the horse scale rescales the choreography.
-//
-// The character root is attached to the saddle socket immediately (the horse
-// stands still for the whole timeline via mount lock), and the animation is
-// driven entirely in SOCKET-LOCAL space, so it stays rock-stable relative to
-// the horse no matter where the mount happens. The approach is a POLAR ARC
-// around the saddle axis — the rider always walks AROUND the horse to the
-// left stirrup, never straight through its body.
-let mountAnim: {
-  age: number;
-  start: MountStartState;
-  timeline: MountTimeline;
-} | null = null;
-
-// Dismount animation (controls revision §21): the short reverse choreography —
-// the hand grips the saddle edge, the rider stands on the stirrups, the right
-// leg sweeps back OVER the cantle, the body descends the left flank and
-// settles BESIDE the horse. Same contract as the mount: a few hand-authored
-// key poses + smooth interpolation, NO IK/solver, driven entirely in
-// SOCKET-LOCAL space. During the animation the rider stays attached to the
-// socket (isRiding() stays true) and the horse holds still (mount lock), so
-// the riding camera keeps framing the move; the on-foot handover runs once,
-// at the very end, at the exact final pose.
-let dismountAnim: {
-  age: number;
-  timeline: DismountTimeline;
-} | null = null;
-
-/** Dismount camera (first-person dismount revision): the viewing mode the
- *  rider had when the animated dismount started — restored to first person
- *  the instant the on-foot handover completes. Null = no switch happened
- *  (the rider already viewed third person; nothing to restore). */
-let dismountRestoreMode: CameraMode | null = null;
-
-/** Geometric length of the polar approach path (start → stand point), used
- *  to size the walk phase (walk duration = arc / walk speed). */
-function mountApproachArc(startPhi: number, startR: number): number {
-  const standPhi = Math.atan2(MOUNT_STAND.x, MOUNT_STAND.z);
-  const standR = Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z);
-  let length = 0;
-  let px = Math.sin(startPhi) * startR;
-  let pz = Math.cos(startPhi) * startR;
-  for (let i = 1; i <= 16; i += 1) {
-    const k = i / 16;
-    const phi = startPhi + wrapAngle(standPhi - startPhi) * k;
-    const r = Math.max(mountSafeRadius(phi), startR + (standR - startR) * k);
-    const x = Math.sin(phi) * r;
-    const z = Math.cos(phi) * r;
-    length += Math.hypot(x - px, z - pz);
-    px = x;
-    pz = z;
-  }
-  return length;
-}
-
-const horseInteractableUuid = 'horse-owned-rig';
-interactions.register({
-  uuid: horseInteractableUuid,
-  label: 'Mount horse',
-  range: 2.6,
-  getPosition: () => horse.getPosition(),
-  canInteract: () => horse.isAlive() && !horse.isMounted() && horse.getAiState() !== 'flee' && !playerController.isDead(),
-  onInteract: () => mountHorse(),
-});
-
-function isRiding(): boolean {
-  return character.root.parent === riderSocket;
-}
-
-function saveHorseState(force = false): void {
-  if (!force && !horseDirty) return;
-  horsePersistence.save(horse.serialize());
-  horseDirty = false;
-}
-let horseDirty = true;
-let horseSaveTimer = 0;
-let lastHorseSave: ReturnType<HorseController['serialize']> | null = null;
-
-function mountHorse(): void {
-  if (isRiding() || !horse.isAlive() || playerController.isDead()) return;
-  const feet = playerController.getFeetPosition();
-  if (!horse.canMount(feet)) return;
-  // MOUNT CAMERA (controls revision §3): the choreography always plays in
-  // THIRD PERSON. A first-person mount switches BEFORE the animation begins
-  // (the rig snaps behind the character, framing the whole mount) and stays
-  // third person after the rider settles. V still works once riding.
-  const enterMode = mountEnterCameraMode(playerController.getCameraMode());
-  if (playerController.getCameraMode() !== enterMode) {
-    playerController.setCameraMode(enterMode);
-  }
-  playerController.freezeMotion();
-  playerController.setCrouching(false);
-  riderSocket.attach(character.root);
-  // Socket-local starting transform of the character (attach preserved the
-  // world pose, so root.position/quaternion now ARE the socket-local values).
-  // The approach is polar: remember the START angle/radius so the walk-in can
-  // arc AROUND the horse instead of cutting through it, and size the walk
-  // phase from the rider's actual approach arc.
-  const p = character.root.position;
-  const start: MountStartState = {
-    startPhi: Math.atan2(p.x, p.z),
-    startR: Math.max(Math.hypot(p.x, p.z), Math.hypot(MOUNT_STAND.x, MOUNT_STAND.z)),
-    startY: p.y,
-    startQuat: character.root.quaternion.clone(),
-  };
-  const timeline = buildMountTimeline(mountApproachArc(start.startPhi, start.startR));
-  horse.mount(timeline.total + 0.25);
-  mountAnim = { age: 0, start, timeline };
-  rideYaw = horse.getYaw();
-  // Seed the delta tracker to the SAME yaw — the first riding frame must
-  // inherit ZERO delta (a stale value from a previous ride would yaw-snap
-  // the first-person view the instant the player mounts).
-  lastRideHorseYaw = horse.getYaw();
-  ridePitch = Math.max(-1.1, Math.min(1.1, playerController.getPitch()));
-  ridingCamera.snap();
-  updateEditorHud();
-  updateControlHint();
-  saveHorseState(true);
-  showStatusMessage('Riding: W walk · W+Shift gallop · hold S brake · A/D steer · E dismount');
-}
-
-function dismountHorse(options: { instant?: boolean } = {}): void {
-  if (mountAnim) return; // never yank the rider out of the mount choreography
-  if (dismountAnim) {
-    if (!options.instant) return; // already dismounting — extra E presses do nothing
-    dismountAnim = null; // emergency (death / Tab): cancel and drop instantly
-  }
-  if (isRiding()) {
-    if (!options.instant) {
-      // ANIMATED DISMOUNT: grip → leg over the cantle → slide down the flank
-      // → settle. The horse holds still for the whole choreography (the
-      // already-mounted mount() call just extends the stand lock).
-      // DISMOUNT CAMERA (the first-person dismount revision): a dismount that
-      // starts in FIRST PERSON temporarily switches to THIRD PERSON so the
-      // whole choreography is actually SEEN, then returns to first person at
-      // the handover (dismountCameraPlan, mirrored on the mount's contract).
-      // The orbit is seeded from the rider's CURRENT view yaw/pitch, so the
-      // third-person cut keeps the same view direction — no rotation jump.
-      dismountRestoreMode = dismountCameraPlan(playerController.getCameraMode()).after;
-      if (playerController.getCameraMode() === 'first_person') {
-        rideYaw = playerController.getYaw();
-        ridePitch = Math.max(-1.25, Math.min(1.25, playerController.getPitch()));
-        playerController.setCameraMode('third_person');
-        ridingCamera.snap();
-      }
-      updateEditorHud(); // the HUD camera label follows the temporary TP view
-      dismountAnim = { age: 0, timeline: buildDismountTimeline() };
-      horse.mount(dismountAnim.timeline.total + 0.3);
-      showStatusMessage('Dismounting…');
-      return;
-    }
-    finishDismount(horse.computeDismountFeet());
-  } else {
-    horse.dismount();
-  }
-}
-
-/** The one-way on-foot handover, shared by the instant and animated paths. */
-function finishDismount(feet: { x: number; y: number; z: number }): void {
-  scene.attach(character.root); // keep the world transform for a beat
-  horse.dismount();
-  // Place the player at the validated spot (left side first). respawnAt
-  // resets motion state and hands the camera back to the gameplay rig.
-  playerController.respawnAt({ x: feet.x, y: feet.y + CHARACTER_PROPORTIONS.eyeHeight, z: feet.z });
-  // DISMOUNT CAMERA handover: the character's on-foot heading picks up the
-  // rider's current VIEW direction (what the player was actually looking at
-  // through the third-person orbit) — the return to first person therefore
-  // keeps the view direction continuous: no rotation snap, no glitch.
-  if (dismountRestoreMode) {
-    playerController.setBodyYaw(rideYaw);
-    playerController.setCameraMode(dismountRestoreMode);
-    dismountRestoreMode = null;
-  }
-  characterAnimator.notifyLanding(4);
-  mountAnim = null;
-  dismountAnim = null;
-  characterAnimator.reset();
-  characterStates.force('idle');
-  if (playerController.getCameraMode() === 'third_person') thirdPersonCamera.snap();
-  updateEditorHud();
-  updateControlHint();
-  saveHorseState(true);
-  showStatusMessage('Dismounted.');
-  // The interaction system only re-fires its prompt when the TARGET
-  // changes — and the horse was already the target before mounting. Rewrite
-  // the prompt here so "[E] Dismount" can't stick after landing.
-  const prompt = document.getElementById('interact-prompt');
-  if (prompt) prompt.textContent = horse.canMount(playerController.getFeetPosition()) ? '[E] Mount horse' : '';
-}
-
-/** Per-frame mount animation driver: root transform + rider pose. The whole
- *  choreography (root path, joint keyframes, timeline easing) lives in
- *  MountChoreography — this is a thin clock + handover. At t = 1 the root
- *  lands exactly on the socket origin and the solved seat pose. */
-function updateMountAnim(delta: number): void {
-  if (!mountAnim) return;
-  mountAnim.age += delta;
-  const t = Math.min(1, mountAnim.age / mountAnim.timeline.total);
-  mountRootPose(character.root, mountAnim.start, t, mountAnim.timeline);
-  poseMountRider(character.joints, t, mountAnim.timeline);
-  if (t >= 1) {
-    mountAnim = null;
-    character.root.position.set(0, 0, 0);
-    character.root.quaternion.copy(MOUNT_SEAT_QUATERNION);
-    applyRiderPose(character.joints);
-  }
-}
-
-/** Per-frame dismount animation driver. At t = 1 the root sits exactly on
- *  DISMOUNT_STAND (socket-local, standing rest pose) — the world position is
- *  validated against the collision world (with the classic dismount spots as
- *  fallback) and the shared instant handover runs. The root's animated end
- *  spot is already clear of the horse capsule, so the normal case has ZERO
- *  position pop. */
-function updateDismountAnim(delta: number): void {
-  if (!dismountAnim) return;
-  dismountAnim.age += delta;
-  const t = Math.min(1, dismountAnim.age / dismountAnim.timeline.total);
-  dismountRootPose(character.root, t, dismountAnim.timeline);
-  poseDismountRider(character.joints, t, dismountAnim.timeline);
-  if (t >= 1) {
-    const world = riderSocket.localToWorld(character.root.position.clone());
-    const fallback = horse.computeDismountFeet();
-    const eye = CHARACTER_PROPORTIONS.eyeHeight;
-    const safe = findSafeSpawnPosition(collisionWorld, {
-      candidates: [
-        { x: world.x, y: world.y + eye, z: world.z },
-        { x: fallback.x, y: fallback.y + eye, z: fallback.z },
-      ],
-    });
-    finishDismount({ x: safe.x, y: safe.y - eye, z: safe.z });
-  }
-}
-
-function updateRideLook(deltaX: number, deltaY: number): void {
-  const sensitivity = 0.0018;
-  ridePitch = Math.max(-1.25, Math.min(1.25, ridePitch - deltaY * sensitivity));
-  rideYaw -= deltaX * sensitivity;
-}
-
-/** Riding input map (spec §19, controls revision §20) — W = walk,
- *  W+Shift = run (the controller walks first from a standstill), S = brake. */
-function buildRidingInput() {
-  return {
-    throttle: input.isDown('forward'),
-    brake: input.isDown('backward'),
-    steer: (input.isDown('left') ? 1 : 0) - (input.isDown('right') ? 1 : 0),
-    sprint: input.isDown('sprint'),
-  };
-}
-
-function syncRider(delta: number, snap: ReturnType<HorseController['getSnapshot']>): void {
-  updateMountAnim(delta);
-  updateDismountAnim(delta);
-  // The dismount handover may have detached the rider THIS frame — the world
-  // is on-foot now (the prompt was already rewritten by finishDismount), so
-  // the riding camera/prompt must not run one last stale frame.
-  if (!isRiding()) return;
-  // The horse's rotation THIS frame (wrap-safe). Both camera modes inherit
-  // it: third person eases the orbit behind the horse (below), first person
-  // hands the delta straight to the view — the mounted camera must never
-  // stay decoupled from the horse's transform.
-  const horseYawDelta = wrapAngle(snap.yaw - lastRideHorseYaw);
-  lastRideHorseYaw = snap.yaw;
-  if (playerController.getCameraMode() === 'third_person') {
-    // Chase-cam: while rolling OR TURNING and not dragging, the camera eases
-    // back behind the horse (the horse-rotation follow fix: the old condition
-    // keyed on speed alone, so steering/turning IN PLACE or at crawl speed
-    // left the camera frozen on the old heading while the horse rotated away
-    // up to the ±2.8 rad clamp); RMB can still orbit freely within the clamp.
-    // The ease is exponential (rate 2.2/s) — smooth by construction, no snap.
-    if (!mouseLook.isDragging
-      && (Math.abs(snap.speed) > 0.5 || Math.abs(snap.turnRate) > 0.05)) {
-      rideYaw += wrapAngle(snap.yaw - rideYaw) * Math.min(1, 2.2 * delta);
-    }
-    const offset = wrapAngle(rideYaw - snap.yaw);
-    if (offset > 2.8) rideYaw = snap.yaw + 2.8;
-    else if (offset < -2.8) rideYaw = snap.yaw - 2.8;
-    ridingCamera.update({
-      targetPosition: { x: snap.position.x, y: snap.position.y + 0.55, z: snap.position.z },
-      yaw: rideYaw,
-      pitch: ridePitch,
-      deltaSeconds: delta,
-    });
-  } else {
-    // First person: the eye rides where the SEATED rider's head actually is —
-    // pelvis on the saddle seat + the seated torso rise (RIDER_SEATED_EYE_Y
-    // ≈ 2.28m). The old formula reused the STANDING stature on the STIRRUP
-    // plane (riderFeetY + eyeHeight = 2.75m), floating the eye ≈0.65m above
-    // the ear tips: at neutral pitch the whole head sat ~38° below the view
-    // axis vs a 35° half-FOV — the horse vanished and riding read as drone
-    // flight (user report: «صورت و سر اسب دیده نمی‌شود»). From the seated eye
-    // the muzzle/ears/mane land in the lower third of the frame — the natural
-    // cowboy view — and the eye stays clear of every horse surface. The
-    // horse's own yaw delta is STILL inherited EVERY frame (wrap-safe, smooth
-    // by construction), so steering turns the view 1:1; mouse look moves
-    // freely on top. Walking first person never touches this branch.
-    rideYaw += horseYawDelta;
-    camera.position.set(
-      snap.position.x + Math.sin(snap.yaw) * RIDER_SEATED_EYE_Z,
-      snap.position.y + RIDER_SEATED_EYE_Y,
-      snap.position.z + Math.cos(snap.yaw) * RIDER_SEATED_EYE_Z,
-    );
-    camera.rotation.set(ridePitch, rideYaw, 0);
-  }
-  character.setFirstPerson(playerController.getCameraMode() === 'first_person');
-  character.updateLOD(camera.position);
-  const prompt = document.getElementById('interact-prompt');
-  if (prompt) prompt.textContent = '[E] Dismount';
-}
-
-function syncHorse(delta: number, snap: ReturnType<HorseController['getSnapshot']>): void {
-  horseModel.root.position.set(snap.position.x, snap.position.y, snap.position.z);
-  horseModel.root.rotation.y = snap.yaw;
-  horseModel.root.rotation.x = snap.pitch;
-  horseModel.root.rotation.z = snap.roll;
-  horseAnimator.update({
-    deltaSeconds: delta,
-    speed: Math.abs(snap.speed),
-    gait: snap.alive ? snap.gait : 'dead',
-    turnRate: snap.turnRate,
-    fear: snap.fear,
-    injured: snap.injured,
-    mounted: snap.mounted,
-    idleAction: snap.idleAction,
-  });
-  horseModel.updateLOD(camera.position);
-}
-
-// Horse events → animation flinch, rider safety, persistence.
-horse.on((event) => {
-  if (event === 'damage') {
-    horseAnimator.notifyDamage();
-    return;
-  }
-  if (event === 'death') {
-    if (isRiding() || mountAnim || dismountAnim) {
-      mountAnim = null; // the saddle collapsed mid-choreography — emergency dismount
-      dismountHorse({ instant: true });
-    }
-    saveHorseState(true);
-    showStatusMessage('Your horse has fallen.');
-  }
-  if (event === 'revived') {
-    saveHorseState(true);
-    showStatusMessage('Your horse is back on its feet.');
-  }
-});
-window.addEventListener('pagehide', () => saveHorseState(true));
-
 function animate(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   // Right-drag look FIRST: the accumulated pixel delta becomes yaw/pitch
@@ -2615,7 +791,7 @@ function animate(): void {
   const lookDelta = mouseLook.consumeLookDelta();
   if (!modes.isEdit() && (lookDelta.x !== 0 || lookDelta.y !== 0)) {
     if (modes.isCreative()) creativeFlight.look(lookDelta.x, lookDelta.y);
-    else if (isRiding()) updateRideLook(lookDelta.x, lookDelta.y);
+    else if (isRiding()) rig.updateRideLook(lookDelta.x, lookDelta.y);
     else playerController.look(lookDelta.x, lookDelta.y);
   }
   updatePlayer(delta);
@@ -2638,17 +814,17 @@ function animate(): void {
     input.consumePressed('forward');
     input.consumePressed('backward');
   } else if (modes.isPlay()) {
-    if (isRiding() && horse.isMounted()) {
+    if (isRiding() && rig.horse.isMounted()) {
       // Riding: movement keys ARE the horse's reins; the rest is consumed
       // so nothing leaks into the (paused) player controller.
       input.consumePressed('jump');
       input.consumePressed('crouch');
       input.consumePressed('respawn');
-      if (input.consumePressed('interact')) dismountHorse();
+      if (input.consumePressed('interact')) rig.dismountHorse();
       // The camera stays THIRD PERSON for the whole mount AND dismount
       // choreography — a V press during either animation is dropped, not
       // queued (it would yank the view off the playing dismount).
-      if (!mountAnim && !dismountAnim && input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); updateEditorHud(); }
+      if (!rig.isMountAnimating() && !rig.isDismountAnimating() && input.consumePressed('cameraToggle')) { playerController.toggleCameraMode(); ui.updateEditorHud(); }
       if (input.consumePressed('debugDamage')) health.damage(30);
       if (input.consumePressed('debugHeal')) health.heal(35);
     } else {
@@ -2662,7 +838,7 @@ function animate(): void {
       // The mount forces THIRD PERSON (mountEnterCameraMode) — a V press in
       // the SAME frame as the E-mount must not flip it back (edge consumed
       // after the interact). Drop it when a mount just started.
-      if (input.consumePressed('cameraToggle') && !mountAnim) { playerController.toggleCameraMode(); updateEditorHud(); }
+      if (input.consumePressed('cameraToggle') && !rig.isMountAnimating()) { playerController.toggleCameraMode(); ui.updateEditorHud(); }
       if (!dead && input.consumePressed('debugDamage')) health.damage(30);
       if (!dead && input.consumePressed('debugHeal')) health.heal(35);
       if (dead && input.consumePressed('respawn')) respawnCountdown = 0;
@@ -2684,35 +860,21 @@ function animate(): void {
   // BEFORE the HUD but AFTER the player moved, so its player-overlap push-out
   // uses this frame's position (spec §14: no hard player↔horse overlap).
   if (modes.isPlay()) {
-    const riding = isRiding() && horse.isMounted() ? buildRidingInput() : undefined;
+    const riding = isRiding() && rig.horse.isMounted() ? rig.buildRidingInput() : undefined;
     const playerPos = playerController.getPosition();
-    horse.update({
+    rig.horse.update({
       deltaSeconds: delta,
       playerX: playerPos.x,
       playerY: playerPos.y,
       playerZ: playerPos.z,
       playerMoving: !isRiding() && playerController.getHorizontalSpeed() > 0.5,
     }, riding);
-    const separation = horse.takePlayerSeparation();
+    const separation = rig.horse.takePlayerSeparation();
     if (separation && !isRiding()) {
       playerController.setPosition({ x: separation.x, y: playerController.getPosition().y, z: separation.z });
     }
     // Periodic persistence: save when the horse actually changed (spec §17).
-    horseSaveTimer += delta;
-    if (horseSaveTimer >= 5) {
-      horseSaveTimer = 0;
-      const snap = horse.serialize();
-      const last = lastHorseSave;
-      if (!last
-        || Math.abs(last.position.x - snap.position.x) > 0.5
-        || Math.abs(last.position.z - snap.position.z) > 0.5
-        || Math.ceil(last.health) !== Math.ceil(snap.health)
-        || Math.ceil(last.stamina) !== Math.ceil(snap.stamina)
-        || last.alive !== snap.alive) {
-        lastHorseSave = snap;
-        saveHorseState(true);
-      }
-    }
+    rig.tickPersistence(delta);
   }
   // Fly the creative camera AFTER the (skipped) player update: Space/Ctrl
   // drive vertical motion, Shift doubles the speed.
@@ -2732,21 +894,14 @@ function animate(): void {
   // saddle socket (bit-stable relative to the horse) and the riding camera
   // rig owns the frame; otherwise the normal on-foot sync runs. ONE horse
   // snapshot per frame feeds both syncs AND the shadow governor below.
-  const horseSnap = horse.getSnapshot();
-  if (isRiding()) syncRider(delta, horseSnap);
+  const horseSnap = rig.horse.getSnapshot();
+  if (isRiding()) rig.syncRider(delta, horseSnap);
   else {
     syncCharacter(delta, previousBodyYaw);
     previousBodyYaw = playerController.getBodyYaw();
   }
-  syncHorse(delta, horseSnap);
-  updateSecureGate(delta); // iron gate swing + collider/walkability sync
-  updateVaultDoor(delta); // big vault door swing + collider/walkability sync
-  updateCellDoors(delta); // jail cell door swings + collider/walkability sync
-  updateSheriffFrontDoor(delta); // office front door swing + collider/walkability sync
-  updateStableDoors(delta); // stable gate + stall/room/staff door swings + collider sync
-  updateGunShopFrontDoor(delta); // gun shop front door swing + collider sync
-  updateBankFrontDoor(delta); // bank walnut double door swing + collider sync
-  updateSaloonDoors(delta); // saloon double door swing + collider sync
+  rig.syncHorse(delta, horseSnap);
+  doorSystem.update(delta); // every door swing + collider/walkability sync
   if (modes.isPlay() && !isRiding()) interactions.update(
     { x: playerController.getPosition().x, y: playerController.getPosition().y - 1, z: playerController.getPosition().z },
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
@@ -2757,8 +912,8 @@ function animate(): void {
   // scheduler fires it only when the cooldown expires — fast cadence while
   // casters move (player/horse/mount/DEmount/edit drags), slow cadence when
   // only the sun drifts (~0.02°/frame — identical shadows between passes).
-  const castersMoving = mountAnim !== null
-    || dismountAnim !== null
+  const castersMoving = rig.isMountAnimating()
+    || rig.isDismountAnimating()
     || gizmo.isDragging()
     || editShadowPulse > 0
     || playerController.getHorizontalSpeed() > 0.25
@@ -2769,7 +924,7 @@ function animate(): void {
   gizmo.sync(modes.isEdit(), editor.getSelectedUuid());
   // The selection box only needs to track transforms in edit mode; the one
   // frame after leaving edit mode hides it for good.
-  if (modes.isEdit() || selectionBox.visible) refreshSelectionHelper();
+  if (modes.isEdit() || ui.isSelectionBoxVisible()) ui.refreshSelectionHelper();
   contactIndicator.update({
     editMode: modes.isEdit(),
     selectedUuid: editor.getSelectedUuid(),
@@ -2783,7 +938,7 @@ function animate(): void {
   hudTimer -= delta;
   if (hudTimer <= 0) {
     hudTimer = 0.1;
-    updateSelectionPanel();
+    ui.updateSelectionPanel();
     setHud();
   }
   updatePerfCounter();
@@ -2803,5 +958,5 @@ loadSavedScene();
 scheduleLampSweep(); // deferred: adapter meshes (and their lights) materialize on microtasks
 applyModeState(); // boot: play mode → input ENABLED (the movement fix)
 setHud();
-updateSelectionPanel();
+ui.updateSelectionPanel();
 animate();

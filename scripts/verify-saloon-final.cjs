@@ -1,11 +1,17 @@
-/* Saloon Final verification v4 — CLOSED-LOOP creative fly.
+/* Saloon Final verification v5 — CLOSED-LOOP creative fly.
  * Reads the live camera pose via window.__westDebug() and servos to each
  * pose (move -> read -> correct until within tolerance). No blind odometry.
- * Run: node /home/z/my-project/Ai-western_game/scripts/verify-saloon-final.cjs
+ * RE-MAPPED 2026-11 to the redesigned town: the saloon stands at
+ * SALOON_SITE (−11.5, −21) yaw 90° — the entrance (x −7.5) faces EAST onto
+ * the main street, the back-bar sits at the WEST end (x ≈ −15.15), the
+ * counter runs north–south at x ≈ −13.69, poker corner SE (−10.6, −24.4),
+ * piano NE (−10.7, −16.5). All pose targets below are re-anchored to those
+ * measured def positions (old poses targeted the pre-redesign interior).
+ * Run: node scripts/verify-saloon-final.cjs   (dev server :5176)
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-saloon-final';
-const URL = 'http://localhost:5173/';
+const URL = 'http://localhost:5176/';
 const results = [];
 const ok = (name, pass, detail) => {
   results.push({ name, pass, detail });
@@ -111,46 +117,46 @@ const ok = (name, pass, detail) => {
   ok('creative: entered', /CREATIVE FLIGHT/i.test(await camMode()), `camera=${await camMode()}`);
 
   // ---- Pose 1: wide interior bar view (camera between stools and door) ------
-  await servo(-12, 1.75, -11.8, 0.35, 'bar-wide');
-  await lookAbs(Math.PI, -0.07); // face NORTH?? view north = yaw 0
-  // view north: dir (0,-1) -> yaw 0. (creative yaw convention: dir=(-sin,-cos))
-  await lookAbs(0, -0.07);
+  await servo(-11.9, 1.75, -21.0, 0.35, 'bar-wide');
+  // face WEST at the back-bar (dir (−1,0) → yaw π/2)
+  await lookAbs(Math.PI / 2, -0.07);
   await shot('01-interior-bar-wide');
 
   // ---- Pose 2: shelves + mirror pitched up ----------------------------------
-  await lookAbs(0, 0.45);
+  await lookAbs(Math.PI / 2, 0.45);
   await shot('02-backbar-shelves-up');
-  await lookAbs(0, -0.07);
+  await lookAbs(Math.PI / 2, -0.07);
 
   // ---- Pose 3/4: back-bar straight-on close-up ------------------------------
-  await servo(-12, 1.75, -14.15, 0.3, 'backbar-close');
-  await lookAbs(0, -0.02);
+  await servo(-13.1, 1.75, -21.0, 0.3, 'backbar-close');
+  await lookAbs(Math.PI / 2, -0.02);
   await shot('03-backbar-closeup');
-  await lookAbs(0, 0.5);
+  await lookAbs(Math.PI / 2, 0.5);
   await shot('04-backbar-shelves-closeup');
-  await lookAbs(0, -0.05);
+  await lookAbs(Math.PI / 2, -0.05);
 
   // ---- Pose 5/6: counter dressing ends --------------------------------------
-  await servo(-12, 1.8, -12.4, 0.3, 'counter-mid');
-  await lookAbs(Math.atan2(0.75, 1.75), -0.16); // NNW at register/tray end
-  await shot('05-counter-west-end');
-  await lookAbs(Math.atan2(-0.75, 1.75), -0.16); // NNE at tin/bell end
-  await shot('06-counter-east-end');
-  await lookAbs(0, -0.07);
+  // Counter runs along Z at x ≈ −13.69 (z −19…−23); camera east of its mid.
+  await servo(-12.4, 1.8, -21.0, 0.3, 'counter-mid');
+  await lookAbs(Math.atan2(1.286, -1.8), -0.16); // WNW at the register/tray end (z −19.2)
+  await shot('05-counter-north-end');
+  await lookAbs(Math.atan2(1.286, 1.8), -0.16); // WSW at the tin/bell end (z −22.8)
+  await shot('06-counter-south-end');
+  await lookAbs(Math.PI / 2, -0.07);
 
   // ---- Pose 7: poker corner --------------------------------------------------
-  await servo(-10.1, 1.7, -9.7, 0.35, 'poker');
-  await lookAbs(Math.atan2(-1.5, 1.4), -0.22); // at table (-8.6,-11.1)
+  await servo(-9.6, 1.7, -23.2, 0.35, 'poker');
+  await lookAbs(Math.atan2(1.0, 1.2), -0.22); // at the table (−10.6, −24.4)
   await shot('07-poker-final-chairs');
 
   // ---- Pose 8: music corner --------------------------------------------------
-  await servo(-14.3, 1.8, -10.7, 0.35, 'music');
-  await lookAbs(Math.atan2(2.2, 0.5), -0.06); // at piano (-16.5,-11.2)
+  await servo(-12.6, 1.8, -16.0, 0.35, 'music');
+  await lookAbs(Math.atan2(-1.9, 0.5), -0.06); // at the piano (−10.7, −16.5)
   await shot('08-piano-tucked');
 
   // ---- Pose 9: reverse wide over the counter ---------------------------------
-  await servo(-12, 2.7, -14.6, 0.4, 'reverse');
-  await lookAbs(Math.PI, -0.12); // view south (dir (0,1) -> yaw PI)
+  await servo(-14.8, 2.7, -21.0, 0.4, 'reverse');
+  await lookAbs(-Math.PI / 2, -0.12); // view EAST over the counter toward the door
   await shot('09-reverse-over-counter');
 
   // ---- Exit creative; console status ----------------------------------------

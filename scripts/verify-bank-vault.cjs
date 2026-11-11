@@ -17,7 +17,7 @@
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-bank-vault';
-const URL = 'http://localhost:5175/';
+const URL = 'http://localhost:5176/';
 const results = [];
 const ok = (name, pass, detail) => {
   results.push({ name, pass, detail });
@@ -109,16 +109,21 @@ const ok = (name, pass, detail) => {
   ok('boot: vault closed', v.swing === 0 && v.target === 0 && Math.abs(v.hingeYaw) < 1e-6,
     `swing=${v.swing} target=${v.target} hinge=${v.hingeYaw}`);
 
-  // --- 2) prompt + CLOSED door blocks the eastward walk ----------------------
-  await teleport(0.4, 2.3, -26.0, -Math.PI / 2);
+  // --- 2) prompt + CLOSED door blocks the westward walk ----------------------
+  // RE-MAPPED 2026-11: bank at (−8, 14) yaw 180°. Measured live: the vault
+  // doorway passes along ±X at z ≈ 17.0 (header z-span 16.38…17.62); the
+  // office is EAST of the divider, the vault room WEST; the closed door's
+  // 1×1 box x[−7.975…−6.975] z[16.5…17.5]. The old site's eastward walk
+  // maps to this westward walk.
+  await teleport(-6.3, 2.3, 17.0, Math.PI / 2);
   await page.waitForTimeout(600);
   v = await vault();
   ok('prompt: [E] shows near the closed vault door', v.prompt.includes('Open the vault door'), `prompt="${v.prompt}"`);
-  const blocked = await walk('x', 1, 2.3, 9000, 'at the closed vault door');
+  const blocked = await walk('x', -1, -8.4, 9000, 'at the closed vault door');
   ok(
     'closed vault door BLOCKS the walk (stops at collider face + radius)',
-    Math.abs(blocked.x - 0.625) < 0.1,
-    `player x=${blocked.x.toFixed(3)} (expected stop 0.625 = door box west face 0.975 − radius)`,
+    Math.abs(blocked.x - (-6.625)) < 0.1,
+    `player x=${blocked.x.toFixed(3)} (expected stop −6.625 = door box east face −6.975 + radius)`,
   );
   await shot('01-vault-closed-blocking');
 
@@ -131,13 +136,13 @@ const ok = (name, pass, detail) => {
   await shot('02-vault-open');
 
   // --- 4) the player WALKS THROUGH the doorway INTO THE VAULT ROOM ----------
-  await teleport(0.4, 2.3, -26.0, -Math.PI / 2);
+  await teleport(-6.3, 2.3, 17.0, Math.PI / 2);
   await page.waitForTimeout(400);
-  const inVault = await walk('x', 1, 2.3, 20000, 'through the open vault door');
+  const inVault = await walk('x', -1, -8.6, 20000, 'through the open vault door');
   ok(
     'walked THROUGH the open vault door INTO THE VAULT ROOM',
-    inVault.x >= 2.3 && inVault.x < 4.0 && Math.abs(inVault.z + 26.0) < 0.6,
-    `player (${inVault.x.toFixed(2)}, ${inVault.z.toFixed(2)}) — doorway lane z −26.0, room x ≥ 2.3`,
+    inVault.x <= -8.4 && inVault.x > -10.4 && Math.abs(inVault.z - 17.0) < 0.6,
+    `player (${inVault.x.toFixed(2)}, ${inVault.z.toFixed(2)}) — doorway lane z 17.0, room x ≤ −7.975`,
   );
   await shot('03-inside-vault-room');
 
@@ -148,14 +153,17 @@ const ok = (name, pass, detail) => {
   ok('re-closed: hinge back to the shut pose', Math.abs(v.hingeYaw) < 1e-3, `hinge=${v.hingeYaw.toFixed(3)}`);
   await shot('04-vault-reclosed');
 
-  // --- 6) the widened middle segment SEALS the old open slot ----------------
-  await teleport(2.45, 2.3, -23.5, 0); // the old slot lane, lobby side
+  // --- 6) the vault divider SEALS the office/vault boundary away from the
+  // doorway — a westward walk along the divider's NORTH segment (z 17.62…
+  // 18.325, clear of the doorway lane AND the re-armed gate box z ≤ 16.1)
+  // must stop at the masonry east face.
+  await teleport(-6.3, 2.3, 17.9, Math.PI / 2); // office side, north of the doorway lane
   await page.waitForTimeout(400);
-  const sealed = await walk('z', -1, -25.2, 12000, 'into the sealed slot');
+  const sealed = await walk('x', -1, -8.4, 12000, 'into the sealed divider');
   ok(
-    'old vault slot is SEALED masonry (lobby walk stops at the widened wall)',
-    Math.abs(sealed.z - (-24.16)) < 0.12,
-    `player z=${sealed.z.toFixed(3)} (expected stop −24.16 = south face −24.51 + radius)`,
+    'vault divider is SOLID masonry off the doorway (office walk stops at its face)',
+    Math.abs(sealed.x - (-7.3)) < 0.12,
+    `player x=${sealed.x.toFixed(3)} (expected stop −7.30 = divider east face −7.65 + radius)`,
   );
   await shot('05-slot-sealed');
 

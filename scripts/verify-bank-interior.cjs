@@ -1,15 +1,19 @@
-/* Bank interior verification v1 — CLOSED-LOOP creative fly.
- * Reuses the saloon-final harness: reads the live camera pose via
- * window.__westDebug() and servos to each pose (move -> read -> correct).
- * Poses cover the bank checklist for the manager-office revision:
- * facade, portico, doorway, lobby, counter+cage, dressing, staff strip,
- * office doorway, office desk/sign, secure gate, vault door (90° fix),
- * safe-deposit wall, floor safe, enclosure reverse, lamps, FPS, console.
- * Run: node scripts/verify-bank-interior.cjs
+/* Bank interior verification v2 — CLOSED-LOOP creative fly.
+ * Reads the live camera pose via window.__westDebug() and servos to each
+ * pose (move -> read -> correct).
+ * RE-MAPPED 2026-11 to the redesigned town: the bank stands at BANK_SITE
+ * (−8, 14) yaw 180° — the columned facade + steps face NORTH onto the
+ * square (front door z 9.5, steps z 7.0–7.9), the lobby runs south
+ * (teller counter (−8, 14.1), marble columns x −5.3/−10.7), the iron gate
+ * line is z 15.51…15.69 (gap x −6.8…−5.8), the manager office sits SE
+ * (desk (−3.98, 16.7), sign (−2.21, 16.7)) and the vault room W behind the
+ * divider (door (−7.475, 17.0), money bags (−9.0/−9.7, ~17.7)). All 16
+ * poses + the FPS trio below are re-anchored to those measured positions.
+ * Run: node scripts/verify-bank-interior.cjs   (dev server :5176)
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-bank-interior';
-const URL = 'http://localhost:5173/';
+const URL = 'http://localhost:5176/';
 const results = [];
 const ok = (name, pass, detail) => {
   results.push({ name, pass, detail });
@@ -102,6 +106,11 @@ const ok = (name, pass, detail) => {
   const statCount = await page.evaluate(() => document.getElementById('stat-count').textContent);
   ok('boot: object count', parseInt(statCount, 10) >= 80, `stat-count=${statCount}`);
 
+  // Stand in front of the bank before entering creative — the boot spawn is
+  // ~70 m away and the headless flight servo converges too slowly from there.
+  await page.evaluate(() => window.__westTest.teleport(-8, 0, 2.5));
+  await page.waitForTimeout(700);
+
   await page.evaluate(() => window.__k('keydown', 'KeyF'));
   await page.evaluate(() => window.__k('keyup', 'KeyF'));
   await page.waitForTimeout(400);
@@ -109,85 +118,84 @@ const ok = (name, pass, detail) => {
   ok('creative: entered', /CREATIVE FLIGHT/i.test(await camMode()), `camera=${await camMode()}`);
 
   // 1 — street view: full classical facade (steps → columns → pediment → BANK)
-  await servo(2, 2.3, -11.5, 0.4, 'street');
-  await lookAbs(0, -0.05);
+  await servo(-8, 2.3, 2.5, 0.4, 'street');
+  await lookAbs(Math.PI, -0.05); // face south at the north-facing facade
   await shot('01-street-facade');
 
   // 2 — portico: stairs, landing, four columns, entrance surround
-  await servo(2, 1.7, -15.3, 0.35, 'portico');
-  await lookAbs(0, -0.03);
+  await servo(-8, 1.7, 5.6, 0.35, 'portico');
+  await lookAbs(Math.PI, -0.03);
   await shot('02-portico-columns');
 
   // 3 — doorway: through the open walnut leaves into the lobby
-  await servo(2, 1.8, -17.4, 0.3, 'doorway');
-  await lookAbs(0, -0.02);
+  await servo(-8, 1.8, 7.6, 0.3, 'doorway');
+  await lookAbs(Math.PI, -0.02);
   await shot('03-doorway-lobby');
 
-  // 4 — lobby wide: rug, columns, counter + cage ahead
-  await servo(2, 2.0, -19.6, 0.35, 'lobby');
-  await lookAbs(0, -0.05);
+  // 4 — lobby wide: rug, marble columns, teller counter ahead
+  await servo(-8, 2.0, 10.4, 0.35, 'lobby');
+  await lookAbs(Math.PI, -0.05);
   await shot('04-lobby-wide');
 
-  // 5 — lobby west: grandfather clock on the west wall
-  await servo(-0.2, 1.8, -19.9, 0.35, 'lobby-west');
-  await lookAbs(Math.atan2(3.4, -2.7) + Math.PI, -0.06); // face WNW at the clock
-  await shot('05-lobby-clock');
-  await lookAbs(0, -0.05);
+  // 5 — lobby west: the west marble column (x −10.7) close-up
+  await servo(-9.3, 1.8, 12.1, 0.35, 'lobby-west');
+  await lookAbs(Math.PI / 2, -0.06); // face west
+  await shot('05-lobby-west-column');
+  await lookAbs(Math.PI, -0.05);
 
   // 6 — teller counter close: marble top, dressing, cage grille
-  await servo(2, 2.3, -21.7, 0.3, 'counter');
-  await lookAbs(0, -0.12);
+  await servo(-8, 2.3, 12.3, 0.3, 'counter');
+  await lookAbs(Math.PI, -0.12);
   await shot('06-counter-cage');
 
   // 7 — cage service window straight-on
-  await servo(2, 2.5, -22.5, 0.25, 'cage');
-  await lookAbs(0, -0.05);
+  await servo(-8, 2.5, 13.0, 0.25, 'cage');
+  await lookAbs(Math.PI, -0.05);
   await shot('07-cage-window');
 
-  // 8 — staff strip behind the counter (walkability read): closed iron gate
-  // west, open vault slot east
-  await servo(2.6, 1.8, -23.4, 0.3, 'strip');
+  // 8 — staff strip behind the counter: gate line ahead (walkability read)
+  await servo(-8, 1.8, 14.9, 0.3, 'strip');
   await lookAbs(Math.PI, -0.1); // face south over the counter
   await shot('08-staff-strip');
 
   // 9 — the barred iron gate CLOSED across the manager doorway
-  await servo(0.3, 1.8, -23.4, 0.25, 'gate-closed');
-  await lookAbs(0, -0.02);
+  await servo(-6.3, 1.8, 13.9, 0.25, 'gate-closed');
+  await lookAbs(Math.PI, -0.02);
   await shot('09-gate-closed');
 
-  // 10 — manager office interior: desk + chair + BANK sign under the lamp
-  await servo(0.6, 1.85, -25.2, 0.3, 'office');
-  await lookAbs(Math.atan2(2.62, 0.5), -0.1); // WSW toward the desk
+  // 10 — manager office interior: desk + chair + BANK sign (east side)
+  await servo(-5.6, 1.85, 16.7, 0.3, 'office');
+  await lookAbs(-Math.PI / 2, -0.1); // face east at the desk/sign wall
   await shot('10-office-desk-sign');
 
-  // 11 — desk close-up (user Final arrangement, yaw 246°)
-  await servo(-1.1, 1.7, -25.6, 0.25, 'desk');
-  await lookAbs(Math.atan2(0.92, 0.1), -0.14);
+  // 11 — desk close-up
+  await servo(-5.2, 1.7, 16.7, 0.25, 'desk');
+  await lookAbs(-Math.PI / 2, -0.14);
   await shot('11-office-desk-close');
 
-  // 12 — secure gate from the OFFICE side (open leaves toward the lobby)
-  await servo(0.2, 1.8, -25.3, 0.25, 'gate-office-side');
-  await lookAbs(Math.PI, -0.03);
+  // 12 — secure gate from the OFFICE side (leaves toward the lobby)
+  await servo(-6.3, 1.8, 17.3, 0.25, 'gate-office-side');
+  await lookAbs(0, -0.03); // face north back at the gate
   await shot('12-secure-gate-office-side');
 
-  // 13 — THE VAULT DOOR (90° fix): round iron door on the office rear wall
-  await servo(0.65, 1.8, -25.9, 0.25, 'vault');
-  await lookAbs(0, -0.02);
+  // 13 — THE VAULT DOOR: round iron door on the vault divider
+  await servo(-6.6, 1.8, 17.0, 0.25, 'vault');
+  await lookAbs(Math.PI / 2, -0.02); // face west at the door
   await shot('13-vault-door-front');
 
-  // 14 — vault room: safe-deposit wall on the east wall (doors facing west)
-  await servo(3.2, 1.7, -26.0, 0.25, 'deposit');
-  await lookAbs(-1.505, -0.05); // face east at the panel
+  // 14 — vault room: money bags on the west floor + vault lamp
+  await servo(-8.3, 1.7, 16.7, 0.25, 'deposit');
+  await lookAbs(Math.atan2(1.0, -1.0), -0.05); // SW at the bags (−9.0…−9.7, ~17.7)
   await shot('14-safe-deposit-wall');
 
-  // 15 — floor safe + money bags in the vault room
-  await servo(2.45, 1.6, -26.5, 0.25, 'safe');
-  await lookAbs(-2.58, -0.12); // NNE toward the safe and the bags
+  // 15 — money bags close-up
+  await servo(-8.6, 1.6, 16.9, 0.25, 'safe');
+  await lookAbs(Math.atan2(0.8, -0.8), -0.12);
   await shot('15-floor-safe-bags');
 
-  // 16 — reverse: over the suite into the lobby (spatial read)
-  await servo(2.6, 2.5, -26.8, 0.3, 'reverse');
-  await lookAbs(Math.PI, -0.16);
+  // 16 — reverse: over the vault room into the lobby (spatial read)
+  await servo(-9.5, 2.5, 17.9, 0.3, 'reverse');
+  await lookAbs(-Math.PI / 4, -0.16); // NE over the counter toward the lobby
   await shot('16-reverse-into-lobby');
 
   // FPS samples — SwiftShader software harness, so ABSOLUTE numbers are low;
@@ -203,11 +211,11 @@ const ok = (name, pass, detail) => {
     };
     requestAnimationFrame(tick);
   }));
-  await servo(2, 2.3, -11.5, 0.6, 'fps-street');
+  await servo(-8, 2.3, 2.5, 0.6, 'fps-street');
   const fpsStreet = await sampleFps();
-  await servo(-12, 1.75, -11.8, 0.6, 'fps-saloon'); // the shipped saloon interior
+  await servo(-11.9, 1.75, -21.0, 0.6, 'fps-saloon'); // the shipped saloon interior
   const fpsSaloon = await sampleFps();
-  await servo(0.6, 1.8, -25.7, 0.6, 'fps-bank');    // deepest bank interior
+  await servo(-8.6, 1.8, 17.5, 0.6, 'fps-bank');      // deepest bank interior (vault room)
   const fpsBank = await sampleFps();
   const ratio = fpsSaloon > 0 ? fpsBank / fpsSaloon : 0;
   ok('fps', fpsBank >= 2 && ratio >= 0.35, `street ${fpsStreet} · saloon ${fpsSaloon} · bank ${fpsBank} (ratio ${(ratio).toFixed(2)})`);

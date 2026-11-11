@@ -8,14 +8,18 @@
  *      is released while the bars stand open
  *   4. the player then WALKS THROUGH the opened manager doorway (real
  *      CollisionWorld movement — no teleport past the wall) into the office
- *   5. the player walks through the open vault entrance slot into the
- *      VAULT ROOM (gate not required)
+ *   5. the gate line away from the gate is SOLID masonry (no second passage)
  *   6. E closes the gate again (collider re-arms, leaves re-close)
- * Run: node scripts/verify-bank-gate.cjs   (dev server on :5175)
+ * RE-MAPPED 2026-11 to the redesigned town: the bank stands at BANK_SITE
+ * (−8, 14) yaw 180° — facade north onto the square. Measured live boxes:
+ * gate 1×1 x[−6.8…−5.8] z[15.1…16.1]; gate-line wall z 15.51…15.69 (gap
+ * x −6.81…−5.8); lobby NORTH of the line, office SOUTH; walking through =
+ * +Z (south). The old site's northward walk maps to this southward walk.
+ * Run: node scripts/verify-bank-gate.cjs   (dev server on :5176)
  */
 const { chromium } = require('playwright');
 const OUT = '/home/z/my-project/Ai-western_game/shots-bank-gate';
-const URL = 'http://localhost:5175/';
+const URL = 'http://localhost:5176/';
 const results = [];
 const ok = (name, pass, detail) => {
   results.push({ name, pass, detail });
@@ -70,13 +74,13 @@ const ok = (name, pass, detail) => {
     return state;
   };
 
-  /** Hold W in bursts until the player crosses `targetZ` (moving −Z) or the
-   *  walk stalls (no progress → blocked by real collision). */
-  const walkNorth = async (targetZ, timeoutMs, label) => {
+  /** Hold W in bursts until the player crosses `targetZ` (moving +Z south
+   *  through the yaw-180 bank) or the walk stalls (no progress → blocked). */
+  const walkSouth = async (targetZ, timeoutMs, label) => {
     const t0 = Date.now();
     let p = await player();
     let stalled = 0;
-    while (p.z > targetZ && Date.now() - t0 < timeoutMs) {
+    while (p.z < targetZ && Date.now() - t0 < timeoutMs) {
       const before = p.z;
       await page.evaluate(() => window.__k('keydown', 'KeyW'));
       await page.waitForTimeout(320);
@@ -101,15 +105,15 @@ const ok = (name, pass, detail) => {
   );
 
   // --- 2) CLOSED gate blocks the on-foot player ------------------------------
-  await teleport(0.3, 2.3, -22.6, 0);
+  await teleport(-6.3, 2.3, 13.9, Math.PI); // lobby side, facing the gate (south)
   await page.waitForTimeout(600);
   g = await gate();
   ok('prompt: [E] shows near the closed gate', g.prompt.includes('Open the iron gate'), `prompt="${g.prompt}"`);
-  const blocked = await walkNorth(-25, 9000, 'at the closed gate');
+  const blocked = await walkSouth(17.0, 9000, 'at the closed gate');
   ok(
     'closed gate BLOCKS the walk (stops at collider face + radius)',
-    Math.abs(blocked.z - (-23.75)) < 0.1,
-    `player z=${blocked.z.toFixed(3)} (expected stop −23.75 = gate box face −24.1 + radius)`,
+    Math.abs(blocked.z - 14.75) < 0.1,
+    `player z=${blocked.z.toFixed(3)} (expected stop 14.75 = gate box face 15.1 − radius)`,
   );
   await shot('01-gate-closed-blocking');
 
@@ -125,32 +129,32 @@ const ok = (name, pass, detail) => {
   await shot('02-gate-open');
 
   // --- 4) the player WALKS THROUGH the opened doorway into the office --------
-  await teleport(0.3, 2.3, -22.6, 0);
+  await teleport(-6.3, 2.3, 13.9, Math.PI);
   await page.waitForTimeout(400);
-  const inOffice = await walkNorth(-24.75, 20000, 'through the open gate');
+  const inOffice = await walkSouth(16.75, 20000, 'through the open gate');
   ok(
     'walked THROUGH the open gate into the office',
-    inOffice.z <= -24.75 && inOffice.z > -27.5 && Math.abs(inOffice.x - 0.3) < 0.3,
-    `player (${inOffice.x.toFixed(2)}, ${inOffice.z.toFixed(2)}) — wall line −24.51`,
+    inOffice.z >= 16.6 && inOffice.z < 18.0 && Math.abs(inOffice.x + 6.3) < 0.3,
+    `player (${inOffice.x.toFixed(2)}, ${inOffice.z.toFixed(2)}) — gate line 15.51…15.69`,
   );
   await shot('03-office-through-gate');
 
-  // --- 5) the old open vault slot is SEALED (user Final widened the middle
-  // segment) — the vault is entered ONLY through the big vault door, which the
-  // dedicated verify-bank-vault.cjs proves end-to-end. Here we assert the
-  // seal: a lobby-side walk north stops at the widened wall's south face.
-  await teleport(2.45, 2.3, -23.85, 0);
+  // --- 5) the gate line away from the gate is SOLID masonry — the only way
+  // into the manager office/vault block is the gate (vault door proven by
+  // verify-bank-vault.cjs + verify-round3 §4f). A walk south along the wall
+  // at an x offset from the gate must stop at the wall's north face.
+  await teleport(-8.45, 2.3, 14.9, Math.PI);
   await page.waitForTimeout(400);
-  const sealed = await walkNorth(-25.05, 20000, 'into the sealed slot line');
+  const sealed = await walkSouth(17.0, 20000, 'into the gate-line wall');
   ok(
-    'old vault slot is SEALED masonry (walk stops at the widened wall face)',
-    Math.abs(sealed.z - (-24.16)) < 0.1 && sealed.z > -24.7,
-    `player (${sealed.x.toFixed(2)}, ${sealed.z.toFixed(2)}) — expected stop −24.16 = south face −24.51 + radius`,
+    'gate line is SOLID masonry off the doorway (walk stops at the wall face)',
+    Math.abs(sealed.z - 15.16) < 0.12 && sealed.z < 15.5,
+    `player (${sealed.x.toFixed(2)}, ${sealed.z.toFixed(2)}) — expected stop 15.16 = wall face 15.51 − radius`,
   );
   await shot('04-slot-sealed');
 
   // --- 6) E closes the gate again (from within interaction range) ------------
-  await teleport(0.3, 2.3, -23.3, 0); // back south of the gate, inside range 2.2
+  await teleport(-6.3, 2.3, 14.4, Math.PI); // lobby side of the gate, inside range 2.2
   await page.waitForTimeout(500);
   await press('KeyE');
   g = await waitFor(gate, (s) => s.swing <= 0 && s.collider === true, 12000, 'gate re-closed');

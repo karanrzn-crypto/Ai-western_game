@@ -1,15 +1,22 @@
 /* BROWSER VERIFICATION (§29 final gates) — the Gun Shop must:
- *   1. boot with every key object registered, console clean, storage key v15
+ *   1. boot with every key object registered, console clean
  *   2. the front door spawns CLOSED + collider armed + hinge yaw 0
  *   3. the CLOSED door physically blocks the entrance (real walk)
  *   4. E opens the door (closed → opening → open), collider released
  *   5. the player walks IN through the doorway (real play-mode walk)
- *   6. the player walks Sales → east aisle → Workshop (no stuck)
+ *   6. the player walks Sales → deep aisle → Workshop (no stuck)
  *   7. E closes the door from inside (collider re-arms), it blocks again
  *   8. geometry: rack guns clear of the wall, case guns under the glass,
  *      nothing of the shop under the ground / through the roof
  *   9. draw-call sanity: the merged gunshop adds a modest call count
  *  10. no page errors; screenshots (exterior / interior / workshop / door)
+ * RE-MAPPED 2026-11 to the REDESIGNED town: the shop now stands at
+ * GUNSHOP_SITE (10.5, −25) yaw −90° — the front (door plane x ≈ 7.0) faces
+ * WEST onto the main street, the interior runs EAST (+X). All walk targets
+ * and camera poses below were re-derived from the live def boxes
+ * (door leaf x 6.925–7.05 · z −25.55…−24.47; floor x 7.175–13.825 ·
+ * z −29.325–−20.675). Axis mapping from the old placement: old −Z (into
+ * the shop) → new +X; old +X (across) → new +Z.
  * Run: node scripts/verify-gunshop.cjs (dev server on :5176 or :5173)
  */
 const { chromium } = require('playwright');
@@ -163,7 +170,7 @@ const IDS = {
   const missing = Object.entries(presence).filter(([, v]) => !v).map(([k]) => k);
   ok('boot: shell + door + windows + sign + full interior registered', missing.length === 0,
     missing.length ? `MISSING: ${missing.join(', ')}` : `${Object.keys(presence).length} key objects present`);
-  ok('boot: the whole 9000-block def set is live (v15 authored layout, no stale save)',
+  ok('boot: the whole 9000-block def set is live (authored layout, no stale save)',
     await page.evaluate(() => window.__westTest.objects().filter((d) => String(d.uuid).startsWith('10000000-0000-4000-9000')).length >= 34));
 
   // --- 2) the door spawns CLOSED ------------------------------------------------
@@ -173,11 +180,14 @@ const IDS = {
     `swing=${d0.swing} collider=${d0.collider} yaw=${d0.hingeYaw}`);
 
   // --- 3) the CLOSED door blocks the entrance (real walk) -----------------------
-  await teleport(14, 1.7, 13.0, 0); // on the porch, facing the door (north)
+  // The door plane is x ≈ 7.0 (faces west); the porch is west of it. The
+  // closed def spawns the yaw-conservative 1×1 box (x 6.5–7.5) — the player
+  // circle (r ≈ 0.35) must stop at x ≈ 6.15.
+  await teleport(6.0, 1.7, -25.0, -Math.PI / 2); // on the porch, facing the door (east)
   await settle();
-  const blocked = await walk('z', -1, 11.0, 30000, 'toward the CLOSED door');
-  ok('the CLOSED door physically blocks the entrance', blocked.z > 11.6,
-    `stopped at z=${blocked.z.toFixed(2)} (door plane 12.0)`);
+  const blocked = await walk('x', 1, 8.0, 30000, 'toward the CLOSED door');
+  ok('the CLOSED door physically blocks the entrance', blocked.x < 6.7,
+    `stopped at x=${blocked.x.toFixed(2)} (door plane 7.0)`);
 
   // --- 4) E opens the door -------------------------------------------------------
   const opened = await pressDoorUntil(1, 'E opens the gun shop door');
@@ -186,32 +196,32 @@ const IDS = {
     `state=${opened.state} collider=${opened.collider} yaw=${(opened.hingeYaw ?? 0).toFixed(3)}`);
 
   // --- 5) walk IN through the doorway --------------------------------------------
-  await teleport(14, 1.7, 12.9, 0);
+  await teleport(6.1, 1.7, -25.0, -Math.PI / 2);
   await settle();
-  let p = await walk('z', -1, 10.9, 60000, 'through the doorway into the sales area');
-  ok('the player walks IN through the open doorway', p.z < 11.3,
-    `reached z=${p.z.toFixed(2)} (inside = north of 11.85)`);
+  let p = await walk('x', 1, 8.1, 60000, 'through the doorway into the sales area');
+  ok('the player walks IN through the open doorway', p.x > 7.7,
+    `reached x=${p.x.toFixed(2)} (inside = east of 7.4)`);
   await shot('gunshop-interior-sales');
 
-  // --- 6) Sales → east aisle → Workshop -------------------------------------------
-  await teleport(16.9, 1.8, 10.9, 0);
+  // --- 6) Sales → deep aisle → Workshop -------------------------------------------
+  await teleport(8.1, 1.8, -22.1, -Math.PI / 2);
   await settle();
-  p = await walk('z', -1, 6.6, 60000, 'east aisle back to the workshop');
-  ok('Sales → Workshop corridor is walkable (no stuck)', p.z < 7.4,
-    `reached z=${p.z.toFixed(2)} (workshop zone)`);
+  p = await walk('x', 1, 12.4, 60000, 'deep aisle back to the workshop');
+  ok('Sales → Workshop corridor is walkable (no stuck)', p.x > 11.6,
+    `reached x=${p.x.toFixed(2)} (workshop zone)`);
   await shot('gunshop-workshop');
 
   // --- 7) back to the door, E closes, it blocks again ------------------------------
-  await teleport(14, 1.8, 11.35, Math.PI);
+  await teleport(7.65, 1.8, -25.0, Math.PI / 2);
   await settle();
   const closed = await pressDoorUntil(0, 'E closes the door from inside');
   ok('door: E closes it — collider re-arms', closed.swing === 0 && closed.state === 'closed' && closed.collider === true,
     `state=${closed.state} collider=${closed.collider}`);
-  await teleport(14, 1.8, 11.0, Math.PI); // clear of the armed 1×1 door box (z ∈ [11.5, 12.5])
+  await teleport(8.0, 1.8, -25.0, Math.PI / 2); // clear of the armed 1×1 door box (x ∈ [6.5, 7.5])
   await settle();
-  const blockedAgain = await walk('z', 1, 12.8, 30000, 'into the CLOSED door (inside)');
-  ok('the re-closed door blocks the way out', blockedAgain.z < 11.5,
-    `stopped at z=${blockedAgain.z.toFixed(2)} (inflated box edge 11.15 + radius)`);
+  const blockedAgain = await walk('x', -1, 6.2, 30000, 'into the CLOSED door (inside)');
+  ok('the re-closed door blocks the way out', blockedAgain.x > 7.6,
+    `stopped at x=${blockedAgain.x.toFixed(2)} (inflated box edge 7.5 + radius)`);
 
   // --- 8) geometry probes (pure-JS world AABBs — THREE is not on window) ---------
   const geo = await page.evaluate((ids) => {
@@ -325,8 +335,8 @@ const IDS = {
         });
         return out;
       }
-      if (gb.min[0] > backing.max[0] - 0.001) gunsClear += 1;
-      if (gb.max[0] - gb.min[0] < 0.1) gunsPlane += 1;
+      if (gb.min[2] > backing.max[2] - 0.001) gunsClear += 1; // guns protrude along local +X → world +Z (yaw −90)
+      if (gb.max[2] - gb.min[2] < 0.1) gunsPlane += 1;
     }
     const felt = partBox(ids.displayCase, 'gunshop-display-felt');
     const glass = partBox(ids.displayCase, 'gunshop-display-glass');
@@ -350,7 +360,7 @@ const IDS = {
         });
         return out;
       }
-      if (cb.min[1] >= felt.max[1] - 0.005 && cb.max[1] < glass.min[1] && cb.min[2] > felt.min[2] - 0.02) caseGunsFit += 1;
+      if (cb.min[1] >= felt.max[1] - 0.005 && cb.max[1] < glass.min[1] && cb.max[0] < felt.max[0] + 0.02) caseGunsFit += 1;
     }
     let sunk = 0;
     let skyHigh = 0;
@@ -392,17 +402,19 @@ const IDS = {
 
   // --- 9) draw calls + shots ---------------------------------------------------------
   const stats = await page.evaluate(() => window.__westTest.stats());
-  ok('draw calls stay in the merged-pass budget', stats.calls > 0 && stats.calls < 900,
+  // Budget re-baselined 2026-11: the redesigned town draws 882–1624 calls
+  // outdoors (verify-perf census); this interior view must stay well under.
+  ok('draw calls stay in the merged-pass budget', stats.calls > 0 && stats.calls < 1500,
     `calls=${stats.calls} tris=${stats.tris} geos=${stats.geometries} mats≈programs=${stats.programs}`);
 
   await page.evaluate(() => window.__westTest.setDayTime(10));
-  await teleport(8.5, 2.6, 18.5, -2.2); // SE of the porch, looking NW at the facade
+  await teleport(1.6, 2.6, -20.2, -2.35); // SW of the porch, looking NE at the west facade
   await page.waitForTimeout(1600);
   await shot('gunshop-exterior');
-  await teleport(14, 1.8, 11.6, 0); // just inside, facing the counter
+  await teleport(7.4, 1.8, -25.0, -Math.PI / 2); // just inside, facing the counter (east)
   await page.waitForTimeout(1600);
   await shot('gunshop-counter-view');
-  await teleport(10.5, 1.8, 8.2, -1.2); // west side, looking at the rack
+  await teleport(10.8, 1.8, -28.5, -2.77); // south side, looking at the rack
   await page.waitForTimeout(1600);
   await shot('gunshop-rack-view');
   await shot('gunshop-door-midnight');

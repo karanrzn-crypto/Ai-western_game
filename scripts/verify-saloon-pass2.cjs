@@ -13,7 +13,7 @@ const OUT = '/home/z/my-project/Ai-western_game/shots-saloon-final';
   page.on('pageerror', (e) => errors.push('pageerror: ' + e));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
-  await page.goto('http://localhost:5174/');
+  await page.goto('http://localhost:5176/');
   await page.waitForTimeout(2600);
   await page.evaluate(() => {
     const neuter = (proto, name) => {
@@ -74,13 +74,18 @@ const OUT = '/home/z/my-project/Ai-western_game/shots-saloon-final';
     }
   };
   const servo = async (tx, ty, tz, tol, label) => {
-    for (let i = 0; i < 8; i += 1) {
+    // 16 iterations: headless frames are ~0.05 s of game time each, so the
+    // exact-ramp hop model undershoots per hop — more hops converge tighter.
+    for (let i = 0; i < 16; i += 1) {
       const p = await pose();
       const dx = tx - p.cam[0], dy = ty - p.cam[1], dz = tz - p.cam[2];
-      if (Math.hypot(dx, dy, dz) <= tol) { console.log(`servo ${label}: ok`); return; }
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist <= tol) { console.log(`servo ${label}: ok (d=${dist.toFixed(2)})`); return; }
+      console.log(`servo ${label}: it${i} d=${dist.toFixed(2)}`);
       await flyVec(dx, dy, dz);
     }
-    console.log(`servo ${label}: tolerance missed`);
+    const p = await pose();
+    console.log(`servo ${label}: tolerance missed, FINAL d=${Math.hypot(tx - p.cam[0], ty - p.cam[1], tz - p.cam[2]).toFixed(2)}`);
   };
   // Aim the view at a world point (used after servoing the camera position).
   const aimAt = async (px, py, pz) => {
@@ -92,23 +97,33 @@ const OUT = '/home/z/my-project/Ai-western_game/shots-saloon-final';
     await lookAbs(ny, np);
   };
 
+  // Stand next to the first pose before entering creative — the boot spawn
+  // is ~43 m away and the headless flight servo converges too slowly from
+  // that far (each frame is only 0.05 s of game time).
+  await page.evaluate(() => window.__westTest.teleport(-12.5, 0, -17.0));
+  await page.waitForTimeout(700);
+
   await page.evaluate(() => window.__k('keydown', 'KeyF'));
   await page.evaluate(() => window.__k('keyup', 'KeyF'));
   await page.waitForTimeout(400);
 
+  // RE-MAPPED 2026-11 to the redesigned saloon (SALOON_SITE (−11.5, −21)
+  // yaw 90°): piano (−10.7, −16.5) + stool (−10.7, −17.475) at the EAST
+  // wall, back-bar countertop at x ≈ −15.1 (faces east), spittoon 1 at
+  // (−13.55, −23.45). Poses re-anchored to those measured def positions.
   // 10: piano + stool, low framing
-  await servo(-14.55, 1.45, -10.95, 0.3, 'piano2');
-  await aimAt(-15.6, 0.55, -11.2);
+  await servo(-12.5, 1.45, -17.0, 0.5, 'piano2');
+  await aimAt(-10.7, 0.55, -17.0);
   await shot('10-piano-with-stool');
 
   // 11: back-bar countertop wine glasses close-up
-  await servo(-11.85, 1.4, -14.75, 0.3, 'wineglass');
-  await aimAt(-11.85, 1.02, -15.68);
+  await servo(-14.2, 1.4, -21.0, 0.3, 'wineglass');
+  await aimAt(-15.1, 1.02, -21.0);
   await shot('11-wine-glass-closeup');
 
   // 12: spittoon close-up (bowl / dark interior / thick rim)
-  await servo(-9.55, 0.85, -13.15, 0.3, 'spittoon');
-  await aimAt(-9.55, 0.1, -14.05);
+  await servo(-13.55, 0.85, -22.55, 0.3, 'spittoon');
+  await aimAt(-13.55, 0.1, -23.45);
   await shot('12-spittoon-closeup');
 
   await page.evaluate(() => window.__k('keydown', 'KeyF'));

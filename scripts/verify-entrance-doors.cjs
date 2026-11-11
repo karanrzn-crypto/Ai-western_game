@@ -27,8 +27,13 @@ const ok = (name, pass, detail) => {
   console.log(`${pass ? 'PASS' : 'FAIL'} | ${name} | ${detail}`);
 };
 
-const BANK = { x: 2, z: -23, doorZ: -18.5, faceZ: -18.325 };
-const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
+// Approach geometry (measured live 2026-11): the bank door plane sits at
+// z ≈ 9.5 with the facade face z ≈ 9.7 and the player approaching from
+// the north (walking +Z / south, yaw π). The saloon door plane sits at
+// x ≈ −7.55 with the facade face x ≈ −7.5, the player approaching from
+// the east (walking −X / west, yaw +π/2).
+const BANK = { axis: 'z', dir: 1, awayYaw: Math.PI, backYaw: 0, x: -8, z: 14, doorPlane: 9.5, face: 9.7 };
+const SALOON = { axis: 'x', dir: -1, awayYaw: Math.PI / 2, backYaw: -Math.PI / 2, x: -7.5, z: -21, doorPlane: -7.45, face: -7.5 };
 
 (async () => {
   const browser = await chromium.launch();
@@ -71,49 +76,51 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   };
   // Held walk: key down, poll until the player REACHES the target or stops
   // making progress (headless fps craters while shadows refresh, so timed
-  // walks are meaningless), key up. Returns the final player position.
+  // walks are meaningless), key up. Axis-general: the bank approach walks
+  // +Z (south), the saloon approach walks −X (west).
   let lastPlayerPos = null; // debug breadcrumb for failed walks
-  // Walk north (−z) until the player crosses zTarget (or the cap hits).
-  const walkNorthPast = async (zTarget, label, cap = 20000) => {
+  const walkPast = async (site, target, label, cap = 25000) => {
     await ev(() => window.__k('keydown', 'KeyW'));
     let result = null;
     const t0 = Date.now();
     while (Date.now() - t0 < cap) {
       lastPlayerPos = await ev(() => window.__westTest.player());
-      if (lastPlayerPos.z < zTarget) { result = { z: lastPlayerPos.z }; break; }
+      if (site.dir * (lastPlayerPos[site.axis] - target) > 0) { result = { v: lastPlayerPos[site.axis] }; break; }
       await page.waitForTimeout(60);
     }
     await ev(() => window.__k('keyup', 'KeyW'));
     if (!result) console.log(`  [walk debug] ${label}: ended at`, JSON.stringify(lastPlayerPos));
     return result;
   };
-  const stallGuard = (z0) => async () => {
-    const z = await ev(() => window.__westTest.player().z);
-    return Math.abs(z - z0) < 0.005;
-  };
-  const walkStops = async (label, cap = 20000) => {
-    // Walk until movement stalls (a collider holds the player) or the cap.
-    let z0 = await ev(() => window.__westTest.player().z);
-    await ev((c) => window.__k('keydown', c), 'KeyW');
+  const walkStops = async (site, label, cap = 20000) => {
+    // Walk (site.dir on site.axis) until movement stalls (a collider holds
+    // the player) or the cap. Returns the stalled coordinate.
+    const z0 = await ev((ax) => window.__westTest.player()[ax], site.axis);
+    await ev(() => window.__k('keydown', 'KeyW'));
     const t0 = Date.now();
-    let lastZ = z0;
+    let last = z0;
     let lastMove = Date.now();
-    while (Date.now() - t0 < cap) {
-      await page.waitForTimeout(250);
-      const z = await ev(() => window.__westTest.player().z);
-      if (Math.abs(z - lastZ) > 0.02) lastMove = Date.now();
-      lastZ = z;
-      if (Date.now() - lastMove > 1400) break; // stalled for 1.4 s → blocked
+    try {
+      while (Date.now() - t0 < cap) {
+        lastPlayerPos = await ev(() => window.__westTest.player());
+        const v = lastPlayerPos[site.axis];
+        if (Math.abs(v - last) > 0.005) { last = v; lastMove = Date.now(); }
+        else if (Date.now() - lastMove > 1400) break; // stalled 1.4 s → blocked
+      }
+    } finally {
+      await ev(() => window.__k('keyup', 'KeyW'));
+      await page.waitForTimeout(300);
     }
-    await ev((c) => window.__k('keyup', c), 'KeyW');
     void label;
-    return lastZ;
+    return last;
   };
 
   /* ---- 1. FP ride-cam: the view inherits the horse's rotation ------------ */
   await ev(() => window.__westTest.setDayTime(12));
-  // Park the player next to the horse and mount.
-  await ev(() => window.__westTest.teleport(-5, 1.7, 10.2));
+  // Park the player next to the horse (TOWN_HORSE_SPAWN meadow, (−3.8, −53.5))
+  // and mount.
+  await ev(() => window.__westTest.placeHorse(-3.8, -53.5));
+  await ev(() => window.__westTest.teleport(-5.4, 1.7, -53.5));
   await page.waitForTimeout(300);
   const mountable = await wait(() => ({
     can: window.__westTest.scene() && true,
@@ -301,43 +308,46 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
 
   // Dismount (E → choreography → back to FP on foot). Under headless fps
   // craters a single E can be eaten by a frame stall — retry once.
+  // 30 s caps: the animated dismount is ~2.2 s of GAME time, and the headless
+  // sim advances only ~0.125 s of game time per wall second (delta clamp 50 ms
+  // at ~2.5 fps) — the 7 s caps could never cover the choreography.
   await key('KeyE', 200);
-  let dismounted = await wait(() => !window.__westTest.horse().riding, 'dismount handover', 7000).catch(() => null);
+  let dismounted = await wait(() => !window.__westTest.horse().riding, 'dismount handover', 30000).catch(() => null);
   if (!dismounted) {
     await key('KeyE', 200);
-    dismounted = await wait(() => !window.__westTest.horse().riding, 'dismount handover (retry)', 7000).catch(() => null);
+    dismounted = await wait(() => !window.__westTest.horse().riding, 'dismount handover (retry)', 30000).catch(() => null);
   }
   if (!dismounted) throw new Error('dismount never engaged after two E attempts');
   ok('1g. dismount returns to first person on foot', await ev(() => window.__westTest.cameraMode() === 'first_person'),
     JSON.stringify(await ev(() => window.__westTest.cameraMode())));
 
-  /* ---- 2. BANK front door -------------------------------------------------- */
-  // Teleport in front of the bank entrance.
-  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.faceZ + 4.4), BANK);
+  /* ---- 2. BANK front door (front faces NORTH; approach walking SOUTH) ------ */
+  // Teleport on the square north of the bank entrance.
+  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.doorPlane - 4.4), BANK);
   await page.waitForTimeout(400);
-  await ev(() => window.__westTest.setYaw(0)); // face −z (north, toward the bank)
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), BANK); // face the bank (south)
   await page.waitForTimeout(150);
   const b0 = await ev(() => window.__westTest.bankDoor());
   ok('2a. bank door exists and spawns CLOSED with the collider armed',
     b0 && b0.state === 'closed' && b0.swing === 0 && b0.hingeYawW === 0 && b0.hingeYawE === 0,
     JSON.stringify({ state: b0.state, collider: typeof b0.collider === 'object' ? 'boxes' : b0.collider, yawW: b0.hingeYawW, yawE: b0.hingeYawE }));
 
-  // CLOSED: the doorway blocks — walk north until movement STALLS.
-  await ev(() => window.__westTest.setYaw(0)); // face −z (north, toward the bank)
-  const stoppedAt = await walkStops('closed-door walk');
+  // CLOSED: the doorway blocks — walk south until movement STALLS.
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), BANK);
+  const stoppedAt = await walkStops(BANK, 'closed-door walk');
   ok('2b. the CLOSED bank door stops the player outside',
-    stoppedAt > BANK.doorZ + 0.25 && stoppedAt < BANK.doorZ + 2.2,
-    `stalled at z=${stoppedAt.toFixed(3)} (door plane ${BANK.doorZ}, face+radius ≈ ${(BANK.faceZ + 0.35).toFixed(2)})`);
-  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.faceZ + 4.4), BANK);
+    stoppedAt > BANK.doorPlane - 2.2 && stoppedAt < BANK.doorPlane - 0.25,
+    `stalled at z=${stoppedAt.toFixed(3)} (door plane ${BANK.doorPlane}, face−radius ≈ ${(BANK.face - 0.35).toFixed(2)})`);
+  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.doorPlane - 4.4), BANK);
   await page.waitForTimeout(300);
-  await ev(() => window.__westTest.setYaw(0));
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), BANK);
   await page.waitForTimeout(150);
   await page.screenshot({ path: OUT + '/bank-door-closed.png' });
 
   // E opens: walk back UP to the closed door (stall = at the leaf, well
   // inside the 2.6 m interaction range) — the screenshot teleport above
   // parked the player 4.6 m out, where E is out of range.
-  await walkStops('bank re-approach walk');
+  await walkStops(BANK, 'bank re-approach walk');
   await key('KeyE', 150);
   const b1 = await wait(() => { const b = window.__westTest.bankDoor(); return b.state === 'open' ? b : null; }, 'bank door to open', 15000);
   ok('2c. [E] swings both leaves inward, mirrored', Math.abs(b1.hingeYawW + b1.hingeYawE) < 1e-6 && b1.hingeYawW > 1.5,
@@ -345,39 +355,39 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   await page.screenshot({ path: OUT + '/bank-door-open.png' });
 
   // Walk THROUGH the open doorway into the lobby (held walk, deep target).
-  await ev(() => window.__westTest.setYaw(0));
-  const lobbyZ = await walkNorthPast(BANK.doorZ - 1.2, 'walk into the lobby', 25000);
-  ok('2d. the OPEN doorway walks into the lobby', lobbyZ && lobbyZ.z < BANK.doorZ - 1.2,
-    `player z=${lobbyZ ? lobbyZ.z.toFixed(3) : 'never'}`);
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), BANK);
+  const lobbyZ = await walkPast(BANK, BANK.doorPlane + 1.2, 'walk into the lobby');
+  ok('2d. the OPEN doorway walks into the lobby', lobbyZ && lobbyZ.v > BANK.doorPlane + 1.2,
+    `player z=${lobbyZ ? lobbyZ.v.toFixed(3) : 'never'}`);
 
-  // E closes from inside; the door blocks again (walk south into it).
+  // E closes from inside; the door blocks again (walk north into it).
   await key('KeyE', 150);
   const b2 = await wait(() => { const b = window.__westTest.bankDoor(); return b.state === 'closed' ? b : null; }, 'bank door to close', 15000);
   ok('2e. [E] closes the door and re-arms the exact collider',
     b2.swing === 0 && typeof b2.collider === 'object' && b2.collider !== false,
     `state=${b2.state} collider=${typeof b2.collider}`);
-  await ev(() => window.__westTest.setYaw(Math.PI)); // face +z (south, at the door)
-  const blockedInZ = await walkStops('inside blocked walk');
-  ok('2f. the re-CLOSED door blocks from inside', blockedInZ < BANK.doorZ - 0.25 && blockedInZ > BANK.doorZ - 1.6,
-    `stalled at z=${blockedInZ.toFixed(3)} (inside leaf face + radius ≈ ${(BANK.doorZ - 0.06 - 0.35).toFixed(2)})`);
+  await ev((t) => window.__westTest.setYaw(t.backYaw), BANK); // face north (at the door)
+  const blockedInZ = await walkStops(BANK, 'inside blocked walk');
+  ok('2f. the re-CLOSED door blocks from inside', blockedInZ > BANK.doorPlane + 0.25 && blockedInZ < BANK.doorPlane + 1.6,
+    `stalled at z=${blockedInZ.toFixed(3)} (inside leaf face + radius ≈ ${(BANK.doorPlane + 0.06 + 0.35).toFixed(2)})`);
 
   // The wall beside the door still blocks (1.5 m west of the doorway).
   // y=2.3 lands the feet ON the 0.6 m platform top — teleporting at street
   // level embeds the feet INSIDE the step colliders (pale 1-3) and jams the
   // physics solver; the street approach also legitimately stops at the
   // platform edge long before the facade.
-  await ev((t) => window.__westTest.teleport(t.x - 1.5, 2.3, t.faceZ + 0.9), BANK);
+  await ev((t) => window.__westTest.teleport(t.x - 1.5, 2.3, t.face - 0.9), BANK);
   await page.waitForTimeout(300);
-  await ev(() => window.__westTest.setYaw(0));
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), BANK);
   await page.waitForTimeout(150);
-  const wallSideZ = await walkStops('wall-side walk');
-  ok('2g. the facade wall BESIDE the bank door blocks', wallSideZ > BANK.faceZ - 0.4 && wallSideZ < BANK.faceZ + 1.5,
-    `stalled at z=${wallSideZ.toFixed(3)} (face ${BANK.faceZ})`);
+  const wallSideZ = await walkStops(BANK, 'wall-side walk');
+  ok('2g. the facade wall BESIDE the bank door blocks', wallSideZ > BANK.face - 1.5 && wallSideZ < BANK.face + 0.4,
+    `stalled at z=${wallSideZ.toFixed(3)} (face ${BANK.face})`);
 
-  /* ---- 3. SALOON doors ------------------------------------------------------ */
-  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.faceZ + 3.6), SALOON);
+  /* ---- 3. SALOON doors (front faces EAST; approach walking WEST) ----------- */
+  await ev((t) => window.__westTest.teleport(t.doorPlane - t.dir * 3.6, 1.7, t.z), SALOON);
   await page.waitForTimeout(400);
-  await ev(() => window.__westTest.setYaw(0));
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), SALOON); // face west at the doors
   await page.waitForTimeout(150);
   const s0 = await ev(() => window.__westTest.saloonDoor());
   ok('3a. saloon doors exist, spawn CLOSED, full height, collider armed',
@@ -389,55 +399,56 @@ const SALOON = { x: -12, z: -12, doorZ: -8, faceZ: -7.85 };
   // the bar door model stays fixed and the player walks through it).
   ok('3a-mesh. leaf meshes LIVE under their hinges (not merge-baked away)',
     s0.leafMeshesL >= 1 && s0.leafMeshesR >= 1,
-    `leafMeshesL=${s0.leafMeshesL} leafMeshesR=${s0.leafMeshesR} (face z ${s0.leafFaceZL?.toFixed(3)} / ${s0.leafFaceZR?.toFixed(3)})`);
-  const saloonClosedFaceZL = s0.leafFaceZL;
+    `leafMeshesL=${s0.leafMeshesL} leafMeshesR=${s0.leafMeshesR} (face x ${s0.leafFaceXL?.toFixed(3)} / ${s0.leafFaceXR?.toFixed(3)})`);
+  const saloonClosedFaceXL = s0.leafFaceXL;
   await page.screenshot({ path: OUT + '/saloon-door-closed.png' });
 
   // Walk UP to the closed doors (stall = at the leaf), then press E.
-  const saloonAtDoor = await walkStops('saloon approach walk');
+  const saloonAtDoor = await walkStops(SALOON, 'saloon approach walk');
   ok('3a2. the CLOSED saloon doors stop the player outside',
-    saloonAtDoor > SALOON.doorZ + 0.25 && saloonAtDoor < SALOON.doorZ + 2.0,
-    `stalled at z=${saloonAtDoor.toFixed(3)} (door plane ${SALOON.doorZ})`);
+    saloonAtDoor < SALOON.doorPlane + 0.45 && saloonAtDoor > SALOON.doorPlane - 1.5,
+    `stalled at x=${saloonAtDoor.toFixed(3)} (leaf east face ${SALOON.doorPlane} + radius ≈ ${(SALOON.doorPlane + 0.35).toFixed(2)})`);
   await page.screenshot({ path: OUT + '/saloon-door-closed-at-door.png' });
   await key('KeyE', 150);
   const s1 = await wait(() => { const s = window.__westTest.saloonDoor(); return s.state === 'open' ? s : null; }, 'saloon doors to open', 15000);
   ok('3b. [E] swings both saloon leaves inward, mirrored', Math.abs(s1.hingeYawL + s1.hingeYawR) < 1e-6 && s1.hingeYawL > 1.5,
     `yawL=${s1.hingeYawL.toFixed(3)} yawR=${s1.hingeYawR.toFixed(3)}`);
   // The leaf must PHYSICALLY move with the swing (visible movement, not an
-  // empty-group yaw): the tracked leaf-face world Z changes > 0.2 m.
+  // empty-group yaw): the tracked leaf-face world X changes > 0.2 m (the
+  // leaves swing in X for the yaw-90 saloon).
   ok('3b-move. the leaf face physically moves with the swing (visible open)',
-    s1.leafFaceZL !== null && saloonClosedFaceZL !== null
-      && Math.abs(s1.leafFaceZL - saloonClosedFaceZL) > 0.2,
-    `closed face z=${saloonClosedFaceZL?.toFixed(3)} → open face z=${s1.leafFaceZL?.toFixed(3)} (Δ=${Math.abs(s1.leafFaceZL - saloonClosedFaceZL).toFixed(3)}m)`);
+    s1.leafFaceXL !== null && saloonClosedFaceXL !== null
+      && Math.abs(s1.leafFaceXL - saloonClosedFaceXL) > 0.2,
+    `closed face x=${saloonClosedFaceXL?.toFixed(3)} → open face x=${s1.leafFaceXL?.toFixed(3)} (Δ=${Math.abs(s1.leafFaceXL - saloonClosedFaceXL).toFixed(3)}m)`);
   await page.screenshot({ path: OUT + '/saloon-door-open.png' });
 
   // Walk through the open doorway (from the porch deck, 9 cm step, fine).
-  await ev((t) => window.__westTest.teleport(t.x, 1.7, t.faceZ + 1.2), SALOON);
+  await ev((t) => window.__westTest.teleport(t.doorPlane - t.dir * 1.2, 1.7, t.z), SALOON);
   await page.waitForTimeout(300);
-  await ev(() => window.__westTest.setYaw(0));
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), SALOON);
   await page.waitForTimeout(150);
-  const barZ = await walkNorthPast(SALOON.doorZ - 1.2, 'walk into the bar', 25000);
-  ok('3c. the OPEN saloon doorway walks into the bar', barZ && barZ.z < SALOON.doorZ - 1.2,
-    `player z=${barZ ? barZ.z.toFixed(3) : 'never'}`);
+  const barX = await walkPast(SALOON, SALOON.doorPlane - 1.2, 'walk into the bar');
+  ok('3c. the OPEN saloon doorway walks into the bar', barX && barX.v < SALOON.doorPlane - 1.2,
+    `player x=${barX ? barX.v.toFixed(3) : 'never'}`);
   await page.screenshot({ path: OUT + '/saloon-inside.png' });
 
   // E closes the doors, then walk back INTO them from inside (must block).
   await key('KeyE', 150);
   const s2 = await wait(() => { const s = window.__westTest.saloonDoor(); return s.state === 'closed' ? s : null; }, 'saloon doors to close', 15000);
   void s2;
-  await ev(() => window.__westTest.setYaw(Math.PI)); // face south (+z, at the doors)
-  const blockedInS = await walkStops('saloon inside blocked walk');
-  ok('3d. the re-CLOSED saloon doors block from inside', blockedInS < SALOON.doorZ - 0.25 && blockedInS > SALOON.doorZ - 1.6,
-    `stalled at z=${blockedInS.toFixed(3)} (inside leaf face + radius ≈ ${(SALOON.doorZ - 0.05 - 0.35).toFixed(2)})`);
+  await ev((t) => window.__westTest.setYaw(t.backYaw), SALOON); // face east (at the doors)
+  const blockedInS = await walkStops(SALOON, 'saloon inside blocked walk');
+  ok('3d. the re-CLOSED saloon doors block from inside', blockedInS > SALOON.doorPlane - 1.0 && blockedInS < SALOON.doorPlane - 0.2,
+    `stalled at x=${blockedInS.toFixed(3)} (inside leaf face + radius ≈ ${(SALOON.doorPlane - 0.1 - 0.35).toFixed(2)})`);
 
-  // The saloon facade beside the door still blocks.
-  await ev((t) => window.__westTest.teleport(t.x - 3, 1.7, t.faceZ + 2.0), SALOON);
+  // The saloon facade beside the doors still blocks.
+  await ev((t) => window.__westTest.teleport(t.face + 2.0, 1.7, t.z - 2.0), SALOON);
   await page.waitForTimeout(300);
-  await ev(() => window.__westTest.setYaw(0));
+  await ev((t) => window.__westTest.setYaw(t.awayYaw), SALOON);
   await page.waitForTimeout(150);
-  const sWallSideZ = await walkStops('saloon wall-side walk');
-  ok('3e. the saloon facade BESIDE the doors blocks', sWallSideZ > SALOON.faceZ - 0.4 && sWallSideZ < SALOON.faceZ + 1.5,
-    `stalled at z=${sWallSideZ.toFixed(3)} (face ${SALOON.faceZ})`);
+  const sWallSideX = await walkStops(SALOON, 'saloon wall-side walk');
+  ok('3e. the saloon facade BESIDE the doors blocks', sWallSideX < SALOON.face + 1.5 && sWallSideX > SALOON.face - 0.4,
+    `stalled at x=${sWallSideX.toFixed(3)} (face ${SALOON.face})`);
 
   /* ---- 4. Housekeeping ------------------------------------------------------ */
   ok('4a. zero page errors through the whole run', errors.length === 0, errors.length ? errors.join(' | ').slice(0, 300) : 'console clean');

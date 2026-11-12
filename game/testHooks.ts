@@ -18,6 +18,7 @@ import {
   TOWN_EXTERIOR_COLLIDERS,
   RIDER_SEATED_EYE_Y,
 } from '../src/index.js';
+import type { SheepSystem } from './sheep.js';
 
 /** One door swing interpolator (value animates toward target at speed/s). */
 export interface Swing {
@@ -63,10 +64,12 @@ export interface TestHookContext {
   collisionWorld: CollisionWorld;
   playerController: PlayerController;
   dayNight: DayNightCycle;
-  // The horse rig is declared LATER in the composition root than the hook
-  // installation, so both come as lazy providers (evaluated at probe time).
+  // The horse rig and the sheep system are declared LATER in the composition
+  // root than the hook installation, so both come as lazy providers (evaluated
+  // at probe time).
   horse: () => HorseController;
   horseModelHead: () => THREE.Object3D;
+  sheep: () => SheepSystem;
   authoredLayout: AuthoredLayout;
   resetObjectToAuthored: (uuid: string) => boolean;
   resetAllToAuthored: () => number;
@@ -87,7 +90,7 @@ const at4State = (v: number, t: number): 'open' | 'closed' | 'opening' | 'closin
 export function createTestHooks(ctx: TestHookContext): Record<string, unknown> {
   const {
     scene, camera, renderer, manager, adapter, collisionWorld,
-    playerController, dayNight, horse, horseModelHead, authoredLayout,
+    playerController, dayNight, horse, horseModelHead, sheep, authoredLayout,
     resetObjectToAuthored, resetAllToAuthored, isRiding, doors, rideState,
   } = ctx;
 
@@ -412,6 +415,17 @@ export function createTestHooks(ctx: TestHookContext): Record<string, unknown> {
     // Read-only registry dump for the harness probes: every managed definition
     // (uuid/assetType/transform/metadata) exactly as the editor sees it.
     objects: () => manager.getAllObjects(),
+    // Farm sheep probe (read-only): flock size, per-sheep states/positions,
+    // the pen rect and the moving flag for the verify-sheep harness.
+    sheep: () => {
+      const system = sheep();
+      return {
+        count: system.count(),
+        penRect: system.penRect(),
+        anyMoving: system.anyMoving(),
+        list: system.snapshots(),
+      };
+    },
     // Read-only renderer.info snapshot for the perf harness (§9 baseline):
     // last-frame draw calls / points / triangles exactly as the driver saw them.
     stats: () => ({

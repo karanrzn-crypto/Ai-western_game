@@ -33,6 +33,7 @@ import { createWorld } from './world.js';
 import { createDoorSystem } from './doors.js';
 import { createEditorUi } from './editorUi.js';
 import { createHorseRig } from './horseRig.js';
+import { createSheepSystem } from './sheep.js';
 import { createTestHooks } from './testHooks.js';
 
 configure({ debug: false, logging: { level: 'info' } });
@@ -300,6 +301,7 @@ const doorSystem = createDoorSystem({ scene, manager, interactions, showStatusMe
   isRiding,
   doors: doorSystem.harness,
   rideState: () => rig.getRideState(),
+  sheep: () => sheepSystem,
 });
 
 function loadSavedScene(): void {
@@ -441,6 +443,19 @@ const rig = createHorseRig({
 function isRiding(): boolean {
   return rig.isRiding();
 }
+
+// --- Farm sheep (ambient livestock) -----------------------------------------
+// 4–7 seeded sheep live in the farm's livestock pen: slow wandering, grazing,
+// looking around, and a staggered bedtime after 20:00 (game/sheep.ts). Like
+// the horse they are NOT managed scene objects — never selectable/editable/
+// saved by the editor — and they reuse the existing collision solver. The
+// flock spawns on the first update tick (after loadSavedScene has materialized
+// the live registry), so spawn validation sees the player's actual fences.
+const sheepSystem = createSheepSystem({
+  scene,
+  collisionWorld,
+  getTimeOfDay: () => dayNight.getTimeOfDay(),
+});
 
 /**
  * Mode wiring — the ONE place that mirrors the game mode into the input
@@ -856,6 +871,10 @@ function animate(): void {
       if (element) element.textContent = '';
     }
   }
+  // Farm sheep: ambient behavior + bedtime pose easing. Movement/AI freeze
+  // outside play mode (the editor owns the world — same contract as the
+  // horse); the time-driven settle continues, matching the day/night cycle.
+  sheepSystem.update(delta, !modes.isPlay());
   // Horse world update: AI decisions, gaits, collision. The horse must run
   // BEFORE the HUD but AFTER the player moved, so its player-overlap push-out
   // uses this frame's position (spec §14: no hard player↔horse overlap).
@@ -918,7 +937,8 @@ function animate(): void {
     || editShadowPulse > 0
     || playerController.getHorizontalSpeed() > 0.25
     || Math.abs(playerController.getVerticalVelocity()) > 0.5
-    || Math.abs(horseSnap.speed) > 0.25;
+    || Math.abs(horseSnap.speed) > 0.25
+    || sheepSystem.anyMoving(); // wandering sheep keep their shadows honest
   renderer.shadowMap.needsUpdate = shadows.update(delta, castersMoving);
   if (editShadowPulse > 0) editShadowPulse -= delta;
   gizmo.sync(modes.isEdit(), editor.getSelectedUuid());

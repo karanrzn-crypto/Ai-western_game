@@ -4,7 +4,7 @@
  * 1. boot live → edit mode → nudge one object → auto-save fires (scene.v22)
  * 2. also write a plausible horse save (the key the game reads)
  * 3. reload → the boot path the returning player takes
- * 4. assert: zero errors, 564 defs, sheep spawn exactly once, console clean
+ * 4. assert: zero errors, 644 defs (world expansion), sheep spawn once, console clean
  * Run: node scripts/probe-live-saved-scene.cjs https://western-game-psi.vercel.app
  */
 const { chromium } = require('playwright');
@@ -70,7 +70,7 @@ const URL = process.argv[2] || 'https://western-game-psi.vercel.app';
   console.log('visit2 boot:', JSON.stringify(boot));
   const checks = [
     ['boot hooks live (no crash)', boot.hooksLive],
-    ['564 managed defs load', boot.defCount === 564],
+    ['expanded world defs load (644 managed + countryside)', boot.defCount === 644],
     ['sheep spawn on saved-scene boot', boot.sheepCount >= 4 && boot.sheepCount <= 7],
     ['exactly ONE sheep root', boot.sheepRoots === 1],
     ['zero console/page errors', errors.length === 0],

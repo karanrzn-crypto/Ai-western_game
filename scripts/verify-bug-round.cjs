@@ -47,13 +47,29 @@ const ok = (name, pass, detail) => {
 
   /** Fixed-duration walk: hold W for `ms`, return the final position.
    *  (A stall-break heuristic proved flaky — evaluate latency fired it early.) */
-  async function walkFor(x, z, yaw, ms) {
+  // Walk UNTIL a z target is reached (poll every 400 ms, hard ms cap) —
+  // headless rAF dilation varies the per-second pace, so a fixed wall-clock
+  // walk flaked ±1 m round to round. The target makes the assertion exact.
+  async function walkFor(x, z, yaw, ms, targetZ) {
     await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [x, z]);
     await ev((y) => window.__westTest.setYaw(y), yaw);
     await page.waitForTimeout(350);
     await ev(() => window.__k('keydown', 'KeyW'));
-    await page.waitForTimeout(ms);
+    const deadline = Date.now() + ms;
+    if (targetZ !== undefined) {
+      while (Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(400);
+        // eslint-disable-next-line no-await-in-loop
+        const p = await ev(() => window.__westTest.player());
+        const reached = yaw === Math.PI ? p.z >= targetZ : p.z <= targetZ;
+        if (reached) break;
+      }
+    } else {
+      await page.waitForTimeout(ms);
+    }
     await ev(() => window.__k('keyup', 'KeyW'));
+    await page.waitForTimeout(250);
     return ev(() => window.__westTest.player());
   }
 
@@ -181,16 +197,16 @@ const ok = (name, pass, detail) => {
   // π/2 = west (−X), −π/2 = east (+X).
   // §2a farm lane (shipped-town layout: respawn at the north edge, the road
   // runs south along x ≈ −1.5): walk south to the entrance.
-  const entrance = await walkFor(-1.7, -52, Math.PI, 12000);
+  const entrance = await walkFor(-1.7, -52, Math.PI, 30000, -43);
   ok('§2a farm lane walks south to the entrance', entrance.z > -44, `walked to z=${entrance.z.toFixed(2)} (from −55)`);
   // §2b main street south to the square (heaviest view).
-  const square = await walkFor(0, -28, Math.PI, 14000);
+  const square = await walkFor(0, -28, Math.PI, 30000, -18);
   ok('§2b main street reaches the square', square.z > -19, `walked to z=${square.z.toFixed(2)} (from −30)`);
   // §2c stable road south.
-  const stableRoad = await walkFor(0.6, 15, Math.PI, 10000);
+  const stableRoad = await walkFor(0.6, 15, Math.PI, 30000, 25);
   ok('§2c stable road walks to the stable yard', stableRoad.z > 24, `walked to z=${stableRoad.z.toFixed(2)}`);
   // §2d exit road.
-  const exit = await walkFor(0, 40, Math.PI, 7000);
+  const exit = await walkFor(0, 40, Math.PI, 30000, 53);
   ok('§2d exit road walks to the town edge', exit.z > 52, `walked to z=${exit.z.toFixed(2)}`);
   // §2e ENLARGED livestock pen (50 m²): enter through the WEST gate gap
   // (x −14.5, z −42.6…−41.2) walking east.

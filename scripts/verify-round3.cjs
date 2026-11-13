@@ -254,7 +254,7 @@ const ok = (name, pass, detail) => {
     const routes = roads.filter((d) => Array.isArray(d.metadata.route));
     const polygons = roads.filter((d) => Array.isArray(d.metadata.polygon));
     const patches = roads.filter((d) => d.metadata.tint === 'patch');
-    const limit = 59.5;
+    const limit = 139.5;
     const inside = routes.every((r) => r.metadata.route.every((p) => Math.abs(p.x) <= limit && Math.abs(p.z) <= limit));
     const penHorses = horses.filter((h) => h.transform.position.z < -38);
     return {
@@ -270,11 +270,12 @@ const ok = (name, pass, detail) => {
   ok('§2e the two decorative farm-pen horses are GONE (user §11)',
     layout.horseCount === 2 && layout.penHorseNames.length === 0,
     `town-horse defs=${layout.horseCount} (expect 2 corral) · pen names=[${layout.penHorseNames.join(', ')}]`);
-  ok('§2e roads: 3 continuous routes + 1 plaza polygon + 7 blobs, all inside ±59.5 (user §5/§10)',
-    layout.routes === 3 && layout.polygons === 1 && layout.patches === 7 && layout.inside,
+  ok('§2e map roads: 9 continuous routes (3 town + 6 countryside) + 1 plaza polygon + 10 blobs, all inside ±139.5 (user §5/§10 + world expansion)',
+    layout.routes === 9 && layout.polygons === 1 && layout.patches === 10 && layout.inside,
     `routes=${layout.routes} polygons=${layout.polygons} patches=${layout.patches} inside=${layout.inside}`);
   const camFar = await ev(() => window.__westTest.camera().far);
-  ok('§2f camera far plane matches the 120×120 world diagonal (180 ≥ 169.7)', camFar === 180, `camera.far=${camFar}`);
+  // 2026-11 world expansion: the ground grew to 280×280 (diagonal ≈ 396 m).
+  ok('§2f camera far plane matches the 280×280 world diagonal (420 ≥ 396)', camFar === 420, `camera.far=${camFar}`);
 
   /* ---- §3 HORSE BOUNDARY --------------------------------------------------- */
   const horseEdge = await ev(() => window.__westTest.placeHorse(52, -55));
@@ -283,11 +284,11 @@ const ok = (name, pass, detail) => {
   ok('§3a horse parked near the SE playable edge keeps its position (no ±28.5 clamp)',
     Math.abs(horseAfter.x - 52) < 0.5 && Math.abs(horseAfter.z + 55) < 0.5,
     `placed (${horseEdge.x}, ${horseEdge.z}) → after 0.9 s (${horseAfter.x.toFixed(2)}, ${horseAfter.z.toFixed(2)})`);
-  const horseOver = await ev(() => window.__westTest.placeHorse(59.4, 59.4));
+  const horseOver = await ev(() => window.__westTest.placeHorse(139.4, 139.4));
   await page.waitForTimeout(400);
   const horseOverAfter = await ev(() => window.__westTest.horse().horsePos);
-  ok('§3b a past-boundary placement still clamps to the shared playable half (±58.5)',
-    Math.abs(horseOverAfter.x) <= 58.51 && Math.abs(horseOverAfter.z) <= 58.51,
+  ok('§3b a past-boundary placement still clamps to the shared playable half (±138.5)',
+    Math.abs(horseOverAfter.x) <= 138.51 && Math.abs(horseOverAfter.z) <= 138.51,
     `placed (${horseOver.x.toFixed(2)}, ${horseOver.z.toFixed(2)}) → (${horseOverAfter.x.toFixed(2)}, ${horseOverAfter.z.toFixed(2)})`);
   // Force the REAL persistence path (pagehide = saveHorseState(force)) and
   // read the raw slot — the same payload validateHorseSave re-accepts on load.
@@ -297,31 +298,49 @@ const ok = (name, pass, detail) => {
     return raw ? JSON.parse(raw) : null;
   });
   ok('§3c the live horse save near the playable edge is written and in-bounds',
-    Boolean(horseSave) && Math.abs(horseSave.position.x) <= 58.5 && Math.abs(horseSave.position.z) <= 58.5,
+    Boolean(horseSave) && Math.abs(horseSave.position.x) <= 138.5 && Math.abs(horseSave.position.z) <= 138.5,
     `slot=${JSON.stringify(horseSave?.position ?? null)}`);
   await ev(() => window.__westTest.placeHorse(-3.8, -53.5)); // back to the meadow
 
   /* ---- §4 WALKTHROUGH ------------------------------------------------------ */
-  async function walkFor(x, z, yaw, ms) {
+  // Walk UNTIL a z target is reached (poll every 400 ms, hard ms cap) —
+  // headless rAF dilation varies the per-second pace, so a fixed wall-clock
+  // walk flaked ±1 m round to round. The target makes the assertion exact.
+  async function walkFor(x, z, yaw, ms, targetZ) {
     await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [x, z]);
     await ev((y) => window.__westTest.setYaw(y), yaw);
     await page.waitForTimeout(300);
     await ev(() => window.__k('keydown', 'KeyW'));
-    await page.waitForTimeout(ms);
+    const deadline = Date.now() + ms;
+    if (targetZ !== undefined) {
+      while (Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(400);
+        // eslint-disable-next-line no-await-in-loop
+        const p = await ev(() => window.__westTest.player());
+        const reached = yaw === Math.PI ? p.z >= targetZ : p.z <= targetZ;
+        if (reached) break;
+      }
+    } else {
+      await page.waitForTimeout(ms);
+    }
     await ev(() => window.__k('keyup', 'KeyW'));
+    await page.waitForTimeout(250);
     return ev(() => window.__westTest.player());
   }
-  const w1 = await walkFor(-1.7, -52, Math.PI, 11000);
+  const w1 = await walkFor(-1.7, -52, Math.PI, 30000, -43.5);
   ok('§4a farm road walks the full lane to the entrance', w1.z > -44, `z=${w1.z.toFixed(2)}`);
   const w2 = await walkFor(-6.5, -2, Math.PI, 5000);
   ok('§4b the square walks past the new family-house porch (clear lane)', w2.x > -7.6 || w2.z > 1, `at (${w2.x.toFixed(2)}, ${w2.z.toFixed(2)})`);
-  const w3 = await walkFor(0.6, 15, Math.PI, 9000);
+  const w3 = await walkFor(0.6, 15, Math.PI, 30000, 24);
   ok('§4c stable road walks to the stable yard', w3.z > 23, `z=${w3.z.toFixed(2)}`);
-  const w4 = await walkFor(0, 44, Math.PI, 9000);
+  const w4 = await walkFor(0, 44, Math.PI, 30000, 53);
   ok('§4d exit road walks to the boundary (road ends AT the wall, z 59.5)', w4.z > 52, `z=${w4.z.toFixed(2)}`);
-  const w5 = await walkFor(-1.5, -52, 0, 7000);
-  ok('§4e the farm road walks north and the boundary wall stops the player at z ≥ −59.5',
-    w5.z > -60 && w5.z < -57, `stopped at z=${w5.z.toFixed(2)} (road end −59.5)`);
+  const w5 = await walkFor(-1.5, -52, 0, 30000, -61);
+  // 2026-11 world expansion: the farm road continues north INTO the ranch —
+  // the old wall line (−59.5) must now be CROSSABLE, not a stop.
+  ok('§4e the farm road walks north past the old boundary line (−59.5) into the ranch',
+    w5.z < -60, `crossed to z=${w5.z.toFixed(2)} (old wall line −59.5)`);
 
   // §4f the REAL vault-door interaction from inside the office
   await ev((p) => window.__westTest.teleport(p[0], 1.7, p[1]), [-8.6, 17.0]);

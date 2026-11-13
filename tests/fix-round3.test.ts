@@ -32,6 +32,7 @@ import {
   CollisionWorld,
   registerAllTownFactories,
   AssetRegistry,
+  COUNTRY_ROADS,
 } from '../src/index.js';
 import type { ObjectDefinition } from '../src/index.js';
 
@@ -47,13 +48,15 @@ const byType = (t: string): ObjectDefinition[] => townDefs.filter((d) => d.asset
 /* ------------------------------------------------------------------------ */
 
 test('WORLD BOUNDS: ground/half/playable derive from one shared constant chain', () => {
-  assert.equal(WORLD_GROUND_SIZE, 120, 'the 2026-09 town ground is 120×120');
+  // 2026-11 WORLD EXPANSION: the living countryside grew the ground from the
+  // town's 120×120 to 280×280 — the town and the farm KEEP their coordinates.
+  assert.equal(WORLD_GROUND_SIZE, 280, 'the expanded world ground is 280×280');
   assert.equal(WORLD_HALF_SIZE, WORLD_GROUND_SIZE / 2);
   assert.equal(TOWN_GROUND_SIZE, WORLD_GROUND_SIZE, 'TOWN_GROUND_SIZE re-exports the shared constant');
   assert.equal(TOWN_HALF, WORLD_HALF_SIZE);
-  // wall inner face (±59.5) minus a full body margin → the movement clamp
+  // wall inner face (±139.5) minus a full body margin → the movement clamp
   assert.equal(WORLD_PLAYABLE_HALF, WORLD_HALF_SIZE - 0.5 - 1);
-  assert.equal(WORLD_PLAYABLE_HALF, 58.5);
+  assert.equal(WORLD_PLAYABLE_HALF, 138.5);
 });
 
 test('HORSE BOUNDARY: the old ±28.5 hard limit is gone — restore keeps the far half', () => {
@@ -86,7 +89,12 @@ test('HORSE PERSISTENCE: the validator accepts the whole playable band', () => {
   const loaded = persistence.load();
   assert.ok(loaded, 'a save at (50, −50) — far beyond the old ±28.5 — loads');
   assert.equal(loaded!.position.x, 50);
+  // 2026-11 world expansion: (59.9, 0) used to sit past the old ±58.5 clamp;
+  // on the 280×280 ground it is now VALID mid-map ground.
   persistence.save({ version: 1, position: { x: 59.9, y: 0, z: 0 }, yaw: 0, health: 100, stamina: 100, alive: true });
+  const far = persistence.load();
+  assert.ok(far && far.position.x === 59.9, 'the whole NEW playable band is accepted');
+  persistence.save({ version: 1, position: { x: 139.9, y: 0, z: 0 }, yaw: 0, health: 100, stamina: 100, alive: true });
   assert.equal(persistence.load(), null, 'a save outside the playable half is still rejected');
 });
 
@@ -198,7 +206,7 @@ test('ROADS: every street is ONE continuous route ribbon (no rectangle tiles)', 
 });
 
 test('ROADS: all route/plaza geometry stops INSIDE the world boundary', () => {
-  const limit = TOWN_HALF - 0.5; // the boundary walls' inner face
+  const limit = TOWN_HALF - 0.5; // the boundary walls' inner face (±139.5)
   for (const road of byType('town-road')) {
     const pts = (road.metadata.route ?? road.metadata.polygon) as Array<{ x: number; z: number }> | undefined;
     for (const p of pts ?? []) {
@@ -206,11 +214,16 @@ test('ROADS: all route/plaza geometry stops INSIDE the world boundary', () => {
         `${road.metadata.name} point (${p.x}, ${p.z}) must stay inside ±${limit} (the farm road used to overhang to −61)`);
     }
   }
-  // the explicit regression: the farm route's north end sits ON the wall line
+  // 2026-11 world expansion regression: the farm road's north end no longer
+  // sits on a wall — it CONTINUES into the countryside as the ranch road.
+  // The two routes must meet seamlessly (same endpoint, one road network).
   const farm = byType('town-road').find((d) => Array.isArray(d.metadata.route)
     && (d.metadata.route as Array<{ z: number }>)[0].z < -50)!;
-  assert.equal((farm.metadata.route as Array<{ z: number }>)[0].z, -(TOWN_HALF - 0.5),
-    'the farm road ends exactly at the boundary wall inner face (−59.5)');
+  const farmEnd = (farm.metadata.route as Array<{ x: number; z: number }>)[0];
+  const ranchStart = COUNTRY_ROADS.find((r) => r.name === 'جادهٔ رانچ')!.pts[0];
+  assert.equal(farmEnd.x, ranchStart[0]);
+  assert.equal(farmEnd.z, ranchStart[1],
+    'the town farm road hands off to the ranch road at (−1.5, −59.5)');
 });
 
 test('ROADS: the route factory builds one continuous mesh per route', async () => {

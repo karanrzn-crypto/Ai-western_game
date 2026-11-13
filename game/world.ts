@@ -31,7 +31,12 @@ import {
   registerAllTownFactories,
   buildTownMapObjects,
   rotateSiteDefs,
+  registerCountryFactories,
+  buildCountryMapObjects,
+  createCountryAmbient,
+  type CountryAmbient,
 } from '../src/index.js';
+import { CollisionWorld } from '../src/physics/CollisionWorld.js';
 
 export interface WorldHandles {
   stage: HTMLElement;
@@ -44,6 +49,9 @@ export interface WorldHandles {
   hemisphere: THREE.HemisphereLight;
   adapter: ThreeRendererAdapter;
   manager: SceneStateManager;
+  /** The instanced countryside layer (trees/bushes/rocks/grass/fences/hills)
+   *  — its static colliders merge into the ONE CollisionWorld source. */
+  countryAmbient: CountryAmbient;
 }
 
 /**
@@ -68,19 +76,20 @@ export function createWorld(): WorldHandles {
   // owns the live sky/fog and its daytime palette is retuned to these tones).
   const SKY_DUST = 0xd8c7a2;
   scene.background = new THREE.Color(SKY_DUST);
-  scene.fog = new THREE.Fog(SKY_DUST, 40, 105);
+  // WORLD EXPANSION (280×280): the haze band grew with the horizon — the fog
+  // still hides the map edge from any in-world vantage point (farthest corner
+  // diagonal ≈ 396 m; from the center the edge sits ~140-198 m out) while
+  // keeping mid-range reading crisp for gameplay.
+  scene.fog = new THREE.Fog(SKY_DUST, 55, 175);
 
   const camera = new THREE.PerspectiveCamera(
     70,
     Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1),
     0.05,
-    // Far plane sized to the CURRENT world (the old 150 was set when the map
-    // was 100×100 — stale “±50 m walls / 141 m diagonal” comment and all).
-    // The 2026-09 town ground is 120×120 (±60): its farthest corner from any
-    // vantage point is the full diagonal 120√2 ≈ 169.7 m, so 180 clears the
-    // whole map with margin — and stays tight (fog ends at 105; nothing but
-    // the sky reads beyond it).
-    180,
+    // Far plane sized to the CURRENT world: the 280×280 ground's farthest
+    // corner from any vantage point is the full diagonal 280√2 ≈ 396 m, so
+    // 420 clears the whole map with margin.
+    420,
   );
 
   // Dev verification hook (read-only): headless check scripts read the live
@@ -123,26 +132,27 @@ export function createWorld(): WorldHandles {
   const sun = new THREE.DirectionalLight(0xffe7bd, 2.2);
   sun.position.set(-25, 35, 15);
   sun.castShadow = true;
-  // Shadow frustum sized to the PLAYABLE AREA: the redesigned map is a
-  // 120×120 ground plane (town redesign 2026-09), so its farthest point from
-  // the light target (the origin) is the half-diagonal 60√2 ≈ 84.9 m. An ortho
-  // box of ±85 contains every map point for EVERY sun azimuth (the farm and
-  // the ruined house cast too — the ±50 town-only box would drop them).
-  // 1024² over ±85 ≈ 6 texels/m; the scheduled depth pass costs ≈2.5 ms per
-  // refresh (every 150 ms idle) — the same trade the stable already vetted.
+  // WORLD EXPANSION: the shadow frustum now FOLLOWS THE PLAYER. A fixed box
+  // cannot cover a 280×280 map at useful texel density, so the composition
+  // root recenters this ±48 box on the player every frame (DayNightCycle
+  // still owns the orbit direction — the follow only translates the rig).
+  // 1024² over 96 m ≈ 10.7 texels/m — SHARPER than the old fixed ±85 box
+  // (6 texels/m) everywhere the player actually is, at the same depth-pass
+  // cost. Distant unshadowed ground sits well inside the fog band.
   sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.camera.left = -85;
-  sun.shadow.camera.right = 85;
-  sun.shadow.camera.top = 85;
-  sun.shadow.camera.bottom = -85;
+  sun.shadow.camera.left = -48;
+  sun.shadow.camera.right = 48;
+  sun.shadow.camera.top = 48;
+  sun.shadow.camera.bottom = -48;
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 200;
   sun.shadow.bias = -0.00035;
-  // § shadow revision: normalBias 0.03 → 0.06. At the deliberate 9 texels/m,
-  // interior surfaces sample the roof's occluders through the same map — the
-  // old 3 cm normalBias left self-shadow acne bands on interior walls/floors.
-  // 6 cm ≈ 0.55 texel kills the acne inside without visibly detaching the
-  // exterior contact shadows (verified against the horse/lamp probes).
+  // § shadow revision: normalBias 0.03 → 0.06. At the deliberate texel
+  // density, interior surfaces sample the roof's occluders through the same
+  // map — the old 3 cm normalBias left self-shadow acne bands on interior
+  // walls/floors. 6 cm ≈ 0.55 texel kills the acne inside without visibly
+  // detaching the exterior contact shadows (verified against the horse/lamp
+  // probes).
   sun.shadow.normalBias = 0.06;
   scene.add(sun);
 
@@ -161,6 +171,9 @@ export function createWorld(): WorldHandles {
   // family, wealthy, abandoned + butcher stall) — the six REDesigned-town
   // buildings, placed per-def with TOWN_EXTERIOR_COLLIDERS at the town sites.
   registerTownExteriorFactories(assets);
+  // Countryside buildings (world expansion: barn, sheds, cabin, coop, pig
+  // shelter, silo, merged crop fields) — exact local colliders per type.
+  registerCountryFactories(assets);
 
   const adapter = new ThreeRendererAdapter({ scene, assetRegistry: assets });
   const manager = new SceneStateManager({ renderer: adapter });
@@ -309,7 +322,27 @@ export function createWorld(): WorldHandles {
     });
   }
 
+  // --- THE LIVING COUNTRYSIDE (world expansion) --------------------------------
+  // Ranch (north), agri farm (east), family farm (northwest), the southern
+  // wilds with their roads/ponds/fields/props — every def from
+  // CountryLayout.buildCountryMapObjects() with exact per-type colliders.
+  for (const countryDef of buildCountryMapObjects()) {
+    manager.registerObject(countryDef);
+  }
+
+  // The instanced ambient layer (wild trees/bushes/rocks/grass/stumps, all
+  // fence runs, the horizon hills). Its placement keeps clear of every road
+  // corridor and every managed collider AABB (snapshot below), and it hands
+  // back exact static AABBs for its fences/trees/big rocks — the composition
+  // root merges them into the ONE CollisionWorld source.
+  const keepOutProbe = new CollisionWorld(() => manager.getAllObjects());
+  const countryAmbient = createCountryAmbient({
+    scene,
+    colliderKeepOuts: keepOutProbe.getCollisionBounds(),
+  });
+
   return {
     stage, scene, camera, renderer, resolution, shadows, sun, hemisphere, adapter, manager,
+    countryAmbient,
   };
 }

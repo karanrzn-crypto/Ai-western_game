@@ -19,6 +19,7 @@ import {
   RIDER_SEATED_EYE_Y,
 } from '../src/index.js';
 import type { SheepSystem } from './sheep.js';
+import type { CountryAmbientStats } from '../src/assets/countryside/CountryAmbient.js';
 
 /** One door swing interpolator (value animates toward target at speed/s). */
 export interface Swing {
@@ -70,6 +71,8 @@ export interface TestHookContext {
   horse: () => HorseController;
   horseModelHead: () => THREE.Object3D;
   sheep: () => SheepSystem;
+  /** The countryside ambient layer (world expansion) — read-only stats. */
+  countryAmbient: () => { stats: CountryAmbientStats; colliderCount: number };
   authoredLayout: AuthoredLayout;
   resetObjectToAuthored: (uuid: string) => boolean;
   resetAllToAuthored: () => number;
@@ -90,7 +93,7 @@ const at4State = (v: number, t: number): 'open' | 'closed' | 'opening' | 'closin
 export function createTestHooks(ctx: TestHookContext): Record<string, unknown> {
   const {
     scene, camera, renderer, manager, adapter, collisionWorld,
-    playerController, dayNight, horse, horseModelHead, sheep, authoredLayout,
+    playerController, dayNight, horse, horseModelHead, sheep, countryAmbient, authoredLayout,
     resetObjectToAuthored, resetAllToAuthored, isRiding, doors, rideState,
   } = ctx;
 
@@ -424,6 +427,16 @@ export function createTestHooks(ctx: TestHookContext): Record<string, unknown> {
         penRect: system.penRect(),
         anyMoving: system.anyMoving(),
         list: system.snapshots(),
+      };
+    },
+    // Countryside probe (read-only): instanced layer counts + static collider
+    // count for the verify-countryside harness (world expansion).
+    country: () => {
+      const probe = countryAmbient();
+      return {
+        stats: probe.stats,
+        colliderCount: probe.colliderCount,
+        rootInScene: scene.getObjectByName('country-ambient-root') !== undefined,
       };
     },
     // Read-only renderer.info snapshot for the perf harness (§9 baseline):

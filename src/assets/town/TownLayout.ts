@@ -199,6 +199,40 @@ function fenceRun(opts: FenceRunOpts): void {
 /* Street furniture helpers                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The town's road ROUTE centerlines, exported verbatim (the SAME arrays the
+ * roadRoute() calls above render): the countryside ambient layer keeps its
+ * seeded vegetation off these corridors, so no bush ever grows out of the
+ * main street. Data restated nowhere — one source, two consumers.
+ */
+export const TOWN_ROUTE_CORRIDORS: Readonly<{
+  mainStreet: Array<[number, number, number]>;
+  exitRoad: Array<[number, number, number]>;
+  wealthySpur: Array<[number, number, number]>;
+}> = Object.freeze({
+  mainStreet: [
+    [-1.5, -59.5, 6.5],
+    [-1.3, -50, 6.5],
+    [-1.0, -42, 7.0],
+    [-0.6, -36.5, 8.0],
+    [0, -27, 8.0],
+    [0, -12.7, 8.0],
+  ],
+  exitRoad: [
+    [0, 9.3, 5.5],
+    [0.55, 18, 5.5],
+    [0.6, 30, 5.5],
+    [0.45, 42, 5.5],
+    [0, 52, 5.5],
+    [0, 59.5, 5.5],
+  ],
+  wealthySpur: [
+    [13.2, 5.2, 3.2],
+    [16.8, 7.8, 3.2],
+    [21.6, 9.6, 3.2],
+  ],
+});
+
 /** Lamp = collider post def + decor lantern head at the top. */
 function lamp(x: number, z: number, name: string): void {
   box('town-lamp-post', `${name} — پایه`, x, 0, z, 0.45, 1.05, 0.45, { collider: true });
@@ -283,14 +317,7 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   };
   // farm road → entrance widening → main street: ONE route, north end at the
   // boundary wall's inner face (−59.5)
-  roadRoute('جاده مزرعه و خیابان اصلی', [
-    [-1.5, -59.5, 6.5],
-    [-1.3, -50, 6.5],
-    [-1.0, -42, 7.0],
-    [-0.6, -36.5, 8.0], // the town-entrance widening (gradual trumpet)
-    [0, -27, 8.0],
-    [0, -12.7, 8.0], // tucked under the plaza slab
-  ], 0.02);
+  roadRoute('جاده مزرعه و خیابان اصلی', TOWN_ROUTE_CORRIDORS.mainStreet, 0.02);
   // central plaza: ONE irregular polygon (organic edge, no slab overlap)
   emit('town-road', 'میدان مرکزی', { x: 0, y: 0.045, z: 0 }, {
     collider: false,
@@ -307,21 +334,10 @@ export function buildTownMapObjects(): ObjectDefinition[] {
   });
   // stable road → town exit: ONE route through the bank/sheriff gap, south
   // end at the boundary wall's inner face (+59.5)
-  roadRoute('جاده اسطبل و خروجی', [
-    [0, 9.3, 5.5], // tucked under the plaza slab
-    [0.55, 18, 5.5],
-    [0.6, 30, 5.5],
-    [0.45, 42, 5.5],
-    [0, 52, 5.5],
-    [0, 59.5, 5.5],
-  ], 0.02);
+  roadRoute('جاده اسطبل و خروجی', TOWN_ROUTE_CORRIDORS.exitRoad, 0.02);
   // short spur to the wealthy house's door (the family house now fronts the
   // square directly beside the butcher — its old spur is gone with the move)
-  roadRoute('مسیر خانه پولداری', [
-    [13.2, 5.2, 3.2],
-    [16.8, 7.8, 3.2],
-    [21.6, 9.6, 3.2],
-  ], 0.02);
+  roadRoute('مسیر خانه پولداری', TOWN_ROUTE_CORRIDORS.wealthySpur, 0.02);
   // dirt patches (worn-ground variety — organic blobs, not rectangles)
   roadPatch('لکه خاک ۱', -8, -18, 4.5, 3, 0.015);
   roadPatch('لکه خاک ۲', 7, -12, 3.6, 2.6, 0.015);

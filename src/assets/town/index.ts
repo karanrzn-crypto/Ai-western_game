@@ -11,6 +11,7 @@ export {
   TOWN_EXTERIOR_SITES,
   TOWN_RESPAWN,
   TOWN_HORSE_SPAWN,
+  TOWN_ROUTE_CORRIDORS,
 } from './TownLayout.js';
 export { TOWN_PALETTE, getTownMaterials, createTownMaterials } from './TownMaterials.js';
 export type { TownMaterials } from './TownMaterials.js';

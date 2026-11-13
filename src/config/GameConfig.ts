@@ -116,11 +116,17 @@ export function resetConfig(): void {
  * to carry a stale ±28.5 from a smaller map, snapping the horse back from
  * the whole southern half of the town).
  *
- *   ground edge        ±(WORLD_HALF_SIZE)                       = ±60
- *   wall inner face    ±(WORLD_HALF_SIZE − WORLD_WALL_INSET)    = ±59.5
- *   movement clamp     ±(WORLD_PLAYABLE_HALF)                   = ±58.5
+ *   ground edge        ±(WORLD_HALF_SIZE)                       = ±140
+ *   wall inner face    ±(WORLD_HALF_SIZE − WORLD_WALL_INSET)    = ±139.5
+ *   movement clamp     ±(WORLD_PLAYABLE_HALF)                   = ±138.5
+ *
+ * 2026-11 WORLD EXPANSION: 120 → 280 (the living-countryside round — three
+ * separated farms, wild lands and real distances between them). The town and
+ * the farm KEEP their authored coordinates; the growth is pure outward
+ * space. Shadows follow the player now (a fixed ±85 ortho cannot cover
+ * ±140), and the fog/far-plane grew with the horizon.
  *                                                                      */
-export const WORLD_GROUND_SIZE = 120;
+export const WORLD_GROUND_SIZE = 280;
 export const WORLD_HALF_SIZE = WORLD_GROUND_SIZE / 2;
 /** The boundary walls' thickness band inside the ground edge (walls are 1 m
  *  thick, centered 0.5 m inside the edge → inner face at HALF − 0.5). */

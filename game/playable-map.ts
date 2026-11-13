@@ -173,7 +173,14 @@ function resetAllToAuthored(): number {
   return restored;
 }
 
-const collisionWorld = new CollisionWorld(() => manager.getAllObjects(), { floorY: 0, events: manager.bus });
+const collisionWorld = new CollisionWorld(
+  () => manager.getAllObjects(),
+  // WORLD EXPANSION: ONE solver, two layers — the managed defs PLUS the
+  // countryside ambient layer's exact static AABBs (instanced fence
+  // sections, wild trees, big rocks). The player, the horse and the sheep
+  // collide with all of them through the SAME solver — no parallel system.
+  { floorY: 0, events: manager.bus, extraBounds: () => world.countryAmbient.staticColliders() },
+);
 // Respawn at the farm road's north end (the redesigned town's progression
 // starts at the farm and leads south — TownLayout is the single source).
 const RESPAWN_POINT = { x: TOWN_RESPAWN.x, y: CHARACTER_PROPORTIONS.eyeHeight, z: TOWN_RESPAWN.z };
@@ -217,6 +224,9 @@ const dayNight = new DayNightCycle(scene, sun, hemisphere, {
 // refreshes promptly even though the player/horse stand still. Declared
 // BEFORE the editor wiring that pulses it (module top-to-bottom order).
 let editShadowPulse = 0;
+// Shadow-follow state: the snapped player XZ the sun rig was last shifted by.
+let shadowFollowX = 0;
+let shadowFollowZ = 0;
 // HUD/panel DOM writes are throttled to 10Hz (see animate()).
 let hudTimer = 0;
 
@@ -295,6 +305,10 @@ const doorSystem = createDoorSystem({ scene, manager, interactions, showStatusMe
   dayNight,
   horse: () => rig.horse,
   horseModelHead: () => rig.horseModel.joints.head,
+  countryAmbient: () => {
+    const ambient = world.countryAmbient;
+    return { stats: ambient.stats(), colliderCount: ambient.staticColliders().length };
+  },
   authoredLayout,
   resetObjectToAuthored,
   resetAllToAuthored,
@@ -926,6 +940,27 @@ function animate(): void {
     { x: -Math.sin(playerController.getYaw()), y: 0, z: -Math.cos(playerController.getYaw()) },
   );
   dayNight.update(delta);
+  // Shadow-follow (world expansion): the ±48 ortho shadow box recenters on
+  // the PLAYER's snapped XZ so shadows exist wherever the player is on the
+  // 280×280 map. The day/night cycle still owns the orbit — the follow only
+  // TRANSLATES position+target by the same vector, so the light direction
+  // (and thus every shadow's angle) is untouched. The 0.25 m snap stops the
+  // shadow map swimming while walking. No allocation — scalars only.
+  {
+    const p = playerController.getPosition();
+    const snapX = Math.round(p.x * 4) / 4;
+    const snapZ = Math.round(p.z * 4) / 4;
+    const dx = snapX - shadowFollowX;
+    const dz = snapZ - shadowFollowZ;
+    if (dx !== 0 || dz !== 0) {
+      sun.position.x += dx;
+      sun.position.z += dz;
+      sun.target.position.x += dx;
+      sun.target.position.z += dz;
+      shadowFollowX = snapX;
+      shadowFollowZ = snapZ;
+    }
+  }
   // Shadow maps refresh ON DEMAND (RenderGovernor): the depth pass is real
   // money (~12ms per 2048² pass on the harness; ~1.4ms at 768²), so the
   // scheduler fires it only when the cooldown expires — fast cadence while

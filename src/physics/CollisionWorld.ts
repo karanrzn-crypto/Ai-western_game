@@ -8,7 +8,18 @@ export interface PlayerCollisionResult {
   blockedY: boolean;
   blockedZ: boolean;
 }
-export interface CollisionWorldOptions { floorY?: number; /** Event bus used to invalidate the cached collision bounds. */ events?: EventBus; }
+export interface CollisionWorldOptions {
+  floorY?: number;
+  /** Event bus used to invalidate the cached collision bounds. */
+  events?: EventBus;
+  /**
+   * EXTRA static bounds, OUTSIDE the definition list (world-expansion round):
+   * non-managed scenery that still collides (the instanced countryside
+   * fences/trees/rocks). They merge into the SAME bounds list — one solver,
+   * no parallel collision system. Re-evaluated on every cache invalidation.
+   */
+  extraBounds?: () => readonly CollisionBounds[];
+}
 export interface CollisionBounds { uuid: string; min: Vec3; max: Vec3; }
 
 /**
@@ -57,6 +68,7 @@ function localColliderBoxes(metadata: ObjectMetadata): readonly ColliderLocalBox
 /** Lightweight reusable AABB collision world. Y-rotated boxes use conservative containing AABBs. */
 export class CollisionWorld {
   private readonly definitions: () => readonly Readonly<ObjectDefinition>[];
+  private readonly extraBounds?: () => readonly CollisionBounds[];
   private readonly floorY: number;
   /** Cached bounds — rebuilt only when the scene actually changes. */
   private cachedBounds: readonly CollisionBounds[] | null = null;
@@ -66,6 +78,7 @@ export class CollisionWorld {
     this.definitions = typeof definitions === 'function' ? definitions : () => definitions;
     const options = typeof optionsOrFloorY === 'number' ? {} : optionsOrFloorY;
     this.floorY = typeof optionsOrFloorY === 'number' ? optionsOrFloorY : (optionsOrFloorY.floorY ?? 0);
+    this.extraBounds = typeof optionsOrFloorY === 'number' ? undefined : optionsOrFloorY.extraBounds;
     // When an event bus is wired up, bounds are cached and invalidated on
     // every scene mutation. This removes the per-frame O(N) deep-clone that
     // definitions() (e.g. manager.getAllObjects()) otherwise causes.
@@ -114,6 +127,9 @@ export class CollisionWorld {
       // legacy transform path contributes exactly one.
       for (const bounds of this.toCollisionBounds(definition)) out.push(bounds);
     }
+    // The extra static provider (instanced countryside colliders) merges into
+    // the SAME list — one solver for everything.
+    if (this.extraBounds) out.push(...this.extraBounds());
     const frozen = Object.freeze(out);
     if (this.unsubscribe) this.cachedBounds = frozen;
     return frozen;
